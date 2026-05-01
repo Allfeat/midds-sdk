@@ -310,9 +310,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
                         // `TransactionFeePaid` — `tx_fee` here is the
                         // amortised per-record share. `bond` / `base_bond`
                         // are exact per-record values (one event each).
-                        for (encoded_size, receipt) in
-                            encoded_sizes.iter().zip(receipts.iter())
-                        {
+                        for (encoded_size, receipt) in encoded_sizes.iter().zip(receipts.iter()) {
                             let tx_fee = receipt.tx_fee.unwrap_or(0);
                             let _ = tx.send(WorkerEvent::Sample(Sample {
                                 encoded_size: *encoded_size,
@@ -538,8 +536,18 @@ fn aggregate_rows(samples: &[Sample]) -> Vec<Vec<String>> {
             |s| s.encoded_size as u128,
             |v| v.to_string(),
         ),
-        stat_row("base bond (refundable)", samples, |s| s.base_bond, format::plancks),
-        stat_row("premium (to Treasury)", samples, |s| s.premium(), format::plancks),
+        stat_row(
+            "base bond (refundable)",
+            samples,
+            |s| s.base_bond,
+            format::plancks,
+        ),
+        stat_row(
+            "premium (to Treasury)",
+            samples,
+            |s| s.premium(),
+            format::plancks,
+        ),
         stat_row("total bond (held)", samples, |s| s.bond, format::plancks),
         stat_row("tx fee", samples, |s| s.tx_fee, format::plancks),
         stat_row(
@@ -662,7 +670,11 @@ fn build_markdown_report(ctx: ReportContext<'_>, samples: &[Sample]) -> String {
         "- count: requested={count_requested}, succeeded={count_succeeded}, failed={count_failed}"
     );
     let _ = writeln!(out, "- wall time: {duration_ms} ms");
-    let _ = writeln!(out, "- pricing (start): `{}`", format_snapshot(&snapshot_start));
+    let _ = writeln!(
+        out,
+        "- pricing (start): `{}`",
+        format_snapshot(&snapshot_start)
+    );
     if let Some(end) = snapshot_end {
         let _ = writeln!(out, "- pricing (end): `{}`", format_snapshot(&end));
     } else {

@@ -253,7 +253,10 @@ pub async fn run(args: Args<'_>) -> Result<()> {
                         if nonce != u64::MAX {
                             nonce = nonce.saturating_add(1);
                         }
-                        let _ = tx.send(WorkerEvent::Chunk { ok: chunk_size, failed: 0 });
+                        let _ = tx.send(WorkerEvent::Chunk {
+                            ok: chunk_size,
+                            failed: 0,
+                        });
                     }
                     Err(e) => {
                         // Stop the worker on the first failure: continuing

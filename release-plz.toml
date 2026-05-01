@@ -1,0 +1,41 @@
+# Release-plz configuration for the midds-sdk workspace.
+#
+# Strategy: lockstep workspace versioning + git-only mode (no `cargo publish`
+# until crates.io is enabled). One tag per release, carried by `pallet-midds`
+# as the workspace pivot. All other publishable crates inherit the same
+# version through `version.workspace = true` in their Cargo.toml.
+
+[workspace]
+# Skip `cargo publish`; derive versions from git tags instead of crates.io.
+# Flip to `false` when we decide to publish to crates.io.
+git_only = true
+
+# By default no per-package tag/release. The single tag is enabled below
+# on `pallet-midds` only (single-tag pattern).
+git_release_enable = false
+git_tag_enable = false
+
+# Release only when the maintained release PR is merged, not on every push.
+release_always = false
+
+# No baseline on crates.io while git_only = true → cargo-semver-checks has
+# nothing to compare against. Re-enable when publishing to crates.io.
+semver_check = false
+
+# Surface release PRs clearly.
+pr_labels = ["release"]
+git_release_type = "auto"
+
+# `pallet-midds` is the workspace pivot — it carries the single tag and
+# GitHub Release. Tag format `vX.Y.Z`, no per-crate prefix.
+[[package]]
+name = "pallet-midds"
+git_tag_name = "v{{ version }}"
+git_tag_enable = true
+git_release_enable = true
+
+# Internal test scaffolding — never released, never changelog'd.
+[[package]]
+name = "midds-fixtures"
+release = false
+changelog_update = false

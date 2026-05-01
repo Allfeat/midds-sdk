@@ -1,0 +1,36 @@
+[package]
+name = "midds-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Canonical MIDDS type definitions (MusicalWork, Recording, Release)."
+
+[dependencies]
+frame-support = { workspace = true }
+midds-traits = { workspace = true }
+parity-scale-codec = { workspace = true }
+scale-info = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+midds-fixtures = { workspace = true, features = ["proptest", "corpus"] }
+proptest = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "midds-traits/std",
+    "parity-scale-codec/std",
+    "scale-info/std",
+    "serde?/std",
+]
+serde = [
+    "dep:serde",
+    "midds-traits/serde",
+    "scale-info/serde",
+]

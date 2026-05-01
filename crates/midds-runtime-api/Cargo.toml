@@ -1,0 +1,24 @@
+[package]
+name = "midds-runtime-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Generic runtime API for MIDDS lookups and deposit info."
+
+[dependencies]
+midds-traits = { workspace = true }
+parity-scale-codec = { workspace = true }
+sp-api = { workspace = true }
+sp-runtime = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "midds-traits/std",
+    "parity-scale-codec/std",
+    "sp-api/std",
+    "sp-runtime/std",
+]

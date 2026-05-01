@@ -1,0 +1,34 @@
+# Cargo build output
+**/target/
+
+# rustfmt backups
+**/*.rs.bk
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
+# direnv cache
+.direnv/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Local CLI / benchmark output
+/seed*.json
+*.profraw
+perf.data*

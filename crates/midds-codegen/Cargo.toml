@@ -1,0 +1,20 @@
+[package]
+name = "midds-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Generates subxt bindings for the Allfeat MIDDS client from runtime metadata."
+
+[[bin]]
+name = "midds-codegen"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+parity-scale-codec = { workspace = true, features = ["std"] }
+subxt-codegen = { workspace = true }
+subxt-utils-fetchmetadata = { workspace = true, features = ["url"] }

@@ -126,7 +126,8 @@ The cornerstone for all of the above is a planned `midds-fixtures` crate (propte
 - **crates.io is deferred** — while the API stabilises, consumers use path/git deps. No publish workflow is wired yet.
 - **`midds-fixtures` is `publish = false`** — internal test scaffolding; never published even once other crates are.
 - **Pre-built binaries (`midds`, `midds-codegen`)** — from v1.0+ only, via `cargo-dist` on GitHub Releases. Before that, install via `cargo install --path …` from a clone.
-- **Tooling target — `release-plz`** : maintained release PR on `master` that bumps versions and generates `CHANGELOG.md`. Not wired yet; goes in alongside the first GitHub Actions CI workflow.
+- **Tooling target — `release-plz`** : maintained release PR on `master` that bumps versions and generates `CHANGELOG.md`. Not wired yet; goes in next to CI.
+- **CI** (`.github/workflows/ci.yml`) — 5 jobs run on push to `master` and on PR: `fmt`, `clippy` (`-D warnings`, `--all-targets --all-features`), `test` (`--workspace --all-features`), `wasm` (`pallet-midds` `no_std` build for `wasm32-unknown-unknown`), and `commitlint` (PR-only, validates Conventional Commits via `.commitlintrc.yaml`).
 
 ## Conventions
 

@@ -1,0 +1,24 @@
+[package]
+name = "midds-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "JSON-RPC handlers exposing MIDDS runtime APIs via jsonrpsee."
+
+[dependencies]
+jsonrpsee = { workspace = true }
+midds-runtime-api = { workspace = true, features = ["std"] }
+midds-traits = { workspace = true, features = ["std"] }
+parity-scale-codec = { workspace = true, features = ["std"] }
+sp-api = { workspace = true, features = ["std"] }
+sp-blockchain = { workspace = true }
+sp-runtime = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+midds-fixtures = { workspace = true, features = ["proptest", "corpus"] }
+midds-types = { workspace = true, features = ["std", "serde"] }
+serde_json = { workspace = true }
+tokio = { workspace = true }

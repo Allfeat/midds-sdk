@@ -1,0 +1,95 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/midds-traits",
+    "crates/midds-types",
+    "crates/midds-validate",
+    "crates/midds-runtime-api",
+    "crates/midds-rpc",
+    "crates/midds-client",
+    "crates/midds-codegen",
+    "crates/midds-cli",
+    "crates/midds-fixtures",
+    "pallets/pallet-midds",
+]
+
+[workspace.package]
+authors = ["Allfeat labs. <hello@allfeat.com>"]
+edition = "2024"
+homepage = "https://allfeat.com"
+license = "GPL-3.0"
+repository = "https://github.com/allfeat/midds-sdk"
+version = "0.1.0"
+
+[workspace.dependencies]
+# Internal crates
+midds-traits = { path = "crates/midds-traits", version = "0.1.0", default-features = false }
+midds-types = { path = "crates/midds-types", version = "0.1.0", default-features = false }
+midds-validate = { path = "crates/midds-validate", version = "0.1.0" }
+midds-runtime-api = { path = "crates/midds-runtime-api", version = "0.1.0", default-features = false }
+midds-rpc = { path = "crates/midds-rpc", version = "0.1.0" }
+midds-client = { path = "crates/midds-client", version = "0.1.0" }
+midds-codegen = { path = "crates/midds-codegen", version = "0.1.0" }
+midds-fixtures = { path = "crates/midds-fixtures", version = "0.1.0", default-features = false }
+pallet-midds = { path = "pallets/pallet-midds", version = "0.1.0", default-features = false }
+
+# Polkadot SDK (no_std-capable) — aligned with stable2503
+frame-support = { version = "46.0.0", default-features = false }
+frame-system = { version = "46.0.0", default-features = false }
+frame-benchmarking = { version = "46.0.0", default-features = false }
+sp-api = { version = "41.0.0", default-features = false }
+sp-core = { version = "40.0.0", default-features = false }
+sp-io = { version = "45.0.0", default-features = false }
+sp-runtime = { version = "46.0.0", default-features = false }
+sp-blockchain = { version = "44.0.0", default-features = false }
+
+pallet-balances = { version = "47.0.0", default-features = false }
+
+# Substrate codec / scale
+parity-scale-codec = { version = "3.7.4", default-features = false, features = ["derive"] }
+scale-info = { version = "2.11.6", default-features = false, features = ["derive"] }
+
+# Client (std)
+jsonrpsee = { version = "0.24.3", features = ["server", "macros"] }
+subxt = "0.50"
+subxt-signer = "0.50"
+subxt-codegen = "0.50"
+subxt-utils-fetchmetadata = { version = "0.50", default-features = false }
+scale-value = { version = "0.18", default-features = false, features = ["std"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Validation
+regex = "1.10"
+thiserror = "1"
+
+# Serialization
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+dialoguer = "0.11"
+anyhow = "1"
+log = { version = "0.4", default-features = false }
+
+# Test fixtures / property-based testing
+proptest = "1"
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "unwind"
+
+[profile.production]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+strip = true

@@ -1,0 +1,26 @@
+[package]
+name = "midds-fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Test fixtures, builders, proptest strategies and corpora for MIDDS payloads."
+publish = false
+
+[dependencies]
+frame-support = { workspace = true, features = ["std"] }
+midds-traits = { workspace = true, features = ["std"] }
+midds-types = { workspace = true, features = ["std"] }
+parity-scale-codec = { workspace = true, features = ["std"] }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+proptest = { workspace = true, optional = true }
+serde = { workspace = true, features = ["std"], optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = ["proptest", "corpus"]
+proptest = ["dep:proptest"]
+corpus = ["dep:serde", "dep:serde_json", "midds-types/serde", "midds-traits/serde"]

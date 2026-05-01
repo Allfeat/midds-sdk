@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MIDDS — Modèle économique (visualisation)</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #7ee787;
+    --warn: #d29922;
+    --danger: #ff7b72;
+    --info: #79c0ff;
+    --purple: #d2a8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 24px 96px;
+  }
+  h1 {
+    font-size: 28px;
+    margin-bottom: 4px;
+    color: var(--accent);
+  }
+  h2 {
+    font-size: 20px;
+    margin-top: 48px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    color: var(--info);
+  }
+  h3 {
+    font-size: 15px;
+    margin-top: 24px;
+    margin-bottom: 8px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  p, li {
+    color: var(--text);
+    font-size: 14px;
+  }
+  code {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--purple);
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    margin: 16px 0;
+  }
+  .takeaway {
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    margin: 12px 0;
+    background: rgba(126, 231, 135, 0.05);
+    color: var(--text);
+    font-size: 13px;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+  .chart-wrap {
+    position: relative;
+    height: 320px;
+  }
+  .chart-wrap.tall { height: 420px; }
+  .meta {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  /* Lifecycle SVG */
+  .lifecycle {
+    width: 100%;
+    height: auto;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+  }
+  th { background: rgba(121, 192, 255, 0.08); color: var(--info); }
+  tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  .sub { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>MIDDS — Modèle économique</h1>
+<p class="meta">
+  Visualisation interactive de <code>docs/economics.md</code> — bond + fenêtre 7j refundable + Foundation Treasury, deux multiplicateurs dynamiques (anti-DoS et anti-flood).
+</p>
+
+<!-- ============================================================ -->
+<h2>1. Cycle de vie d'un MIDDS</h2>
+<p class="meta">Du deposit à la finalisation, en passant par la fenêtre refundable.</p>
+
+<div class="panel">
+  <svg viewBox="0 0 1100 280" class="lifecycle" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+        <path d="M0,0 L0,6 L9,3 z" fill="#8b949e"/>
+      </marker>
+    </defs>
+
+    <!-- Timeline axis -->
+    <line x1="60" y1="180" x2="1040" y2="180" stroke="#30363d" stroke-width="2"/>
+
+    <!-- t0 marker -->
+    <circle cx="100" cy="180" r="8" fill="#7ee787"/>
+    <text x="100" y="210" text-anchor="middle" fill="#7ee787" font-size="13" font-weight="bold">t0</text>
+    <text x="100" y="228" text-anchor="middle" fill="#c9d1d9" font-size="11">deposit(item)</text>
+    <text x="100" y="244" text-anchor="middle" fill="#8b949e" font-size="10">HOLD bond, MIDDS public</text>
+
+    <!-- 7d zone -->
+    <rect x="100" y="100" width="500" height="60" fill="#d29922" fill-opacity="0.12" stroke="#d29922" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="350" y="86" text-anchor="middle" fill="#d29922" font-size="13" font-weight="bold">FENÊTRE REFUNDABLE — 7 jours</text>
+    <text x="350" y="135" text-anchor="middle" fill="#c9d1d9" font-size="12">remove_own(id) → refund 100 % du base bond</text>
+    <text x="350" y="152" text-anchor="middle" fill="#c9d1d9" font-size="12">update(id, item) → modifie payload, fenêtre inchangée</text>
+
+    <!-- t0+7d marker -->
+    <circle cx="600" cy="180" r="8" fill="#79c0ff"/>
+    <text x="600" y="210" text-anchor="middle" fill="#79c0ff" font-size="13" font-weight="bold">t0 + 7 jours</text>
+    <text x="600" y="228" text-anchor="middle" fill="#c9d1d9" font-size="11">finalize(id) automatique</text>
+    <text x="600" y="244" text-anchor="middle" fill="#8b949e" font-size="10">bond → Foundation Treasury</text>
+
+    <!-- Permanent zone -->
+    <rect x="600" y="100" width="440" height="60" fill="#79c0ff" fill-opacity="0.08" stroke="#79c0ff" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="820" y="86" text-anchor="middle" fill="#79c0ff" font-size="13" font-weight="bold">PERMANENT</text>
+    <text x="820" y="135" text-anchor="middle" fill="#c9d1d9" font-size="12">force_remove_refund / force_remove_slash (sudo)</text>
+    <text x="820" y="152" text-anchor="middle" fill="#c9d1d9" font-size="12">force_edit (sudo) — économie inchangée</text>
+
+    <!-- Far end arrow -->
+    <line x1="1030" y1="180" x2="1050" y2="180" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="1060" y="184" fill="#8b949e" font-size="11">∞</text>
+  </svg>
+</div>
+
+<div class="takeaway">
+  <strong>Clé</strong> : la fenêtre 7j permet l'auto-correction (ou l'annulation) sans coût. Au-delà, le bond appartient à la Foundation Treasury, pas brûlé — la supply de 1 B AFT est préservée.
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Décomposition du bond</h2>
+<p class="meta">Bond effectif = (<code>BondBase</code> + <code>BondPerByte × size</code>) × <code>M_fast</code> × <code>M_slow</code></p>
+
+<div class="grid-2">
+  <div class="panel">
+    <h3>Composants à différentes tailles de payload</h3>
+    <div class="chart-wrap"><canvas id="bondBreakdown"></canvas></div>
+    <div class="takeaway">
+      Le <strong>BondBase domine largement</strong> à toutes les tailles réalistes. Le coût per-byte est presque cosmétique pour MusicalWork (≤ 900 B max).
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Effet des multiplicateurs (régime nominal vs flood)</h3>
+    <div class="chart-wrap"><canvas id="bondMultiplied"></canvas></div>
+    <div class="takeaway">
+      En régime nominal, le bond est ~500 mAFT (~$0.01). En cas de flood soutenu (M_slow×10), il grimpe à <strong>~5 AFT</strong> ; pire cas extrême (×20 × ×50 = ×1000) ~500 AFT — signal fort sans casser la chaîne.
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. M_fast — multiplicateur anti-DoS (par bloc)</h2>
+<p class="meta">Cible : 100 deposits/bloc. Adjustment : ±12.5 % max par bloc. Floor 0.1×, ceiling 20×.</p>
+
+<div class="panel">
+  <h3>Réaction à différents profils de charge (200 blocs ≈ 20 minutes)</h3>
+  <div class="chart-wrap tall"><canvas id="mFast"></canvas></div>
+  <div class="takeaway">
+    Un burst d'1 bloc fait spiker le multiplicateur, qui retombe en quelques minutes. Le régime nominal reste à 1×. Une charge soutenue 3× cible monte progressivement jusqu'au plafond.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. M_slow — multiplicateur anti-flood (fenêtre 7j glissante)</h2>
+<p class="meta">Cible : 200 000 deposits/semaine. Adjustment : ±5 % max par jour. Floor 0.1×, ceiling 50×.</p>
+
+<div class="panel">
+  <h3>Réaction à différents profils sur 12 semaines</h3>
+  <div class="chart-wrap tall"><canvas id="mSlow"></canvas></div>
+  <div class="takeaway">
+    Le profil <span style="color:var(--accent);font-weight:bold">"flood très patient"</span> (étalé sur 12 semaines) reste près de la cible — il devient indistinguable d'usage légitime. C'est <strong>le bon transfert de problème</strong> : à ce rythme, la défense bascule sur le filtrage qualité (off-chain ou PoM future), plus sur l'économie.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. Coût pour différents profils d'utilisateurs</h2>
+<p class="meta">Bond cumulé selon la stratégie d'ingestion. Échelle logarithmique.</p>
+
+<div class="panel">
+  <div class="chart-wrap tall"><canvas id="profileCosts"></canvas></div>
+  <table>
+    <tr><th>Profil</th><th>Volume</th><th>Stratégie</th><th>Bond moyen</th><th>Total bond</th></tr>
+    <tr><td>Artiste indé</td><td>5 records</td><td>au fil de l'eau</td><td>~500 mAFT</td><td>~2.5 AFT (~$0.05)</td></tr>
+    <tr><td>Album release</td><td>12 records</td><td>1 batch</td><td>~500 mAFT</td><td>~6 AFT (~$0.12)</td></tr>
+    <tr><td>Label indé</td><td>10K records</td><td>étalé sur 1 mois</td><td>~500 mAFT</td><td>~5 K AFT (~$100)</td></tr>
+    <tr><td>CMO ingest</td><td>1M records</td><td>étalé sur 60j</td><td>~750 mAFT</td><td>~750 K AFT (~$15K)</td></tr>
+    <tr><td>Flood patient (attaquant)</td><td>1M</td><td>en 7 jours</td><td>~5 AFT</td><td>~5 M AFT (~$100K)</td></tr>
+    <tr><td>Burst (DoS)</td><td>1000 records</td><td>en 1 bloc</td><td>~5 AFT</td><td>~5 K AFT (~$100)</td></tr>
+  </table>
+  <div class="takeaway">
+    Le mécanisme <strong>n'oppose pas honnêtes et attaquants</strong> — il les place sur la même courbe de prix. Un attaquant qui veut éviter la prime doit se comporter comme un user honnête (étaler dans le temps), ce qui (a) limite la nuisance, (b) donne du temps à la détection off-chain.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Revenue Foundation Treasury par scénario d'adoption</h2>
+<p class="meta">Cumul sur 5 ans. Bond moyen 50 mAFT (régime nominal) — destination Treasury, jamais brûlé.</p>
+
+<div class="panel">
+  <div class="chart-wrap tall"><canvas id="treasuryRevenue"></canvas></div>
+  <table>
+    <tr><th>Scénario</th><th>Deposits/an</th><th>Revenue/an</th><th>Cumul 5 ans</th><th>% supply</th></tr>
+    <tr><td>Bootstrap an 1</td><td>100 K</td><td>50 K AFT</td><td>250 K AFT</td><td>0.025 %</td></tr>
+    <tr><td>Adoption modeste</td><td>1 M</td><td>500 K AFT</td><td>2.5 M AFT</td><td>0.25 %</td></tr>
+    <tr><td>Adoption forte (cible V1)</td><td>10 M</td><td>5 M AFT</td><td>25 M AFT</td><td>2.5 %</td></tr>
+    <tr><td>Adoption massive (avec multiplicateurs ×2)</td><td>100 M</td><td>100 M AFT</td><td>500 M AFT</td><td>50 %</td></tr>
+  </table>
+  <div class="takeaway">
+    Le pool community rewards initial fait 260 M AFT. À adoption forte, la Treasury MIDDS recycle <strong>~2 % de la supply totale par an</strong> — largement assez pour pérenniser les rewards quand le pool initial s'épuisera (~10-14 ans), et financer significativement la R&D / opérations Foundation. <code>economics.md §11</code>.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>7. Lecture d'une semaine type</h2>
+<p class="meta">Aligné sur le cycle release musical (vendredi = IFPI Global Release Day).</p>
+
+<div class="panel">
+  <div class="chart-wrap tall"><canvas id="weekPattern"></canvas></div>
+  <div class="takeaway">
+    Une <strong>semaine bien répartie</strong> reste près du floor toute la semaine. Une <strong>semaine concentrée sur la fin</strong> (release-day-only) fait monter le prix progressivement — incentive concret à enregistrer ses MIDDS lundi-mardi pour un release vendredi.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>8. Synthèse — ce qui rend le modèle sain</h2>
+<div class="panel">
+  <table>
+    <tr><th>Propriété</th><th>Mécanisme</th><th>Ne fait pas</th></tr>
+    <tr>
+      <td>Anti-DoS instantané</td>
+      <td><code>M_fast</code> spike sur burst de bloc</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>Anti-flood patient</td>
+      <td><code>M_slow</code> sticky sur fenêtre 7j</td>
+      <td>Pas anti-sybil absolu : un acteur très patient passe entre les mailles</td>
+    </tr>
+    <tr>
+      <td>UX corrigeable</td>
+      <td>Fenêtre 7j refundable (<code>remove_own</code>)</td>
+      <td>Pas de refund passé 7 jours</td>
+    </tr>
+    <tr>
+      <td>Préservation supply</td>
+      <td>Bond → Foundation Treasury (jamais brûlé)</td>
+      <td>Pas redistribué automatiquement aux validateurs</td>
+    </tr>
+    <tr>
+      <td>Aligné cycle métier</td>
+      <td>Fenêtre 7j = semaine release musicale</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>Sybil-résistant par construction</td>
+      <td>Multiplicateurs au niveau communautaire, pas per-account</td>
+      <td>Ne remplace pas la curation qualité (off-chain ou PoM future)</td>
+    </tr>
+  </table>
+</div>
+
+</div>
+
+<script>
+// ===================================================================
+// COULEURS
+// ===================================================================
+const C = {
+  text: '#c9d1d9', muted: '#8b949e', grid: '#30363d',
+  green: '#7ee787', red: '#ff7b72', blue: '#79c0ff',
+  yellow: '#d29922', purple: '#d2a8ff', orange: '#ffa657',
+};
+
+// ===================================================================
+// PARAMÈTRES DU MODÈLE
+// ===================================================================
+const BOND_BASE = 500;         // mAFT (= 0.5 AFT)
+const BOND_PER_BYTE = 0.01;    // mAFT/B (= 10 µAFT/B)
+
+const FAST_TARGET = 100;       // deposits/bloc
+const FAST_RATE = 1/8;         // EIP-1559 style: ±12.5 % max à 2× target
+const FAST_MIN = 0.1, FAST_MAX = 20;
+
+const SLOW_TARGET = 200_000;   // deposits/semaine
+const SLOW_RATE_PER_DAY = 1/20; // ±5 % max à 2× target
+const SLOW_MIN = 0.1, SLOW_MAX = 50;
+
+// Defaults Chart.js
+Chart.defaults.color = C.text;
+Chart.defaults.borderColor = C.grid;
+Chart.defaults.font.family = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
+
+// ===================================================================
+// SIMULATEURS
+// ===================================================================
+function simulateMFast(depositsPerBlock) {
+  let m = 1;
+  return depositsPerBlock.map(count => {
+    const delta = (count - FAST_TARGET) / FAST_TARGET * FAST_RATE;
+    m = m * (1 + delta);
+    m = Math.min(FAST_MAX, Math.max(FAST_MIN, m));
+    return m;
+  });
+}
+
+function simulateMSlow(depositsPerDay) {
+  let m = 1;
+  const window = []; // last 7 days
+  return depositsPerDay.map(count => {
+    window.push(count);
+    if (window.length > 7) window.shift();
+    const total = window.reduce((a,b)=>a+b, 0);
+    const delta = (total - SLOW_TARGET) / SLOW_TARGET * SLOW_RATE_PER_DAY;
+    m = m * (1 + delta);
+    m = Math.min(SLOW_MAX, Math.max(SLOW_MIN, m));
+    return m;
+  });
+}
+
+// ===================================================================
+// CHART 1 — Bond breakdown by payload size
+// ===================================================================
+const sizes = [50, 100, 150, 250, 500, 900];
+const baseValues = sizes.map(_ => BOND_BASE);
+const perByteValues = sizes.map(s => BOND_PER_BYTE * s);
+
+new Chart(document.getElementById('bondBreakdown'), {
+  type: 'bar',
+  data: {
+    labels: sizes.map(s => `${s} B`),
+    datasets: [
+      { label: 'BondBase (500 mAFT)', data: baseValues, backgroundColor: C.green },
+      { label: 'BondPerByte × size (10 µAFT/B)', data: perByteValues, backgroundColor: C.yellow },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { tooltip: { mode: 'index' } },
+    scales: {
+      x: { stacked: true, title: { display: true, text: 'Taille payload encodé' } },
+      y: { stacked: true, title: { display: true, text: 'Bond (mAFT)' }, beginAtZero: true }
+    }
+  }
+});
+
+// ===================================================================
+// CHART 2 — Bond multiplied
+// ===================================================================
+const scenarios = [
+  { label: 'Nominal (M_fast=1, M_slow=1)', value: BOND_BASE * 1 * 1 },
+  { label: 'Burst 1 bloc (M_fast=10)', value: BOND_BASE * 10 * 1 },
+  { label: 'Flood soutenu 7j (M_slow=10)', value: BOND_BASE * 1 * 10 },
+  { label: 'Pire cas (×20 × ×50)', value: BOND_BASE * 20 * 50 },
+];
+
+new Chart(document.getElementById('bondMultiplied'), {
+  type: 'bar',
+  data: {
+    labels: scenarios.map(s => s.label),
+    datasets: [{
+      label: 'Bond effectif (mAFT)',
+      data: scenarios.map(s => s.value),
+      backgroundColor: [C.green, C.yellow, C.orange, C.red],
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { type: 'logarithmic', title: { display: true, text: 'Bond (mAFT, log)' } },
+    }
+  }
+});
+
+// ===================================================================
+// CHART 3 — M_fast scenarios
+// ===================================================================
+const N_BLOCKS = 200;
+const blocks = Array.from({length: N_BLOCKS}, (_, i) => i);
+
+// Profiles
+function nominal(n) { return Array(n).fill(FAST_TARGET); }
+
+function burstAt(n, blockIdx, burstSize) {
+  return Array.from({length: n}, (_, i) => i === blockIdx ? burstSize : FAST_TARGET);
+}
+
+function sustained(n, count, startIdx, duration) {
+  return Array.from({length: n}, (_, i) =>
+    (i >= startIdx && i < startIdx + duration) ? count : FAST_TARGET);
+}
+
+const fastProfiles = {
+  'Régime nominal (100/bloc)': nominal(N_BLOCKS),
+  'Burst 1 bloc (1000 deposits @ bloc 50)': burstAt(N_BLOCKS, 50, 1000),
+  'Charge soutenue 3× cible (blocs 50–100)': sustained(N_BLOCKS, 300, 50, 50),
+};
+
+const fastDatasets = Object.entries(fastProfiles).map(([label, profile], i) => ({
+  label,
+  data: simulateMFast(profile),
+  borderColor: [C.green, C.red, C.orange][i],
+  backgroundColor: [C.green, C.red, C.orange][i] + '22',
+  borderWidth: 2,
+  pointRadius: 0,
+  tension: 0.1,
+  fill: false,
+}));
+
+new Chart(document.getElementById('mFast'), {
+  type: 'line',
+  data: { labels: blocks, datasets: fastDatasets },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { title: { display: true, text: 'Bloc' } },
+      y: { title: { display: true, text: 'M_fast (×)' }, min: 0, max: 12 }
+    }
+  }
+});
+
+// ===================================================================
+// CHART 4 — M_slow scenarios
+// ===================================================================
+const N_DAYS = 84; // 12 semaines
+const days = Array.from({length: N_DAYS}, (_, i) => i);
+
+const NOMINAL_DAILY = SLOW_TARGET / 7; // ~28 571
+
+const slowProfiles = {
+  'Nominal (200K/sem)': Array(N_DAYS).fill(NOMINAL_DAILY),
+  'Flood patient 1M en 7j (sem 3)': days.map(d =>
+    (d >= 21 && d < 28) ? 1_000_000 / 7 : NOMINAL_DAILY),
+  'Flood soutenu 5× cible (sem 3-6)': days.map(d =>
+    (d >= 21 && d < 49) ? 5 * NOMINAL_DAILY : NOMINAL_DAILY),
+  'Flood très patient 1M en 12sem': days.map(_ => 1_000_000 / 84),
+};
+
+const slowDatasets = Object.entries(slowProfiles).map(([label, profile], i) => ({
+  label,
+  data: simulateMSlow(profile),
+  borderColor: [C.blue, C.yellow, C.red, C.green][i],
+  backgroundColor: [C.blue, C.yellow, C.red, C.green][i] + '22',
+  borderWidth: 2,
+  pointRadius: 0,
+  tension: 0.2,
+  fill: false,
+}));
+
+new Chart(document.getElementById('mSlow'), {
+  type: 'line',
+  data: {
+    labels: days.map(d => `J${d}`),
+    datasets: slowDatasets
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { title: { display: true, text: 'Jour' }, ticks: { maxTicksLimit: 12 } },
+      y: { title: { display: true, text: 'M_slow (×)' }, min: 0 }
+    }
+  }
+});
+
+// ===================================================================
+// CHART 5 — Profile costs
+// ===================================================================
+const profiles = [
+  { name: 'Artiste indé (5 records)', records: 5, avgMult: 1 },
+  { name: 'Album (12 records)', records: 12, avgMult: 1 },
+  { name: 'Label indé (10K, 1 mois)', records: 10_000, avgMult: 1 },
+  { name: 'CMO ingest (1M, 60j)', records: 1_000_000, avgMult: 1.5 },
+  { name: 'Flood patient (1M en 7j)', records: 1_000_000, avgMult: 10 },
+  { name: 'Burst DoS (1K en 1 bloc)', records: 1_000, avgMult: 10 },
+];
+profiles.forEach(p => p.totalAFT = p.records * BOND_BASE * p.avgMult / 1000); // mAFT → AFT
+// avec BOND_BASE=500 : artiste 2.5 AFT, album 6 AFT, label 5K AFT, CMO 750K AFT, flood 5M AFT
+
+new Chart(document.getElementById('profileCosts'), {
+  type: 'bar',
+  data: {
+    labels: profiles.map(p => p.name),
+    datasets: [{
+      label: 'Bond cumulé (AFT)',
+      data: profiles.map(p => p.totalAFT),
+      backgroundColor: profiles.map(p =>
+        p.avgMult > 5 ? C.red : (p.avgMult > 1.2 ? C.yellow : C.green)),
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => `${ctx.parsed.y.toLocaleString()} AFT (~$${(ctx.parsed.y * 0.02).toFixed(2)})` }}
+    },
+    scales: {
+      y: {
+        type: 'logarithmic',
+        title: { display: true, text: 'Bond cumulé (AFT, log)' },
+        ticks: { callback: v => v.toLocaleString() }
+      }
+    }
+  }
+});
+
+// ===================================================================
+// CHART 6 — Treasury revenue cumulative over 5y
+// ===================================================================
+const months = Array.from({length: 60}, (_, i) => i + 1);
+const adoptionScenarios = {
+  'Bootstrap (100K/an)':  100_000,
+  'Modeste (1M/an)':      1_000_000,
+  'Forte (10M/an)':       10_000_000,
+  'Massive (100M/an, M=2)': 100_000_000,
+};
+
+const treasuryDatasets = Object.entries(adoptionScenarios).map(([label, perYear], i) => {
+  const isMassive = label.includes('Massive');
+  const avgMult = isMassive ? 2 : 1;
+  const monthly = perYear / 12 * BOND_BASE * avgMult / 1000; // mAFT → AFT
+  return {
+    label,
+    data: months.map(m => m * monthly),
+    borderColor: [C.green, C.blue, C.yellow, C.red][i],
+    backgroundColor: [C.green, C.blue, C.yellow, C.red][i] + '22',
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.1,
+    fill: false,
+  };
+});
+
+new Chart(document.getElementById('treasuryRevenue'), {
+  type: 'line',
+  data: {
+    labels: months.map(m => `M${m}`),
+    datasets: treasuryDatasets
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString(undefined, {maximumFractionDigits: 0})} AFT` }}
+    },
+    scales: {
+      x: { title: { display: true, text: 'Mois depuis launch' }, ticks: { maxTicksLimit: 12 } },
+      y: {
+        type: 'logarithmic',
+        title: { display: true, text: 'Cumul Treasury (AFT, log)' },
+        ticks: { callback: v => v.toLocaleString() }
+      }
+    }
+  }
+});
+
+// ===================================================================
+// CHART 7 — Week pattern
+// ===================================================================
+// Simulate 4 weeks: 2 well-spread, 2 friday-concentrated
+const HOURS = 4 * 7 * 24; // 4 weeks at hourly granularity
+const PER_HOUR_TARGET = SLOW_TARGET / 7 / 24;
+
+const weekProfiles = {
+  'Bien réparti': Array(HOURS).fill(PER_HOUR_TARGET),
+  'Concentré vendredi (release day)': Array.from({length: HOURS}, (_, h) => {
+    const dayOfWeek = Math.floor(h / 24) % 7;
+    // 0=Mon, 4=Fri
+    if (dayOfWeek === 4) return PER_HOUR_TARGET * 6;  // 6× sur vendredi
+    if (dayOfWeek === 5 || dayOfWeek === 6) return PER_HOUR_TARGET * 0.3;
+    return PER_HOUR_TARGET * 0.2;
+  })
+};
+
+// Aggregate per-day for M_slow simulation
+function hourlyToDaily(hourly) {
+  const daily = [];
+  for (let d = 0; d < hourly.length / 24; d++) {
+    daily.push(hourly.slice(d*24, (d+1)*24).reduce((a,b)=>a+b, 0));
+  }
+  return daily;
+}
+
+const weekDays = Array.from({length: 28}, (_, i) => {
+  const dayNames = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const week = Math.floor(i / 7) + 1;
+  return `S${week} ${dayNames[i % 7]}`;
+});
+
+const weekDatasets = Object.entries(weekProfiles).map(([label, hourly], i) => {
+  const daily = hourlyToDaily(hourly);
+  const slow = simulateMSlow(daily);
+  const bondPrice = slow.map(m => BOND_BASE * m);
+  return {
+    label: `${label} — bond effectif (mAFT)`,
+    data: bondPrice,
+    borderColor: [C.green, C.red][i],
+    backgroundColor: [C.green, C.red][i] + '22',
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.3,
+    fill: false,
+  };
+});
+
+new Chart(document.getElementById('weekPattern'), {
+  type: 'line',
+  data: {
+    labels: weekDays,
+    datasets: weekDatasets
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { title: { display: true, text: 'Jour (4 semaines)' }, ticks: { maxRotation: 60, minRotation: 60 } },
+      y: { title: { display: true, text: 'Bond effectif (mAFT)' }, min: 0 }
+    }
+  }
+});
+</script>
+
+</body>
+</html>

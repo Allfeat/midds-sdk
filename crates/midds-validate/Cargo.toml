@@ -1,0 +1,19 @@
+[package]
+name = "midds-validate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Std-side rich validation (regex, normalization, checksums) for MIDDS data."
+
+[dependencies]
+midds-traits = { workspace = true, features = ["std"] }
+regex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+midds-fixtures = { workspace = true, features = ["proptest"] }
+midds-types = { workspace = true, features = ["std"] }
+proptest = { workspace = true }

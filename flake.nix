@@ -1,0 +1,44 @@
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs =
+    {
+      nixpkgs,
+      rust-overlay,
+      flake-utils,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        overlays = [
+          (import rust-overlay)
+        ];
+        pkgs = import nixpkgs {
+          inherit system overlays;
+        };
+
+      in
+      {
+        devShells.default = pkgs.mkShell {
+          packages = with pkgs; [
+            (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+            clang
+            protobuf
+            openssl
+            pkg-config
+            just
+            subxt
+            trunk
+            binaryen
+          ];
+        };
+      }
+    );
+}

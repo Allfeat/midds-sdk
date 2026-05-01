@@ -1,0 +1,229 @@
+use frame_support::{BoundedVec, traits::ConstU32};
+
+use crate::error::MiddsFormatError;
+
+/// A bounded ASCII byte string of capacity `N`, used for canonical identifiers.
+pub type MiddsString<const N: u32> = BoundedVec<u8, ConstU32<N>>;
+
+/// ISWC: `T` followed by 10 decimal digits (the last is the check digit).
+pub type Iswc = MiddsString<11>;
+/// ISNI: 16 chars — 15 decimal digits + a final digit or `X`.
+pub type Isni = MiddsString<16>;
+/// IPI: 9 to 11 decimal digits.
+pub type Ipi = MiddsString<11>;
+/// ISRC: 2 alpha country + 3 alphanumeric registrant + 2-digit year + 5 digits.
+pub type Isrc = MiddsString<12>;
+/// Off-chain extension hash. Opaque on-chain; CIDv1 by client convention.
+pub type OffchainHash = MiddsString<64>;
+
+pub fn validate_iswc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.len() != 11 {
+        return Err(MiddsFormatError::OutOfBounds);
+    }
+    if b[0] != b'T' {
+        return Err(MiddsFormatError::InvalidIdentifierStructure);
+    }
+    if !b[1..].iter().all(u8::is_ascii_digit) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    Ok(())
+}
+
+pub fn validate_isni_format(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.len() != 16 {
+        return Err(MiddsFormatError::OutOfBounds);
+    }
+    if !b[..15].iter().all(u8::is_ascii_digit) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    let last = b[15];
+    if !last.is_ascii_digit() && last != b'X' {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    Ok(())
+}
+
+pub fn validate_ipi_format(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.len() < 9 || b.len() > 11 {
+        return Err(MiddsFormatError::OutOfBounds);
+    }
+    if !b.iter().all(u8::is_ascii_digit) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    Ok(())
+}
+
+pub fn validate_isrc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.len() != 12 {
+        return Err(MiddsFormatError::OutOfBounds);
+    }
+    if !b[..2].iter().all(u8::is_ascii_uppercase) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    if !b[2..5]
+        .iter()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    if !b[5..].iter().all(u8::is_ascii_digit) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    Ok(())
+}
+
+pub fn validate_offchain_hash(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.is_empty() {
+        return Err(MiddsFormatError::EmptyMandatoryField);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iswc_pass() {
+        assert!(validate_iswc_format(b"T1234567890").is_ok());
+        assert!(validate_iswc_format(b"T0000000000").is_ok());
+    }
+
+    #[test]
+    fn iswc_wrong_length() {
+        assert_eq!(
+            validate_iswc_format(b"T123"),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+        assert_eq!(
+            validate_iswc_format(b"T12345678901"),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+        assert_eq!(
+            validate_iswc_format(b""),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+    }
+
+    #[test]
+    fn iswc_missing_t_prefix() {
+        assert_eq!(
+            validate_iswc_format(b"X1234567890"),
+            Err(MiddsFormatError::InvalidIdentifierStructure),
+        );
+    }
+
+    #[test]
+    fn iswc_non_digit_payload() {
+        assert_eq!(
+            validate_iswc_format(b"T12345A7890"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn isni_pass() {
+        assert!(validate_isni_format(b"0000000121032683").is_ok());
+        assert!(validate_isni_format(b"000000012103268X").is_ok());
+    }
+
+    #[test]
+    fn isni_wrong_length() {
+        assert_eq!(
+            validate_isni_format(b"123"),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+        assert_eq!(
+            validate_isni_format(b"00000001210326830"),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+    }
+
+    #[test]
+    fn isni_invalid_charset() {
+        assert_eq!(
+            validate_isni_format(b"00000001A1032683"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+        assert_eq!(
+            validate_isni_format(b"000000012103268Y"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn ipi_pass() {
+        assert!(validate_ipi_format(b"123456789").is_ok());
+        assert!(validate_ipi_format(b"1234567890").is_ok());
+        assert!(validate_ipi_format(b"12345678901").is_ok());
+    }
+
+    #[test]
+    fn ipi_wrong_length() {
+        assert_eq!(
+            validate_ipi_format(b"12345678"),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+        assert_eq!(
+            validate_ipi_format(b"123456789012"),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+    }
+
+    #[test]
+    fn ipi_invalid_charset() {
+        assert_eq!(
+            validate_ipi_format(b"12345A789"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn isrc_pass() {
+        assert!(validate_isrc_format(b"USRC17607839").is_ok());
+        assert!(validate_isrc_format(b"GBAYE0601477").is_ok());
+        assert!(validate_isrc_format(b"FR6V82050001").is_ok());
+    }
+
+    #[test]
+    fn isrc_wrong_length() {
+        assert_eq!(
+            validate_isrc_format(b"US"),
+            Err(MiddsFormatError::OutOfBounds)
+        );
+        assert_eq!(
+            validate_isrc_format(b"USRC176078390"),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+    }
+
+    #[test]
+    fn isrc_invalid_country_code() {
+        assert_eq!(
+            validate_isrc_format(b"u5RC17607839"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn isrc_invalid_year_or_designation() {
+        assert_eq!(
+            validate_isrc_format(b"USRC1760A839"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn offchain_hash_pass() {
+        assert!(validate_offchain_hash(b"bafkreigh2akiscaildc").is_ok());
+        assert!(validate_offchain_hash(&[0u8; 64]).is_ok());
+    }
+
+    #[test]
+    fn offchain_hash_empty() {
+        assert_eq!(
+            validate_offchain_hash(b""),
+            Err(MiddsFormatError::EmptyMandatoryField),
+        );
+    }
+}

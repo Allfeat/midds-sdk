@@ -1,3 +1,7 @@
+// `subxt::Error` is ~216B; boxing it would change the public Error API.
+// Tracked: revisit when the client error surface is next refactored.
+#![allow(clippy::result_large_err)]
+
 //! High-level Rust client for the Allfeat MIDDS pallets.
 //!
 //! Wraps `subxt` with a typed façade per pallet instance. V1 covers the

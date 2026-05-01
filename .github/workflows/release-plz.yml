@@ -1,0 +1,60 @@
+name: Release-plz
+
+# Maintains a release PR with version bumps + CHANGELOG, and creates a
+# single workspace tag + GitHub Release when the PR is merged. Runs in
+# `git_only` mode (no cargo publish) per release-plz.toml.
+#
+# Note: the default `secrets.GITHUB_TOKEN` cannot trigger CI on the PRs
+# this workflow opens. To get CI on release PRs, replace it with a
+# Personal Access Token (PAT) or a GitHub App token. Acceptable trade-off
+# for now since release PRs are reviewed before merge.
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  release-plz-release:
+    name: release-plz release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-plz-pr:
+    name: release-plz PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

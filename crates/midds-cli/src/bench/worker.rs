@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use midds_client::{
-    Balance, ChainConfig, MiddsClient, PricingSnapshot,
-    subxt::tx::Signer,
+    Balance, ChainConfig, MiddsClient, PricingSnapshot, subxt::tx::Signer,
     subxt_signer::sr25519::Keypair,
 };
 use midds_types::MusicalWork;

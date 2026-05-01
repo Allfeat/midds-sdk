@@ -261,10 +261,9 @@ impl<'a> MusicalWorksApi<'a> {
         );
         let progress = match nonce {
             Some(n) => {
-                let params =
-                    subxt::config::DefaultExtrinsicParamsBuilder::<ChainConfig>::new()
-                        .nonce(n)
-                        .build();
+                let params = subxt::config::DefaultExtrinsicParamsBuilder::<ChainConfig>::new()
+                    .nonce(n)
+                    .build();
                 tx_client
                     .sign_and_submit_then_watch(&payload, signer, params)
                     .await?
@@ -400,7 +399,8 @@ impl<'a> MusicalWorksApi<'a> {
     /// returns the unmultiplied base, which under-prices any block where
     /// `M_fast × M_slow > 1`.
     pub async fn current_deposit_price(&self, size: u32) -> Result<Balance, Error> {
-        self.runtime_api("current_deposit_price", &size.encode()).await
+        self.runtime_api("current_deposit_price", &size.encode())
+            .await
     }
 
     /// Read `(M_fast, M_slow)` at the current block as raw [`FixedU128Raw`]
@@ -443,17 +443,21 @@ impl<'a> MusicalWorksApi<'a> {
     pub async fn deposit_info(&self, id: MiddsId) -> Result<Option<DepositInfo>, Error> {
         // Wire shape is `Option<(AccountId, Balance, Balance, bool)>`.
         let raw = self
-            .runtime_api::<Option<(<ChainConfig as subxt::Config>::AccountId, Balance, Balance, bool)>>(
-                "deposit_info",
-                &id.encode(),
-            )
+            .runtime_api::<Option<(
+                <ChainConfig as subxt::Config>::AccountId,
+                Balance,
+                Balance,
+                bool,
+            )>>("deposit_info", &id.encode())
             .await?;
-        Ok(raw.map(|(depositor, total_held, base_bond, finalized)| DepositInfo {
-            depositor,
-            total_held,
-            base_bond,
-            finalized,
-        }))
+        Ok(raw.map(
+            |(depositor, total_held, base_bond, finalized)| DepositInfo {
+                depositor,
+                total_held,
+                base_bond,
+                finalized,
+            },
+        ))
     }
 
     /// Call a `MiddsApi_<method>` runtime API and SCALE-decode the response

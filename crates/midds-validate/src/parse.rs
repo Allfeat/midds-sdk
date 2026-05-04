@@ -8,18 +8,30 @@
 
 use std::sync::LazyLock;
 
-use midds_traits::{Ipi, Isni, Iswc};
+use midds_traits::{Ipi, Isni, Isrc, Iswc};
 use regex::Regex;
 
 use crate::error::ParseError;
 
+// Each regex pattern is a `const &'static str` literal; `Regex::new` over a
+// statically valid pattern cannot fail in practice. The `unwrap` here is
+// the documented escape hatch for compile-time-guaranteed inputs.
+#[allow(clippy::disallowed_methods)]
 static ISWC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^T-?(\d{3})\.?(\d{3})\.?(\d{3})-?(\d)$").unwrap());
 
+#[allow(clippy::disallowed_methods)]
 static ISNI_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{4})[\s-]?(\d{4})[\s-]?(\d{4})[\s-]?(\d{3}[\dX])$").unwrap());
 
+#[allow(clippy::disallowed_methods)]
 static IPI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:I-)?(\d{9,11})$").unwrap());
+
+// `[A-Z]{2}` country, `[A-Z0-9]{3}` registrant, `\d{2}` year, `\d{5}`
+// designation. Separators are optional dashes between each segment.
+#[allow(clippy::disallowed_methods)]
+static ISRC_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([A-Z]{2})-?([A-Z0-9]{3})-?(\d{2})-?(\d{5})$").unwrap());
 
 /// Parse a tolerant ISWC string into the canonical 11-byte form `T` + 10 digits.
 pub fn parse_iswc(s: &str) -> Result<Iswc, ParseError> {
@@ -57,7 +69,28 @@ pub fn parse_ipi(s: &str) -> Result<Ipi, ParseError> {
     Ipi::try_from(digits).map_err(|_| ParseError::OutOfBounds)
 }
 
+/// Parse a tolerant ISRC string into the canonical 12-byte form
+/// (country + registrant + year + designation, no separators).
+///
+/// Accepted shapes (case-insensitive):
+/// - `USRC17607839` (canonical, no separators)
+/// - `US-RC1-76-07839` (separators between every segment)
+/// - `US-RC1-7607839` / `USRC1-76-07839` (partial separators)
+/// - leading / trailing whitespace
+pub fn parse_isrc(s: &str) -> Result<Isrc, ParseError> {
+    let upper = s.trim().to_ascii_uppercase();
+    let caps = ISRC_RE
+        .captures(&upper)
+        .ok_or(ParseError::PatternMismatch)?;
+    let mut out = String::with_capacity(12);
+    for i in 1..=4 {
+        out.push_str(&caps[i]);
+    }
+    Isrc::try_from(out.into_bytes()).map_err(|_| ParseError::OutOfBounds)
+}
+
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests legitimately unwrap")]
 mod tests {
     use super::*;
 
@@ -144,5 +177,75 @@ mod tests {
         assert_eq!(parse_ipi("12345678"), Err(ParseError::PatternMismatch));
         assert_eq!(parse_ipi("123456789012"), Err(ParseError::PatternMismatch));
         assert_eq!(parse_ipi("12345A789"), Err(ParseError::PatternMismatch));
+    }
+
+    // ---- ISRC -------------------------------------------------------------
+
+    #[test]
+    fn isrc_canonical_round_trips() {
+        let v = parse_isrc("USRC17607839").expect("canonical");
+        assert_eq!(v.as_slice(), b"USRC17607839");
+    }
+
+    #[test]
+    fn isrc_dashed_normalises() {
+        let v = parse_isrc("US-RC1-76-07839").expect("dashed");
+        assert_eq!(v.as_slice(), b"USRC17607839");
+    }
+
+    #[test]
+    fn isrc_partial_dashes_normalise() {
+        let v = parse_isrc("USRC1-76-07839").expect("partial");
+        assert_eq!(v.as_slice(), b"USRC17607839");
+        let v = parse_isrc("US-RC176-07839").expect("partial alt");
+        assert_eq!(v.as_slice(), b"USRC17607839");
+    }
+
+    #[test]
+    fn isrc_lowercase_normalises() {
+        let v = parse_isrc("usrc17607839").expect("lowercase");
+        assert_eq!(v.as_slice(), b"USRC17607839");
+    }
+
+    #[test]
+    fn isrc_trim() {
+        let v = parse_isrc("  USRC17607839  ").expect("padded");
+        assert_eq!(v.as_slice(), b"USRC17607839");
+    }
+
+    #[test]
+    fn isrc_pattern_mismatch_too_short() {
+        assert_eq!(parse_isrc("USRC1760783"), Err(ParseError::PatternMismatch));
+    }
+
+    #[test]
+    fn isrc_pattern_mismatch_too_long() {
+        assert_eq!(
+            parse_isrc("USRC176078390"),
+            Err(ParseError::PatternMismatch),
+        );
+    }
+
+    #[test]
+    fn isrc_pattern_mismatch_bad_country() {
+        // Country code must be alpha — digits in the first two slots fail.
+        assert_eq!(parse_isrc("12RC17607839"), Err(ParseError::PatternMismatch));
+    }
+
+    #[test]
+    fn isrc_pattern_mismatch_bad_year() {
+        // Year segment must be exactly 2 digits.
+        assert_eq!(parse_isrc("USRC1A607839"), Err(ParseError::PatternMismatch));
+    }
+
+    #[test]
+    fn isrc_pattern_mismatch_bad_designation() {
+        // Designation must be exactly 5 digits — letters are rejected.
+        assert_eq!(parse_isrc("USRC1760783A"), Err(ParseError::PatternMismatch));
+    }
+
+    #[test]
+    fn isrc_pattern_mismatch_empty() {
+        assert_eq!(parse_isrc(""), Err(ParseError::PatternMismatch));
     }
 }

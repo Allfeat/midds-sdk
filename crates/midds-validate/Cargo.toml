@@ -9,11 +9,12 @@ homepage.workspace = true
 description = "Std-side rich validation (regex, normalization, checksums) for MIDDS data."
 
 [dependencies]
+frame-support = { workspace = true, features = ["std"] }
 midds-traits = { workspace = true, features = ["std"] }
+midds-types = { workspace = true, features = ["std"] }
 regex = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 midds-fixtures = { workspace = true, features = ["proptest"] }
-midds-types = { workspace = true, features = ["std"] }
 proptest = { workspace = true }

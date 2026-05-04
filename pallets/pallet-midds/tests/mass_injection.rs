@@ -1,4 +1,8 @@
 //! Mass-injection tests — Couche 3 of `docs/testing.md`.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "test harness; serde_json macro emits Result::unwrap internally"
+)]
 //!
 //! Stresses the pallet at N=1k–100k records on an in-test mock runtime wired
 //! to the real `MusicalWork` payload (not `MockMidds`) so that the committed
@@ -27,9 +31,13 @@ use frame_support::{
 use frame_system::EnsureRoot;
 use midds_fixtures::{gen_n, identifiers::iswc_for_index, pathological::max_size_musical_work};
 use midds_types::MusicalWork;
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode};
+use scale_info::TypeInfo;
 use sp_io::hashing::blake2_256;
-use sp_runtime::{BuildStorage, FixedU128, traits::Get};
+use sp_runtime::{
+    BuildStorage, FixedU128,
+    traits::{Get, IdentifyAccount, Verify},
+};
 
 // -----------------------------------------------------------------------------
 // Mock runtime
@@ -109,9 +117,39 @@ impl Get<FixedU128> for MinFixed {
 pub struct MusicalWorkBenchHelper;
 
 #[cfg(feature = "runtime-benchmarks")]
-impl pallet_midds::BenchmarkHelper<MusicalWork> for MusicalWorkBenchHelper {
+impl pallet_midds::BenchmarkHelper<MusicalWork, StubSignature, AccountId>
+    for MusicalWorkBenchHelper
+{
     fn bench_instance(_size: u32) -> MusicalWork {
         midds_fixtures::pathological::min_size_musical_work()
+    }
+    fn create_signature(_entropy: &[u8], _msg: &[u8]) -> (StubSignature, AccountId) {
+        // Mass-injection scenarios never call the on-behalf extrinsics, so
+        // no real signing is needed — return a placeholder.
+        (StubSignature, 0)
+    }
+}
+
+/// Stub signer wired into `pallet_midds::Config::Signer` for the mass-injection
+/// runtime — this layer never exercises the on-behalf flows, so the trait
+/// bounds need to compile but the impl never runs.
+#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct StubSigner(pub u64);
+
+impl IdentifyAccount for StubSigner {
+    type AccountId = u64;
+    fn into_account(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct StubSignature;
+
+impl Verify for StubSignature {
+    type Signer = StubSigner;
+    fn verify<L: sp_runtime::traits::Lazy<[u8]>>(&self, _msg: L, _signer: &u64) -> bool {
+        false
     }
 }
 
@@ -121,11 +159,14 @@ impl pallet_midds::Config for Test {
     type Midds = MusicalWork;
     type ProviderOrigin = frame_system::EnsureSigned<AccountId>;
     type ForceOrigin = EnsureRoot<AccountId>;
+    type OffchainSignature = StubSignature;
+    type Signer = StubSigner;
     type TreasuryAccount = TreasuryAccount;
     type DepositBase = ConstU128<DEPOSIT_BASE>;
     type DepositPerByte = ConstU128<DEPOSIT_PER_BYTE>;
     type CommitmentWindow = ConstU64<COMMITMENT_WINDOW>;
     type MaxFinalizationsPerBlock = ConstU32<100>;
+    type MaxRemovalsPerCall = ConstU32<32>;
     type BlocksPerDay = ConstU64<10>;
     type FastTargetPerBlock = ConstU32<1_000_000>;
     type FastAdjustmentRate = UnitFixed;
@@ -208,14 +249,11 @@ fn run_scenario(scenario: &'static str, items: Vec<MusicalWork>, depositors: &[A
     let wall_time_ms = started.elapsed().as_millis();
 
     let on_chain_bond = ext.execute_with(|| {
-        let mut total: u128 = 0;
-        for &d in depositors {
-            total += <Balances as InspectHold<AccountId>>::balance_on_hold(
-                &pallet_midds::HoldReason::<()>::Deposit.into(),
-                &d,
-            );
-        }
-        total
+        let reason = pallet_midds::HoldReason::<()>::Deposit.into();
+        depositors
+            .iter()
+            .map(|&d| <Balances as InspectHold<AccountId>>::balance_on_hold(&reason, &d))
+            .sum::<u128>()
     });
     assert_eq!(
         on_chain_bond, sum_bond,
@@ -391,4 +429,95 @@ fn mass_injection_max_size() {
         })
         .collect();
     run_scenario("mass_injection_max_size", items, &[1]);
+}
+
+/// Mass injection while `M_fast` is pinned away from `1.0×` — covers the
+/// path the `economics.md` multiplier logic actually feeds in production.
+/// Without this scenario, the storage root corpus only ever exercises the
+/// neutral-multiplier branch and a regression in the multiplied-bond
+/// accounting (e.g. wrong rounding in `apply_multipliers`) would slip past
+/// CI.
+///
+/// 10k deposits at a fixed `M_fast = 1.5×`: held bond ≠ base bond, the
+/// premium accumulates in `DepositInfo.amount - DepositInfo.base_bond`, and
+/// the projected storage hash diverges from the unit-multiplier corpus.
+#[test]
+fn mass_injection_10k_with_multipliers() {
+    use frame_support::traits::fungible::InspectHold;
+
+    let items = gen_n(0x004D_414B_4544_4D55, 10_000);
+    let depositors: Vec<AccountId> = (1..=10).collect();
+
+    let total_required_bond: Balance = items
+        .iter()
+        .map(|i| DEPOSIT_BASE + DEPOSIT_PER_BYTE * i.encoded_size() as Balance)
+        .sum::<Balance>();
+    // ×3 envelope: ×1.5 multiplier × headroom for fees / per-account skew.
+    let per_account = total_required_bond / depositors.len() as Balance;
+    let balance_each = per_account.saturating_mul(3).saturating_add(1_000_000);
+    let max_account = *depositors.iter().max().expect("non-empty");
+    let mut ext = build_ext(max_account, balance_each);
+
+    let started = Instant::now();
+    let (sum_size, sum_bond, sum_base) = ext.execute_with(|| {
+        // Pin M_fast at 1.5× so every deposit pays a non-trivial premium.
+        // No `on_initialize` ticks during the run → multiplier stays put.
+        pallet_midds::FastMultiplier::<Test, ()>::put(FixedU128::from_rational(3, 2));
+
+        let mut sum_size: u128 = 0;
+        let mut sum_bond: u128 = 0;
+        let mut sum_base: u128 = 0;
+        for (i, item) in items.iter().enumerate() {
+            let depositor = depositors[i % depositors.len()];
+            let size = item.encoded_size();
+            let base = DEPOSIT_BASE + DEPOSIT_PER_BYTE * size as Balance;
+            // 1.5× multiplier == base * 3 / 2 — integer-division rounding
+            // matches `FixedU128::saturating_mul_int` exactly.
+            let multiplied = base.saturating_mul(3) / 2;
+            sum_size += size as u128;
+            sum_bond += multiplied;
+            sum_base += base;
+            pallet_midds::Pallet::<Test>::deposit(RuntimeOrigin::signed(depositor), item.clone())
+                .unwrap_or_else(|e| panic!("deposit #{i} failed: {e:?}"));
+        }
+        (sum_size, sum_bond, sum_base)
+    });
+    let wall_time_ms = started.elapsed().as_millis();
+
+    let (held_total, multiplier_after) = ext.execute_with(|| {
+        let reason = pallet_midds::HoldReason::<()>::Deposit.into();
+        let total: u128 = depositors
+            .iter()
+            .map(|&d| <Balances as InspectHold<AccountId>>::balance_on_hold(&reason, &d))
+            .sum();
+        (total, pallet_midds::FastMultiplier::<Test, ()>::get())
+    });
+    assert_eq!(
+        held_total, sum_bond,
+        "Σ held(account) ≠ Σ base × 1.5 across 10k deposits"
+    );
+    assert!(
+        sum_bond > sum_base,
+        "multiplied total must exceed base total"
+    );
+    assert_eq!(
+        multiplier_after,
+        FixedU128::from_rational(3, 2),
+        "M_fast was modified during the test (no on_initialize ticks expected)",
+    );
+
+    let storage_hash = ext.execute_with(projected_storage_hash);
+    let n = items.len() as u64;
+    write_report(&ScenarioStats {
+        scenario: "mass_injection_10k_with_multipliers",
+        n,
+        total_bond_held: sum_bond,
+        avg_encoded_size_bytes: (sum_size / n as u128) as u64,
+        storage_root_hash: format!("0x{}", hex(&storage_hash)),
+        wall_time_ms,
+    });
+    check_or_bless(
+        "mass_injection_10k_with_multipliers",
+        &format!("0x{}", hex(&storage_hash)),
+    );
 }

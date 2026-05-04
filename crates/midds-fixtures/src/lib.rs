@@ -7,6 +7,10 @@
 //!
 //! # Public API surface
 //!
+//! - [`MiddsFixtures`] — generic per-MIDDS-type extension trait. Each type
+//!   ships a unit struct (e.g. [`musical_work::MusicalWorkFixtures`]) that
+//!   implements it, so generic test scaffolding can be written once over
+//!   `F: MiddsFixtures` instead of being copy-pasted per MIDDS.
 //! - [`musical_work::MusicalWorkBuilder`] — fluent builder over already-bounded
 //!   bytes, producing a `MusicalWork::V1`. Test-ergonomic: panics on bound
 //!   overflow rather than aggregating errors. See `midds_validate::MusicalWorkBuilder`
@@ -18,6 +22,14 @@
 //!   implementations for property tests.
 //! - `musical_work::corpus` (feature `corpus`) — iterators over committed
 //!   datasets (`data/*.json`).
+//!
+//! # Adding a new MIDDS type to the corpus
+//!
+//! 1. Create a sibling module to `musical_work/` (e.g. `recording/`) with
+//!    a `RecordingFixtures` unit struct.
+//! 2. Implement [`MiddsFixtures`] on it.
+//! 3. The pallet/property/mass-injection harnesses pick it up generically;
+//!    no scaffolding duplication.
 
 pub mod identifiers;
 pub mod musical_work;
@@ -27,9 +39,44 @@ pub mod rng;
 pub use musical_work::MusicalWorkBuilder;
 pub use rng::seeded_rng;
 
+use midds_traits::Midds;
 use midds_types::MusicalWork;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+
+/// Generic extension trait implemented by per-MIDDS-type fixture units.
+///
+/// A `MiddsFixtures` impl bundles the four scaffolding entry points test
+/// layers need: deterministic bulk generation, a proptest strategy, a
+/// committed corpus, and a set of pathological / boundary payloads.
+///
+/// `proptest` and `corpus` are feature-gated to mirror the cargo features
+/// of this crate — code generic over `MiddsFixtures` should `cfg`-gate
+/// access symmetrically.
+pub trait MiddsFixtures {
+    /// MIDDS payload type this fixture set generates.
+    type Item: Midds;
+
+    /// Deterministic bulk generation. Same `(seed, count)` produces the same
+    /// `Vec<Self::Item>` byte-for-byte across processes.
+    fn gen_n(seed: u64, count: u32) -> Vec<Self::Item>;
+
+    /// Boundary payloads (size extremes, charset edges, …) that pass
+    /// `validate_format`. Tests that need invalid payloads use a separate
+    /// surface — see e.g. `pathological::invalid_*` constructors.
+    fn pathological() -> Vec<Self::Item>;
+
+    /// Iterator over the committed corpus, when one ships for this MIDDS
+    /// type. Returns an empty vector when no corpus is bundled.
+    #[cfg(feature = "corpus")]
+    fn corpus() -> Vec<Self::Item>;
+
+    /// `proptest::Strategy` over valid payloads. Implementations are
+    /// expected to honour `validate_format` by construction so property
+    /// tests don't need `prop_assume` discards.
+    #[cfg(feature = "proptest")]
+    fn strategy() -> proptest::strategy::BoxedStrategy<Self::Item>;
+}
 
 /// Deterministically generate `count` distinct `MusicalWork` records.
 ///
@@ -72,6 +119,36 @@ mod tests {
         use midds_traits::Midds as _;
         for w in gen_n(7, 64) {
             w.validate_format().expect("generated payload validates");
+        }
+    }
+
+    /// Drives the `MiddsFixtures` impl through its four entry points to
+    /// catch a regression where one diverges (e.g. `pathological()` returns
+    /// invalid payloads, or `corpus()` panics under feature combinations).
+    #[test]
+    fn musical_work_fixtures_trait_is_consistent() {
+        use crate::musical_work::MusicalWorkFixtures;
+        use midds_traits::Midds as _;
+
+        let bulk = <MusicalWorkFixtures as MiddsFixtures>::gen_n(0xCAFE, 8);
+        assert_eq!(bulk.len(), 8);
+        for w in &bulk {
+            w.validate_format().expect("gen_n payload validates");
+        }
+
+        let pathological = <MusicalWorkFixtures as MiddsFixtures>::pathological();
+        assert!(!pathological.is_empty());
+        for w in &pathological {
+            w.validate_format()
+                .expect("pathological boundary payload validates");
+        }
+
+        #[cfg(feature = "corpus")]
+        {
+            let corpus = <MusicalWorkFixtures as MiddsFixtures>::corpus();
+            for w in &corpus {
+                w.validate_format().expect("corpus payload validates");
+            }
         }
     }
 }

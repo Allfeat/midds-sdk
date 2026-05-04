@@ -21,11 +21,13 @@ pub enum MusicalWork {
 }
 
 impl Midds for MusicalWork {
+    const KIND: &'static str = "MusicalWork";
+
     type Identifier = Iswc;
 
-    fn identifier(&self) -> Iswc {
+    fn identifier(&self) -> &Iswc {
         match self {
-            Self::V1(v) => v.iswc.clone(),
+            Self::V1(v) => &v.iswc,
         }
     }
 
@@ -37,6 +39,7 @@ impl Midds for MusicalWork {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests legitimately unwrap")]
 mod tests {
     use super::*;
     use crate::language::Language;
@@ -90,7 +93,7 @@ mod tests {
     #[test]
     fn identifier_returns_iswc() {
         let w = MusicalWork::V1(sample_v1());
-        assert_eq!(w.identifier(), bv::<11>(b"T1234567890"));
+        assert_eq!(w.identifier(), &bv::<11>(b"T1234567890"));
     }
 
     #[test]

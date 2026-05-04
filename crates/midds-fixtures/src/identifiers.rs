@@ -12,7 +12,7 @@
 //! is injective over the relevant ranges, so a `Vec<MusicalWork>` of size
 //! `N` produced by indices `0..N` is guaranteed to have unique ISWCs.
 
-use midds_traits::{Ipi, Isni, Iswc};
+use midds_traits::{Ipi, Isni, Isrc, Iswc};
 use rand::Rng;
 
 /// Build an ISWC from a 9-digit work code with the correct CISAC mod-10
@@ -109,10 +109,58 @@ pub fn isni_random<R: Rng + ?Sized>(rng: &mut R) -> Isni {
     isni_from_body(body)
 }
 
+/// Build a structurally valid ISRC from an `index`. Country defaults to
+/// `US`, registrant cycles through `RC0..=RC9` (3 chars), year is `00..=99`,
+/// designation is the last 5 digits of `index`. Pure function — same
+/// `index` always produces the same ISRC.
+///
+/// ISRC has no check digit (ISO 3901), so "structurally valid" is the
+/// strongest guarantee we can offer here.
+pub fn isrc_for_index(index: u32) -> Isrc {
+    let registrant = (index / 100_000) % 10;
+    let year = (index / 1_000_000) % 100;
+    let designation = index % 100_000;
+    let mut bytes = Vec::with_capacity(12);
+    bytes.extend_from_slice(b"USRC");
+    bytes.push(b'0' + registrant as u8);
+    bytes.push(b'0' + (year / 10) as u8);
+    bytes.push(b'0' + (year % 10) as u8);
+    let mut tail = [0u8; 5];
+    let mut n = designation;
+    for slot in tail.iter_mut().rev() {
+        *slot = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    bytes.extend_from_slice(&tail);
+    Isrc::try_from(bytes).expect("12-byte ISRC fits the bound")
+}
+
+/// Random structurally valid ISRC. Country picked from a fixed pool of
+/// real ISO 3166 alpha-2 codes, registrant is 3 random alphanumeric
+/// uppercase chars, year is `00..=99`, designation is 5 random digits.
+pub fn isrc_random<R: Rng + ?Sized>(rng: &mut R) -> Isrc {
+    const COUNTRIES: &[&[u8]] = &[
+        b"US", b"GB", b"FR", b"DE", b"JP", b"BR", b"NL", b"CA", b"AU", b"SE",
+    ];
+    const ALPHANUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    let mut bytes = Vec::with_capacity(12);
+    bytes.extend_from_slice(COUNTRIES[rng.gen_range(0..COUNTRIES.len())]);
+    for _ in 0..3 {
+        bytes.push(ALPHANUM[rng.gen_range(0..ALPHANUM.len())]);
+    }
+    for _ in 0..7 {
+        bytes.push(b'0' + rng.gen_range(0..10) as u8);
+    }
+    Isrc::try_from(bytes).expect("12-byte ISRC fits the bound")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use midds_traits::{validate_ipi_format, validate_isni_format, validate_iswc_format};
+    use midds_traits::{
+        validate_ipi_format, validate_isni_format, validate_isrc_format, validate_iswc_format,
+    };
 
     #[test]
     fn iswc_from_work_code_is_structurally_valid() {
@@ -176,6 +224,20 @@ mod tests {
         for _ in 0..32 {
             assert!(validate_ipi_format(ipi_random(&mut rng).as_slice()).is_ok());
             assert!(validate_isni_format(isni_random(&mut rng).as_slice()).is_ok());
+            assert!(validate_isrc_format(isrc_random(&mut rng).as_slice()).is_ok());
+        }
+    }
+
+    #[test]
+    fn isrc_for_index_is_structurally_valid() {
+        for i in [0u32, 1, 99_999, 1_234_567, u32::MAX / 2] {
+            let isrc = isrc_for_index(i);
+            assert_eq!(isrc.len(), 12);
+            assert!(
+                validate_isrc_format(isrc.as_slice()).is_ok(),
+                "{:?}",
+                core::str::from_utf8(isrc.as_slice()).unwrap_or("?"),
+            );
         }
     }
 }

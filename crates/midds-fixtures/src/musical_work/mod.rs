@@ -13,8 +13,51 @@ use midds_types::{
     Creator, CreatorId, CreatorRole, Language, Mode, MusicalKey, MusicalWork, PitchClass, WorkType,
 };
 use rand::Rng;
+#[cfg(feature = "corpus")]
+use rand::SeedableRng;
 
+use crate::MiddsFixtures;
 use crate::identifiers::{ipi_random, isni_random, iswc_for_index};
+
+/// `MusicalWork` corner of the `MiddsFixtures` trait. Generic test
+/// harnesses (mass injection, property tests, CLI bench) drive this struct
+/// instead of calling `gen_n` / `pathological_*` free functions, so adding
+/// a new MIDDS type is a matter of supplying a new fixture struct rather
+/// than wiring per-type call sites.
+pub struct MusicalWorkFixtures;
+
+impl MiddsFixtures for MusicalWorkFixtures {
+    type Item = MusicalWork;
+
+    fn gen_n(seed: u64, count: u32) -> Vec<Self::Item> {
+        crate::gen_n(seed, count)
+    }
+
+    fn pathological() -> Vec<Self::Item> {
+        vec![
+            crate::pathological::min_size_musical_work(),
+            crate::pathological::max_size_musical_work(),
+        ]
+    }
+
+    #[cfg(feature = "corpus")]
+    fn corpus() -> Vec<Self::Item> {
+        // V1 ships per-identifier corpora (ISWC / IPI / ISNI in
+        // `data/*.json`) but no full-payload `MusicalWork` corpus — synthesise
+        // a small, deterministic one so generic harnesses get something
+        // non-empty to iterate over.
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0xC0DE_C0DE_C0DE_C0DE);
+        (0..32u32)
+            .map(|i| random_with_iswc_index(&mut rng, i))
+            .collect()
+    }
+
+    #[cfg(feature = "proptest")]
+    fn strategy() -> proptest::strategy::BoxedStrategy<Self::Item> {
+        use proptest::strategy::Strategy as _;
+        crate::musical_work::strategy::arb_musical_work().boxed()
+    }
+}
 
 /// Build a deterministic `MusicalWork` whose ISWC is derived from `index`.
 ///

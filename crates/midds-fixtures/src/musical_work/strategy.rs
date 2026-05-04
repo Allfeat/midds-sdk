@@ -10,7 +10,7 @@
 //! reports the same diagnostic.
 
 use frame_support::BoundedVec;
-use midds_traits::{Iswc, MiddsFormatError, OffchainHash};
+use midds_traits::{Isrc, Iswc, MiddsFormatError, OffchainHash};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorId, CreatorRole, Creators,
     Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, PitchClass,
@@ -18,7 +18,7 @@ use midds_types::{
 };
 use proptest::prelude::*;
 
-use crate::identifiers::{ipi_from_stem, isni_from_body, iswc_from_work_code};
+use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code};
 
 /// Strategy producing checksum-correct ISWCs.
 pub fn arb_iswc() -> impl Strategy<Value = Iswc> {
@@ -33,6 +33,46 @@ pub fn arb_ipi() -> impl Strategy<Value = midds_traits::Ipi> {
 /// Strategy producing checksum-correct ISNIs.
 pub fn arb_isni() -> impl Strategy<Value = midds_traits::Isni> {
     any::<[u8; 15]>().prop_map(isni_from_body)
+}
+
+/// Strategy producing structurally valid ISRCs (ISO 3901 has no check
+/// digit, so "valid" here means well-formed shape only).
+pub fn arb_isrc_valid() -> impl Strategy<Value = Isrc> {
+    any::<u32>().prop_map(isrc_for_index)
+}
+
+/// Strategy producing payloads that fail [`midds_traits::validate_isrc_format`].
+/// Targets each branch of the validator: wrong length, bad country code,
+/// bad registrant, bad year, bad designation. Useful for negative-path
+/// `MusicalWork`-extension tests once Recording lands.
+pub fn arb_isrc_invalid() -> impl Strategy<Value = (Isrc, MiddsFormatError)> {
+    prop_oneof![
+        // Bad country code (digits in slot 0..2).
+        Just((
+            BoundedVec::try_from(b"12RC17607839".to_vec()).expect("12 bytes"),
+            MiddsFormatError::InvalidCharset,
+        )),
+        // Bad registrant (lowercase).
+        Just((
+            BoundedVec::try_from(b"USrc17607839".to_vec()).expect("12 bytes"),
+            MiddsFormatError::InvalidCharset,
+        )),
+        // Bad year (letter).
+        Just((
+            BoundedVec::try_from(b"USRC1A607839".to_vec()).expect("12 bytes"),
+            MiddsFormatError::InvalidCharset,
+        )),
+        // Bad designation (letter).
+        Just((
+            BoundedVec::try_from(b"USRC1760783A".to_vec()).expect("12 bytes"),
+            MiddsFormatError::InvalidCharset,
+        )),
+        // Too short.
+        Just((
+            BoundedVec::try_from(b"USRC".to_vec()).expect("≤ 12 bytes"),
+            MiddsFormatError::OutOfBounds,
+        )),
+    ]
 }
 
 /// Strategy producing non-empty bounded titles.

@@ -9,6 +9,7 @@ homepage.workspace = true
 description = "Subxt-based Rust client for the Allfeat MIDDS pallets."
 
 [dependencies]
+midds-runtime-api = { workspace = true, features = ["std"] }
 midds-traits = { workspace = true, features = ["std"] }
 midds-types = { workspace = true, features = ["std"] }
 
@@ -18,3 +19,12 @@ subxt-signer = { workspace = true }
 
 thiserror = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+# Used by the compile-only `generic_check` test in `pallet/api.rs` to prove
+# `PalletApi<M>` doesn't leak any payload-specific bound. The dummy MIDDS type
+# needs `scale_info::TypeInfo` (via the `Parameter` bound on `Midds`); the
+# `parity-scale-codec` derives (`MaxEncodedLen`, `Encode`, `Decode`,
+# `DecodeWithMemTracking`) are already pulled in by `midds-traits` →
+# `frame-support` with the right features, so no extra codec entry is needed.
+scale-info = { workspace = true, features = ["std", "derive"] }

@@ -422,9 +422,9 @@ on-chain.
 - `verify_iswc_checksum(&Iswc) -> CheckResult { Pass, Fail, NotApplicable }` :
   *warning only*, jamais utilisé par le pallet (réel terrain bruité)
 - Idem `verify_isni_checksum` (mod 11), `verify_ipi_checksum` (mod 10)
-- `MusicalWorkBuilder` ergonomique : `.iswc()`, `.title()`,
+- ✅ `MusicalWorkBuilder` ergonomique : `.iswc()`, `.title()`,
   `.add_creator()`, `.build() -> Result<MusicalWork, BuildError>` qui aggrège
-  les erreurs
+  les erreurs (livré dans le sprint C.3 de [`v1-hardening.md`](./v1-hardening.md))
 
 Réutilise les `validate_*_format` de `midds-traits` pour zéro duplication.
 
@@ -442,9 +442,9 @@ sp_api::decl_runtime_apis! {
         AccountId: Codec,
         Balance: Codec,
     {
-        fn lookup_by_identifier(id: Identifier) -> Option<MiddsId>;
+        fn lookup_by_identifier(id: Identifier) -> Vec<MiddsId>;
         fn get(id: MiddsId) -> Option<Item>;
-        fn deposit_info(id: MiddsId) -> Option<(AccountId, Balance)>;
+        fn deposit_info(id: MiddsId) -> Option<DepositInfoOf<AccountId, Balance>>;
     }
 }
 ```
@@ -535,6 +535,13 @@ mais hors V1.
 ---
 
 ## 6. Plan de phases / PRs
+
+> **V1 hardening** : voir [`v1-hardening.md`](./v1-hardening.md) pour les
+> sprints A–D qui durcissent le SDK avant d'ajouter Recording / Release
+> (trait Midds enrichi, struct `DepositInfoOf`, fenêtre 7j strictement
+> inférieure, property tests des invariants, génériser fixtures/CLI/bench,
+> CI nightly + Justfile + clippy.toml durci).
+
 
 | PR | Contenu | Effort estimé | Bloqué par |
 |----|---------|---------------|------------|

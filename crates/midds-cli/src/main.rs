@@ -10,7 +10,7 @@ mod signers;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 
-use crate::cli::{BenchArgs, Cli, Command};
+use crate::cli::{BenchArgs, Cli, Command, MiddsKind};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -25,6 +25,7 @@ async fn run(cli: Cli) -> Result<()> {
     let command = resolve_command(cli.command)?;
     match command {
         Command::Seed {
+            midds_type,
             count,
             rng_seed,
             base_signer,
@@ -38,6 +39,7 @@ async fn run(cli: Cli) -> Result<()> {
             report,
             yes,
         } => {
+            ensure_midds_type(midds_type)?;
             bench::seed::run(bench::seed::Args {
                 url: &cli.url,
                 count,
@@ -59,6 +61,7 @@ async fn run(cli: Cli) -> Result<()> {
             // `resolve_command` guarantees this arm always carries a concrete
             // sub-scenario by the time we get here.
             Some(BenchArgs::Fees {
+                midds_type,
                 count,
                 size_distribution,
                 base_signer,
@@ -73,6 +76,7 @@ async fn run(cli: Cli) -> Result<()> {
                 out,
                 yes,
             }) => {
+                ensure_midds_type(midds_type)?;
                 bench::fees::run(bench::fees::Args {
                     url: &cli.url,
                     count,
@@ -92,6 +96,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .await
             }
             Some(BenchArgs::Throughput {
+                midds_type,
                 count,
                 duration_secs,
                 base_signer,
@@ -106,6 +111,7 @@ async fn run(cli: Cli) -> Result<()> {
                 out,
                 yes,
             }) => {
+                ensure_midds_type(midds_type)?;
                 bench::throughput::run(bench::throughput::Args {
                     url: &cli.url,
                     count,
@@ -126,6 +132,18 @@ async fn run(cli: Cli) -> Result<()> {
             }
             None => unreachable!("resolve_command always promotes Bench.kind to Some"),
         },
+    }
+}
+
+/// V1 only ships `MusicalWork`. The `MiddsKind` enum is the dispatch
+/// extension point for future MIDDS types — when `Recording` lands the
+/// match arm here grows a second branch routing to a recording-specific
+/// bench harness, leaving the existing flow untouched. Until then any
+/// non-default value is rejected loudly so a typo doesn't silently fall
+/// through to `MusicalWork` behaviour.
+fn ensure_midds_type(kind: MiddsKind) -> Result<()> {
+    match kind {
+        MiddsKind::MusicalWork => Ok(()),
     }
 }
 

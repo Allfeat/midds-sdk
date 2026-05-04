@@ -14,7 +14,9 @@ use frame_support::weights::Weight;
 /// `MaxFinalizationsPerBlock` from the headroom of its target block weight.
 pub trait WeightInfo {
     fn deposit(s: u32) -> Weight;
+    fn deposit_on_behalf(s: u32) -> Weight;
     fn update(s: u32) -> Weight;
+    fn update_on_behalf(s: u32) -> Weight;
     fn remove_own() -> Weight;
     fn finalize_one() -> Weight;
     fn force_edit(s: u32) -> Weight;
@@ -28,7 +30,13 @@ impl WeightInfo for () {
     fn deposit(_s: u32) -> Weight {
         Weight::zero()
     }
+    fn deposit_on_behalf(_s: u32) -> Weight {
+        Weight::zero()
+    }
     fn update(_s: u32) -> Weight {
+        Weight::zero()
+    }
+    fn update_on_behalf(_s: u32) -> Weight {
         Weight::zero()
     }
     fn remove_own() -> Weight {

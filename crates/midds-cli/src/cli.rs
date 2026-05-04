@@ -62,6 +62,9 @@ pub enum Command {
     /// exact bond requirement from the chain's `DepositBase` /
     /// `DepositPerByte` constants. One self-contained command end-to-end.
     Seed {
+        /// MIDDS payload type to seed. V1 only accepts `musical-work`.
+        #[arg(long = "midds-type", value_enum, default_value_t = MiddsKind::default())]
+        midds_type: MiddsKind,
         /// Number of records to deposit. Omit to be prompted interactively.
         #[arg(long)]
         count: Option<u32>,
@@ -128,6 +131,9 @@ pub enum BenchArgs {
     /// pair with `--auto-fund` (or pre-fund manually) so the derived accounts
     /// can pay tx fees + bond.
     Fees {
+        /// MIDDS payload type to benchmark. V1 only accepts `musical-work`.
+        #[arg(long = "midds-type", value_enum, default_value_t = MiddsKind::default())]
+        midds_type: MiddsKind,
         /// Number of records to deposit and measure. Omit to be prompted.
         #[arg(long)]
         count: Option<u32>,
@@ -194,6 +200,9 @@ pub enum BenchArgs {
     /// chain need to be pre-funded; pair with `--auto-fund` to do that in
     /// one shot.
     Throughput {
+        /// MIDDS payload type to benchmark. V1 only accepts `musical-work`.
+        #[arg(long = "midds-type", value_enum, default_value_t = MiddsKind::default())]
+        midds_type: MiddsKind,
         /// Target number of records to deposit. Omit to be prompted.
         #[arg(long)]
         count: Option<u32>,
@@ -240,6 +249,18 @@ pub enum BenchArgs {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
+}
+
+/// MIDDS payload type the operator commands target. V1 ships only
+/// `MusicalWork`; the enum is in place so adding `Recording` / `Release`
+/// is a one-variant change at every dispatch site rather than a parallel
+/// command tree.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum MiddsKind {
+    /// `MusicalWork::V1` — the only payload type wired in V1.
+    #[default]
+    #[value(name = "musical-work")]
+    MusicalWork,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]

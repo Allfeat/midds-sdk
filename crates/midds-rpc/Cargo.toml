@@ -10,7 +10,7 @@ description = "JSON-RPC handlers exposing MIDDS runtime APIs via jsonrpsee."
 
 [dependencies]
 jsonrpsee = { workspace = true }
-midds-runtime-api = { workspace = true, features = ["std"] }
+midds-runtime-api = { workspace = true, features = ["std", "serde"] }
 midds-traits = { workspace = true, features = ["std"] }
 parity-scale-codec = { workspace = true, features = ["std"] }
 sp-api = { workspace = true, features = ["std"] }

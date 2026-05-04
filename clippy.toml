@@ -1,1 +1,10 @@
 msrv = "1.85"
+
+# Discourage `unwrap()` in production paths — it makes panics opaque to
+# operators. Prefer `?` or `expect("…why this can't fail…")`. Tests and
+# const-time guarantees (e.g. `Regex::new` on a literal pattern) can opt
+# out via a localised `#[allow(clippy::disallowed_methods)]`.
+disallowed-methods = [
+    { path = "core::result::Result::unwrap", reason = "use ? or expect with context" },
+    { path = "core::option::Option::unwrap", reason = "use ? or expect with context" },
+]

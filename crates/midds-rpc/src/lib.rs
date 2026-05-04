@@ -14,10 +14,31 @@
 //! one instance this is fine; once the node hosts several instances
 //! (`MusicalWorks`, `Recordings`, `Releases`, …) every instance would emit
 //! the same `midds_*` method names and `RpcModule::merge` would refuse the
-//! collision. The integrating node is expected to renamespace each
-//! instance's module before merging — for example by extracting the methods
-//! and re-registering them as `midds_<instance>_*`. V1 ships a single
-//! instance so the renaming is intentionally left to the node.
+//! collision.
+//!
+//! V1 ships a single instance so we keep the trait emitting the canonical
+//! `midds_*` names and document the node-side pattern for renamespacing.
+//! When a second instance lands, the recommended approach is for the node
+//! to wrap each [`MiddsRpc`] with a thin `#[rpc(server)]` trait that
+//! redeclares the methods under prefixed names (e.g.
+//! `midds_musicalWorks_lookupByIdentifier`) and forwards each call to the
+//! generic implementation. That keeps the per-method body trivial (one
+//! delegated call per method) and avoids any `Methods` re-keying gymnastics
+//! against jsonrpsee internals. The pattern is roughly:
+//!
+//! ```ignore
+//! #[rpc(server)]
+//! pub trait MusicalWorksRpcApi {
+//!     #[method(name = "midds_musicalWorks_lookupByIdentifier")]
+//!     fn lookup_by_identifier(&self, ...) -> RpcResult<...>;
+//!     // ... one method per generic MIDDS RPC, prefixed with the instance.
+//! }
+//! ```
+//!
+//! Recordings / Releases follow the same template. This keeps `midds-rpc`
+//! agnostic of the exact pallet-instance topology (which lives in the node)
+//! and avoids dragging a proc macro into the SDK for a problem that, by
+//! design, has at most a handful of instantiation sites.
 
 use std::{marker::PhantomData, sync::Arc};
 
@@ -26,17 +47,13 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{ErrorObject, ErrorObjectOwned},
 };
+pub use midds_runtime_api::DepositInfoOf;
 use midds_runtime_api::MiddsApi;
 use midds_traits::MiddsId;
 use parity_scale_codec::Codec;
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::{FixedU128, traits::Block as BlockT};
-
-/// `(depositor, total_held, base_bond, finalized)` — wire shape for
-/// `midds_depositInfo`. Mirrors the runtime API tuple exactly so the bridge
-/// stays a pure passthrough.
-pub type DepositInfoView<AccountId, Balance> = (AccountId, Balance, Balance, bool);
 
 /// JSON-RPC surface for one MIDDS pallet instance.
 #[rpc(server)]
@@ -54,14 +71,14 @@ pub trait MiddsRpcApi<BlockHash, Identifier, Item, AccountId, Balance> {
     #[method(name = "midds_get")]
     fn get(&self, id: MiddsId, at: Option<BlockHash>) -> RpcResult<Option<Item>>;
 
-    /// Bond information `(depositor, total_held, base_bond, finalized)`
-    /// attached to a stored record.
+    /// Bond information attached to a stored record. See
+    /// [`midds_runtime_api::DepositInfoOf`] for the field layout.
     #[method(name = "midds_depositInfo")]
     fn deposit_info(
         &self,
         id: MiddsId,
         at: Option<BlockHash>,
-    ) -> RpcResult<Option<DepositInfoView<AccountId, Balance>>>;
+    ) -> RpcResult<Option<DepositInfoOf<AccountId, Balance>>>;
 
     /// Quote the bond a fresh `deposit(item)` of `size` SCALE-encoded bytes
     /// would lock at the queried block.
@@ -146,7 +163,7 @@ where
         &self,
         id: MiddsId,
         at: Option<<Block as BlockT>::Hash>,
-    ) -> RpcResult<Option<DepositInfoView<AccountId, Balance>>> {
+    ) -> RpcResult<Option<DepositInfoOf<AccountId, Balance>>> {
         let api = self.client.runtime_api();
         let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
         api.deposit_info(at_hash, id)

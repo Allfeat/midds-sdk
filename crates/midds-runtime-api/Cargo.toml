@@ -11,6 +11,8 @@ description = "Generic runtime API for MIDDS lookups and deposit info."
 [dependencies]
 midds-traits = { workspace = true }
 parity-scale-codec = { workspace = true }
+scale-info = { workspace = true }
+serde = { workspace = true, optional = true }
 sp-api = { workspace = true }
 sp-runtime = { workspace = true }
 
@@ -19,6 +21,9 @@ default = ["std"]
 std = [
     "midds-traits/std",
     "parity-scale-codec/std",
+    "scale-info/std",
+    "serde?/std",
     "sp-api/std",
     "sp-runtime/std",
 ]
+serde = ["dep:serde"]

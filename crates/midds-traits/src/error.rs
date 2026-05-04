@@ -6,6 +6,11 @@ use scale_info::TypeInfo;
 /// On-chain validation only covers structure / charset / length. Rich
 /// validation (checksums, normalisation) lives in `midds-validate` and is
 /// intentionally not blocking on-chain.
+///
+/// Adding variants is **breaking** SCALE — every consumer that decodes this
+/// enum must be rebuilt. Prospective variants for future MIDDS types
+/// (`Recording`, `Release`) are reserved here so a later addition does not
+/// require a runtime upgrade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MiddsFormatError {
@@ -17,4 +22,13 @@ pub enum MiddsFormatError {
     OutOfBounds,
     /// A mandatory field is empty.
     EmptyMandatoryField,
+    /// Two date / year fields in the same payload disagree on a relation
+    /// they should always satisfy (e.g. `release_year < creation_year`,
+    /// `recording_year > work_year`). Reserved for `Recording` / `Release`.
+    DateInconsistency,
+    /// Two non-date fields constrain each other but disagree (e.g. the
+    /// declared tracklist length does not match the number of `Recording`
+    /// references, or a creator's role contradicts the work type). Reserved
+    /// for cross-field invariants on `Recording` / `Release`.
+    CrossFieldInconsistency,
 }

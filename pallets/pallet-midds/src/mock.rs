@@ -15,12 +15,55 @@ use frame_system::EnsureRoot;
 use midds_traits::MiddsFormatError;
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
-use sp_runtime::{BuildStorage, FixedU128, traits::Get};
+use sp_runtime::{
+    BuildStorage, FixedU128,
+    traits::{Get, IdentifyAccount, Verify},
+};
 
 pub type AccountId = u64;
 pub type Balance = u64;
 pub type BlockNumber = u64;
 pub type Block = frame_system::mocking::MockBlock<Test>;
+
+// ── Test signature plumbing for the on-behalf flows ──────────────────────────
+//
+// Real runtimes hand the pallet an `sp_runtime::MultiSignature` whose `Signer`
+// is `MultiSigner` and whose verification recovers an `AccountId32`. The mock
+// keeps `AccountId = u64` for parity with the rest of the test surface, so we
+// substitute a stub that maps a u64 signer through `IdentifyAccount` and
+// considers a signature valid iff its embedded `(signer, payload)` matches the
+// caller's expected owner and the bytes verified — same shape as `pallet-ats`.
+
+#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct TestSigner(pub u64);
+
+impl IdentifyAccount for TestSigner {
+    type AccountId = u64;
+    fn into_account(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct TestSignature {
+    pub signer: u64,
+    pub payload: Vec<u8>,
+}
+
+impl Verify for TestSignature {
+    type Signer = TestSigner;
+    fn verify<L: sp_runtime::traits::Lazy<[u8]>>(&self, mut msg: L, signer: &u64) -> bool {
+        self.signer == *signer && self.payload == msg.get()
+    }
+}
+
+/// Build a mock signature for `signer` over the SCALE encoding of `payload`.
+pub fn sign(signer: u64, payload: &impl Encode) -> TestSignature {
+    TestSignature {
+        signer,
+        payload: payload.encode(),
+    }
+}
 
 frame_support::construct_runtime!(
     pub enum Test {
@@ -62,10 +105,12 @@ pub struct MockMidds {
 }
 
 impl midds_traits::Midds for MockMidds {
+    const KIND: &'static str = "MockMidds";
+
     type Identifier = MockId;
 
-    fn identifier(&self) -> Self::Identifier {
-        self.id.clone()
+    fn identifier(&self) -> &Self::Identifier {
+        &self.id
     }
 
     fn validate_format(&self) -> Result<(), MiddsFormatError> {
@@ -87,7 +132,7 @@ impl midds_traits::Midds for MockMidds {
 pub struct MockBenchmarkHelper;
 
 #[cfg(feature = "runtime-benchmarks")]
-impl pallet_midds::BenchmarkHelper<MockMidds> for MockBenchmarkHelper {
+impl pallet_midds::BenchmarkHelper<MockMidds, TestSignature, AccountId> for MockBenchmarkHelper {
     fn bench_instance(size: u32) -> MockMidds {
         // Stable id so `update` / `force_edit` benchmarks (which keep the
         // identifier across the deposit→update transition) compile-pass the
@@ -101,6 +146,24 @@ impl pallet_midds::BenchmarkHelper<MockMidds> for MockBenchmarkHelper {
             id: BoundedVec::try_from(b"bench".to_vec()).expect("`bench` fits the 8-byte bound"),
             data: BoundedVec::try_from(data).expect("clamped to the 32-byte bound"),
         }
+    }
+
+    fn create_signature(entropy: &[u8], msg: &[u8]) -> (TestSignature, AccountId) {
+        // Derive a deterministic u64 signer from `entropy`; offset to a high
+        // range so the synthesized account never collides with the
+        // hand-picked test accounts (ALICE/BOB/CHARLIE) or TREASURY.
+        let mut buf = [0u8; 8];
+        for (i, b) in entropy.iter().take(8).enumerate() {
+            buf[i] = *b;
+        }
+        let signer: AccountId = u64::from_le_bytes(buf).saturating_add(10_000);
+        (
+            TestSignature {
+                signer,
+                payload: msg.to_vec(),
+            },
+            signer,
+        )
     }
 }
 
@@ -120,6 +183,10 @@ pub const BLOCKS_PER_DAY: BlockNumber = 10;
 /// on observable, predictable multiplier movement.
 pub const FAST_TARGET_PER_BLOCK: u32 = 5;
 pub const SLOW_TARGET_PER_WINDOW: u32 = 200;
+/// Cap on records cleaned in a single `force_remove_many` invocation. The
+/// benchmark sweeps `Linear<1, 64>` so this must be ≥ 64 for the mock
+/// runtime that hosts `impl_benchmark_test_suite!`.
+pub const MAX_REMOVALS_PER_CALL: u32 = 64;
 /// Foundation Treasury account in the mock — picked outside the genesis-
 /// endowed range so its starting balance is the existential deposit (none).
 pub const TREASURY: AccountId = 999;
@@ -174,11 +241,14 @@ impl pallet_midds::Config for Test {
     type Midds = MockMidds;
     type ProviderOrigin = frame_system::EnsureSigned<AccountId>;
     type ForceOrigin = EnsureRoot<AccountId>;
+    type OffchainSignature = TestSignature;
+    type Signer = TestSigner;
     type TreasuryAccount = TreasuryAccount;
     type DepositBase = ConstU64<DEPOSIT_BASE>;
     type DepositPerByte = ConstU64<DEPOSIT_PER_BYTE>;
     type CommitmentWindow = ConstU64<COMMITMENT_WINDOW>;
     type MaxFinalizationsPerBlock = ConstU32<100>;
+    type MaxRemovalsPerCall = ConstU32<MAX_REMOVALS_PER_CALL>;
     type BlocksPerDay = ConstU64<BLOCKS_PER_DAY>;
     type FastTargetPerBlock = ConstU32<FAST_TARGET_PER_BLOCK>;
     type FastAdjustmentRate = FastAdjustmentRate;
@@ -229,6 +299,7 @@ pub mod test_helpers {
 
     pub const ALICE: AccountId = 1;
     pub const BOB: AccountId = 2;
+    pub const CHARLIE: AccountId = 3;
 
     pub fn deposit_reason() -> RuntimeHoldReason {
         crate::HoldReason::<()>::Deposit.into()

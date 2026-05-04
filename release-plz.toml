@@ -34,8 +34,11 @@ git_tag_name = "v{{ version }}"
 git_tag_enable = true
 git_release_enable = true
 
-# Internal test scaffolding — never released, never changelog'd.
+# Internal test scaffolding — never released, never changelog'd. The
+# `publish = false` mirrors `crates/midds-fixtures/Cargo.toml`; release-plz
+# refuses to start if the two values disagree.
 [[package]]
 name = "midds-fixtures"
 release = false
 changelog_update = false
+publish = false

@@ -1,9 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [master]
   pull_request:
+    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,7 +10,7 @@ env:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   fmt:

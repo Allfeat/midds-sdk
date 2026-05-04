@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0a6b7feb8451448556277f8b469130bceb14f3832ed565d3f02fa93c10976299 # shrinks to actions = [Deposit { item: MockMidds { id: BoundedVec([48], 8), data: BoundedVec([], 32) }, signer: 0 }]
+cc 646a4c94a91ef66661995bde22f291a684f48ec2a9ead12356ad92f23b01e813 # shrinks to actions = [Advance { blocks: 17 }, Advance { blocks: 8 }, Advance { blocks: 19 }, Advance { blocks: 15 }, Deposit { item: MockMidds { id: BoundedVec([48], 8), data: BoundedVec([], 32) }, signer: 0 }]

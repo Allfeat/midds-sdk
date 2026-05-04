@@ -82,6 +82,23 @@ pub fn validate_offchain_hash(b: &[u8]) -> Result<(), MiddsFormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parity_scale_codec::MaxEncodedLen;
+
+    /// Pin every identifier's `max_encoded_len` so a typo in the alias bound
+    /// (`MiddsString<11>` accidentally widened to `<12>`) surfaces here
+    /// before it becomes a wire-format break. SCALE encodes a `BoundedVec`
+    /// as `Compact(len) ++ bytes`. The `Compact` length prefix is 1 byte
+    /// for `len < 64`, 2 bytes for `64 <= len < 16384`.
+    #[test]
+    fn identifier_max_encoded_lens_are_stable() {
+        // Identifiers whose bound is < 64 ⇒ 1-byte Compact prefix + N bytes.
+        assert_eq!(<Iswc as MaxEncodedLen>::max_encoded_len(), 1 + 11);
+        assert_eq!(<Isni as MaxEncodedLen>::max_encoded_len(), 1 + 16);
+        assert_eq!(<Ipi as MaxEncodedLen>::max_encoded_len(), 1 + 11);
+        assert_eq!(<Isrc as MaxEncodedLen>::max_encoded_len(), 1 + 12);
+        // 64 bytes ⇒ 2-byte Compact prefix + 64 bytes.
+        assert_eq!(<OffchainHash as MaxEncodedLen>::max_encoded_len(), 2 + 64);
+    }
 
     #[test]
     fn iswc_pass() {

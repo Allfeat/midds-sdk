@@ -62,6 +62,21 @@ jobs:
           shared-key: ci-wasm
       - run: cargo build -p pallet-midds --no-default-features --target wasm32-unknown-unknown
 
+  bench-check:
+    name: pallet-midds runtime-benchmarks check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-bench
+      # Catches regressions in the `runtime-benchmarks`-gated code (e.g. the
+      # `BenchmarkHelper` trait, the `force_remove_many` benchmark) without
+      # actually running benchmarks — that lives in the sibling Allfeat repo
+      # against `melodie-runtime`.
+      - run: cargo check -p pallet-midds --features runtime-benchmarks
+
   commitlint:
     name: conventional commits
     runs-on: ubuntu-latest

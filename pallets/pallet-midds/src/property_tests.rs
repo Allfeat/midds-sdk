@@ -11,10 +11,14 @@
 
 use crate as pallet_midds;
 use crate::mock::{test_helpers::*, *};
+use alloc::collections::BTreeMap;
 use frame_support::BoundedVec;
 use frame_support::assert_noop;
-use midds_traits::Midds as _;
+use frame_support::traits::fungible::InspectHold;
+use midds_traits::{Midds as _, MiddsId};
 use proptest::prelude::*;
+
+extern crate alloc;
 
 type Instance = ();
 
@@ -38,6 +42,158 @@ fn arb_alphanumeric_byte() -> impl Strategy<Value = u8> {
 
 fn arb_mock_midds() -> impl Strategy<Value = MockMidds> {
     (arb_mock_id(), arb_mock_payload()).prop_map(|(id, data)| MockMidds { id, data })
+}
+
+/// Strategy producing payloads that always fail [`MockMidds::validate_format`]:
+/// either an empty `id` (`EmptyMandatoryField`) or an `id` containing
+/// non-alphanumeric bytes (`InvalidCharset`). Used to drive negative-path
+/// invariant checks where every `deposit` must bounce with `InvalidFormat`.
+fn arb_invalid_mock_midds() -> impl Strategy<Value = MockMidds> {
+    let empty_id = arb_mock_payload().prop_map(|data| MockMidds {
+        id: BoundedVec::default(),
+        data,
+    });
+    let bad_charset = (
+        proptest::collection::vec(
+            prop_oneof![Just(b'!'), Just(b'@'), Just(b'#'), Just(b' '), Just(b'\t')],
+            1..=8,
+        ),
+        arb_mock_payload(),
+    )
+        .prop_map(|(id, data)| MockMidds {
+            id: BoundedVec::try_from(id).expect("len ≤ 8"),
+            data,
+        });
+    prop_oneof![empty_id, bad_charset]
+}
+
+/// One step in the random extrinsic sequence driving
+/// [`invariants_hold_across_arbitrary_sequences`]. The numeric handle on
+/// "id-targeting" actions is interpreted modulo the count of live records;
+/// when no record exists the action is a no-op (no extrinsic dispatched).
+#[derive(Debug, Clone)]
+enum Action {
+    Deposit { item: MockMidds, signer: u8 },
+    Update { id_pick: u32, new_data: MockPayload },
+    RemoveOwn { id_pick: u32 },
+    Finalize { id_pick: u32 },
+    ForceRemoveRefund { id_pick: u32 },
+    ForceRemoveSlash { id_pick: u32 },
+    Advance { blocks: u32 },
+}
+
+fn arb_action() -> impl Strategy<Value = Action> {
+    prop_oneof![
+        // Weight `Deposit` highest so the random walk grows storage often
+        // enough to give the other actions something to act on.
+        4 => (arb_mock_midds(), 0u8..=2u8).prop_map(|(item, signer)| Action::Deposit { item, signer }),
+        2 => (any::<u32>(), arb_mock_payload())
+            .prop_map(|(id_pick, new_data)| Action::Update { id_pick, new_data }),
+        1 => any::<u32>().prop_map(|id_pick| Action::RemoveOwn { id_pick }),
+        1 => any::<u32>().prop_map(|id_pick| Action::Finalize { id_pick }),
+        1 => any::<u32>().prop_map(|id_pick| Action::ForceRemoveRefund { id_pick }),
+        1 => any::<u32>().prop_map(|id_pick| Action::ForceRemoveSlash { id_pick }),
+        2 => (1u32..=(COMMITMENT_WINDOW as u32 / 4))
+            .prop_map(|blocks| Action::Advance { blocks }),
+    ]
+}
+
+fn signer_for(s: u8) -> AccountId {
+    const SIGNERS: [AccountId; 3] = [ALICE, BOB, CHARLIE];
+    SIGNERS[(s as usize) % SIGNERS.len()]
+}
+
+fn pick_id(live: &[MiddsId], pick: u32) -> Option<MiddsId> {
+    if live.is_empty() {
+        None
+    } else {
+        Some(live[pick as usize % live.len()])
+    }
+}
+
+fn apply_action(action: &Action, live: &[MiddsId]) {
+    match action {
+        Action::Deposit { item, signer } => {
+            let _ = Midds::deposit(RuntimeOrigin::signed(signer_for(*signer)), item.clone());
+        }
+        Action::Update { id_pick, new_data } => {
+            if let Some(id) = pick_id(live, *id_pick) {
+                if let Some(item) = pallet_midds::Items::<Test, Instance>::get(id) {
+                    let info = pallet_midds::DepositInfo::<Test, Instance>::get(id);
+                    let updated = MockMidds {
+                        id: item.id.clone(),
+                        data: new_data.clone(),
+                    };
+                    if let Some(info) = info {
+                        let _ = Midds::update(RuntimeOrigin::signed(info.depositor), id, updated);
+                    }
+                }
+            }
+        }
+        Action::RemoveOwn { id_pick } => {
+            if let Some(id) = pick_id(live, *id_pick) {
+                if let Some(info) = pallet_midds::DepositInfo::<Test, Instance>::get(id) {
+                    let _ = Midds::remove_own(RuntimeOrigin::signed(info.depositor), id);
+                }
+            }
+        }
+        Action::Finalize { id_pick } => {
+            if let Some(id) = pick_id(live, *id_pick) {
+                let _ = Midds::finalize(RuntimeOrigin::signed(ALICE), id);
+            }
+        }
+        Action::ForceRemoveRefund { id_pick } => {
+            if let Some(id) = pick_id(live, *id_pick) {
+                let _ = Midds::force_remove_refund(RuntimeOrigin::root(), id);
+            }
+        }
+        Action::ForceRemoveSlash { id_pick } => {
+            if let Some(id) = pick_id(live, *id_pick) {
+                let _ = Midds::force_remove_slash(RuntimeOrigin::root(), id);
+            }
+        }
+        Action::Advance { blocks } => {
+            advance_to_block(System::block_number() + *blocks as BlockNumber);
+        }
+    }
+}
+
+/// Aggregate of the invariants checked after every step of the random
+/// extrinsic sequence. Each field maps directly to a bullet in
+/// `docs/plan.md` §7.
+struct InvariantSnapshot {
+    /// `held(account)` for every account observed.
+    holds: BTreeMap<AccountId, Balance>,
+    /// `(id, identifier)` pairs at the moment of the snapshot.
+    identifiers: BTreeMap<MiddsId, MockId>,
+    /// `NextMiddsId` storage.
+    next_id: MiddsId,
+}
+
+fn snapshot() -> InvariantSnapshot {
+    let mut holds = BTreeMap::new();
+    let mut identifiers = BTreeMap::new();
+    for (id, item) in pallet_midds::Items::<Test, Instance>::iter() {
+        identifiers.insert(id, item.id.clone());
+    }
+    // Holds can only exist against depositors — sourcing the candidate set
+    // from `DepositInfo` is exact and avoids depending on the balances
+    // storage layout (which differs depending on `T::AccountStore`).
+    let depositors: alloc::collections::BTreeSet<AccountId> =
+        pallet_midds::DepositInfo::<Test, Instance>::iter()
+            .map(|(_, info)| info.depositor)
+            .collect();
+    for account in depositors {
+        let h = <Balances as InspectHold<AccountId>>::balance_on_hold(&deposit_reason(), &account);
+        if h > 0 {
+            holds.insert(account, h);
+        }
+    }
+    InvariantSnapshot {
+        holds,
+        identifiers,
+        next_id: pallet_midds::NextMiddsId::<Test, Instance>::get(),
+    }
 }
 
 fn proptest_config() -> ProptestConfig {
@@ -105,9 +261,9 @@ proptest! {
             let _ = Midds::update(RuntimeOrigin::signed(ALICE), 0, updated);
 
             let stored_id = pallet_midds::Items::<Test, Instance>::get(0)
-                .map(|m| m.identifier())
+                .map(|m| m.identifier().clone())
                 .expect("item present after update");
-            prop_assert_eq!(stored_id, initial.identifier());
+            prop_assert_eq!(stored_id, initial.identifier().clone());
             prop_assert_eq!(pallet_midds::NextMiddsId::<Test, Instance>::get(), 1);
             Ok(())
         })?;
@@ -191,6 +347,7 @@ proptest! {
                 pallet_midds::Event::Deposited {
                     id,
                     depositor: ALICE,
+                    bond_payer: ALICE,
                     bond: info.amount,
                     base_bond: info.base_bond,
                 },
@@ -210,6 +367,92 @@ proptest! {
                 Midds::deposit(RuntimeOrigin::signed(BOB), item),
                 pallet_midds::Error::<Test, Instance>::DuplicatePayload,
             );
+            Ok(())
+        })?;
+    }
+
+    /// Drive an arbitrary sequence of extrinsics over the mock runtime and
+    /// assert the five `docs/plan.md` §7 invariants after every step:
+    ///
+    /// 1. Bond accounting — `held(account) == Σ DepositInfo[id].amount`
+    ///    over non-finalized records owned by `account`.
+    /// 2. `Items` ↔ `DepositInfo` cardinality coupling.
+    /// 3. `PayloadHashes` cardinality matches `Items` (every record has a
+    ///    payload-hash entry, neither orphans nor extras).
+    /// 4. Identifier immutability — once a record is born under
+    ///    identifier I, it stays under I until it is removed.
+    /// 5. `NextMiddsId` is monotonically non-decreasing.
+    #[test]
+    fn invariants_hold_across_arbitrary_sequences(
+        actions in proptest::collection::vec(arb_action(), 1..=40),
+    ) {
+        new_test_ext().execute_with(|| -> Result<(), TestCaseError> {
+            let mut prev = snapshot();
+            for action in &actions {
+                let live: Vec<MiddsId> = prev.identifiers.keys().copied().collect();
+                apply_action(action, &live);
+
+                let now = snapshot();
+
+                // Invariant 5: NextMiddsId is monotone.
+                prop_assert!(
+                    now.next_id >= prev.next_id,
+                    "NextMiddsId regressed: {} → {}",
+                    prev.next_id,
+                    now.next_id,
+                );
+
+                // Invariants 2 + 3: cardinality coupling.
+                let items_count = pallet_midds::Items::<Test, Instance>::iter().count();
+                let deposit_info_count =
+                    pallet_midds::DepositInfo::<Test, Instance>::iter().count();
+                let hash_count =
+                    pallet_midds::PayloadHashes::<Test, Instance>::iter().count();
+                prop_assert_eq!(items_count, deposit_info_count, "Items↔DepositInfo drift");
+                prop_assert_eq!(items_count, hash_count, "Items↔PayloadHashes drift");
+
+                // Invariant 4: identifier immutable per id (over the records
+                // that were already alive before this step).
+                for (id, prev_ident) in &prev.identifiers {
+                    if let Some(curr_ident) = now.identifiers.get(id) {
+                        prop_assert_eq!(prev_ident, curr_ident, "identifier of id {} mutated", id);
+                    }
+                }
+
+                // Invariant 1: bond cumulé per account = Σ amount over
+                // non-finalized records. A record can legitimately end up
+                // with `amount == 0` after the multipliers crash to their
+                // floor on a quiet chain — `MutateHold::hold(_, 0)` is a
+                // no-op so zero-amount records don't contribute to the
+                // observed held balance.
+                let mut expected: BTreeMap<AccountId, Balance> = BTreeMap::new();
+                for (_id, info) in pallet_midds::DepositInfo::<Test, Instance>::iter() {
+                    if !info.finalized && info.amount > 0 {
+                        *expected.entry(info.depositor).or_insert(0) += info.amount;
+                    }
+                }
+                prop_assert_eq!(
+                    &now.holds, &expected,
+                    "held balance vs Σ DepositInfo.amount mismatch",
+                );
+
+                prev = now;
+            }
+            Ok(())
+        })?;
+    }
+
+    /// Every payload that fails `validate_format` is rejected with
+    /// `InvalidFormat` and leaves storage untouched. Pins the
+    /// pre-uniqueness pre-flight check on the deposit path.
+    #[test]
+    fn invalid_payloads_bounce_with_invalid_format(item in arb_invalid_mock_midds()) {
+        new_test_ext().execute_with(|| -> Result<(), TestCaseError> {
+            assert_noop!(
+                Midds::deposit(RuntimeOrigin::signed(ALICE), item),
+                pallet_midds::Error::<Test, Instance>::InvalidFormat,
+            );
+            prop_assert_eq!(pallet_midds::NextMiddsId::<Test, Instance>::get(), 0);
             Ok(())
         })?;
     }

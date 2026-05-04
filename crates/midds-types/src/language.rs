@@ -28,12 +28,28 @@ macro_rules! define_languages {
                 }
             }
 
-            /// Parse a two-byte ISO 639-1 code.
+            /// Parse a two-byte ISO 639-1 code (case-sensitive lookup —
+            /// canonical ISO 639-1 codes are lowercase).
             pub fn from_code(code: &[u8]) -> Option<Self> {
                 match code {
                     $($code => Some(Self::$variant),)*
                     _ => None,
                 }
+            }
+
+            /// Parse a two-byte ISO 639-1 code, accepting any ASCII case
+            /// (e.g. `b"EN"`, `b"En"`, `b"en"` all resolve to
+            /// [`Language::En`]). Useful when ingesting metadata from
+            /// upstream sources that aren't strict about case.
+            pub fn from_code_ignore_ascii_case(code: &[u8]) -> Option<Self> {
+                if code.len() != 2 {
+                    return None;
+                }
+                let lower: [u8; 2] = [
+                    code[0].to_ascii_lowercase(),
+                    code[1].to_ascii_lowercase(),
+                ];
+                Self::from_code(&lower)
             }
         }
     };
@@ -116,6 +132,21 @@ mod tests {
         assert!(Language::from_code(b"").is_none());
         assert!(Language::from_code(b"eng").is_none());
         assert!(Language::from_code(b"EN").is_none());
+    }
+
+    #[test]
+    fn from_code_ignore_ascii_case_normalises_both_orientations() {
+        for raw in [&b"en"[..], b"EN", b"En", b"eN"] {
+            assert_eq!(
+                Language::from_code_ignore_ascii_case(raw),
+                Some(Language::En),
+                "{:?}",
+                raw,
+            );
+        }
+        assert!(Language::from_code_ignore_ascii_case(b"xx").is_none());
+        assert!(Language::from_code_ignore_ascii_case(b"eng").is_none());
+        assert!(Language::from_code_ignore_ascii_case(b"e").is_none());
     }
 
     #[test]

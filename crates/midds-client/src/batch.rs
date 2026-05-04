@@ -34,6 +34,7 @@ impl Encode for PreEncodedCalls {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests legitimately unwrap")]
 mod tests {
     //! Layout pin for [`PreEncodedCalls`]. The struct is a small, hand-rolled
     //! `Encode` impl that needs to match what `Vec<RuntimeCall>::encode()`

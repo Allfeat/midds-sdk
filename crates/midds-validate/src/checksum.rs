@@ -5,7 +5,7 @@
 //! on these checks — they live here for tooling (CLI `validate`, client-side
 //! lint) and always return `CheckResult` rather than `Result`.
 
-use midds_traits::{Ipi, Isni, Iswc};
+use midds_traits::{Ipi, Isni, Isrc, Iswc, validate_isrc_format};
 
 /// Outcome of a checksum verification. Always advisory — the pallet never
 /// reads this, and `Fail` does not block a deposit.
@@ -71,6 +71,30 @@ pub fn verify_isni_checksum(isni: &Isni) -> CheckResult {
     }
 }
 
+/// Verify an ISRC's structural shape.
+///
+/// **Important:** the ISRC standard ([ISO 3901]) does not define a check
+/// digit, so there is no checksum to verify in the strict sense. This
+/// function returns:
+/// - [`CheckResult::Pass`] when the input matches the canonical
+///   `CC-XXX-YY-NNNNN` shape (12 chars: 2 alpha country + 3 alphanumeric
+///   registrant + 2-digit year + 5-digit designation), and
+/// - [`CheckResult::NotApplicable`] otherwise.
+///
+/// Surfaced under the same name as the other verifiers so generic
+/// validation tooling can dispatch on identifier kind without a special
+/// case for ISRC. The caller is responsible for understanding that "Pass"
+/// here does not assert the identifier exists in any registry — only that
+/// it is structurally well-formed.
+///
+/// [ISO 3901]: https://www.iso.org/standard/64817.html
+pub fn verify_isrc_checksum(isrc: &Isrc) -> CheckResult {
+    match validate_isrc_format(isrc.as_slice()) {
+        Ok(()) => CheckResult::Pass,
+        Err(_) => CheckResult::NotApplicable,
+    }
+}
+
 /// Best-effort weighted mod-10 sanity check on an IPI Name Number.
 ///
 /// The real CISAC algorithm uses ISO 7064 MOD 101,2 with two trailing check
@@ -100,7 +124,7 @@ pub fn verify_ipi_checksum(ipi: &Ipi) -> CheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use midds_traits::{Ipi, Isni, Iswc};
+    use midds_traits::{Ipi, Isni, Isrc, Iswc};
 
     fn iswc(raw: &[u8]) -> Iswc {
         Iswc::try_from(raw.to_vec()).expect("iswc bound")
@@ -112,6 +136,10 @@ mod tests {
 
     fn ipi(raw: &[u8]) -> Ipi {
         Ipi::try_from(raw.to_vec()).expect("ipi bound")
+    }
+
+    fn isrc(raw: &[u8]) -> Isrc {
+        Isrc::try_from(raw.to_vec()).expect("isrc bound")
     }
 
     /// digits 0,3,4,5,2,4,6,8,0 → sum = 0+6+12+20+10+24+42+64+0 = 178
@@ -204,6 +232,69 @@ mod tests {
         // 9..=11 is enforced upstream; here we ensure non-digit bytes short-circuit.
         assert_eq!(
             verify_ipi_checksum(&ipi(b"123A56786")),
+            CheckResult::NotApplicable
+        );
+    }
+
+    // ISRC: structural-only verification, since ISO 3901 has no check digit.
+
+    #[test]
+    fn isrc_pass_real_world_examples() {
+        for raw in [
+            b"USRC17607839" as &[u8],
+            b"GBAYE0601477",
+            b"FR6V82050001",
+            b"JPK001500001",
+            b"DEAA51900001",
+        ] {
+            assert_eq!(
+                verify_isrc_checksum(&isrc(raw)),
+                CheckResult::Pass,
+                "{:?}",
+                raw
+            );
+        }
+    }
+
+    #[test]
+    fn isrc_not_applicable_bad_country_code() {
+        // Country slot must be alpha — digits invalidate the structure.
+        assert_eq!(
+            verify_isrc_checksum(&isrc(b"1SRC17607839")),
+            CheckResult::NotApplicable
+        );
+    }
+
+    #[test]
+    fn isrc_not_applicable_lowercase_country() {
+        assert_eq!(
+            verify_isrc_checksum(&isrc(b"usRC17607839")),
+            CheckResult::NotApplicable
+        );
+    }
+
+    #[test]
+    fn isrc_not_applicable_bad_year() {
+        // Year segment must be exactly 2 digits.
+        assert_eq!(
+            verify_isrc_checksum(&isrc(b"USRC1A607839")),
+            CheckResult::NotApplicable
+        );
+    }
+
+    #[test]
+    fn isrc_not_applicable_bad_designation() {
+        assert_eq!(
+            verify_isrc_checksum(&isrc(b"USRC1760783A")),
+            CheckResult::NotApplicable
+        );
+    }
+
+    #[test]
+    fn isrc_not_applicable_lowercase_registrant() {
+        // Registrant must be uppercase A-Z or digit; lowercase is rejected.
+        assert_eq!(
+            verify_isrc_checksum(&isrc(b"USrC17607839")),
             CheckResult::NotApplicable
         );
     }

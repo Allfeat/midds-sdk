@@ -18,11 +18,19 @@ pub type MiddsId = u64;
 /// associated `Identifier` is the canonical industry code (ISWC for
 /// `MusicalWork`, ISRC for `Recording`, …) backing the reverse uniqueness index.
 pub trait Midds: Parameter + MaxEncodedLen {
+    /// Stable, human-readable type discriminator. Surfaced in events, RPC
+    /// namespaces, indexer schemas. Convention: PascalCase singular —
+    /// `"MusicalWork"`, `"Recording"`, `"Release"`. Frozen across versions
+    /// of the same payload (a `V2` keeps the same `KIND` as `V1`).
+    const KIND: &'static str;
+
     /// Canonical industry identifier used for the reverse uniqueness index.
     type Identifier: Parameter + MaxEncodedLen + Ord;
 
-    /// Extract the canonical identifier of this record.
-    fn identifier(&self) -> Self::Identifier;
+    /// Borrow the canonical identifier of this record. Returning a reference
+    /// avoids the `clone()` every call site previously paid; consumers that
+    /// need an owned copy can `.clone()` explicitly.
+    fn identifier(&self) -> &Self::Identifier;
 
     /// Charset / length / structure validation. Does not verify checksums.
     fn validate_format(&self) -> Result<(), MiddsFormatError>;

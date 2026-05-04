@@ -1,0 +1,42 @@
+name: Nightly
+
+# Heavy, expensive tests that don't gate per-PR CI but should fail audibly
+# if they break. Triggered nightly at 02:00 UTC and on demand.
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  mass-injection:
+    name: mass-injection 50k & 100k
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-mass
+      # Runs the `#[ignore]`d 50k / 100k scenarios. Each writes a JSON
+      # report to `target/test-reports/` and pins a storage_root_hash
+      # fixture under `pallets/pallet-midds/tests/fixtures/`.
+      - run: cargo test -p pallet-midds --release --test mass_injection -- --ignored --nocapture
+
+  property-tests-intensive:
+    name: property tests (10k cases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROPTEST_CASES: '10000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-proptest
+      - run: cargo test -p pallet-midds property_tests --release

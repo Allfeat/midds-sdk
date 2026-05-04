@@ -3019,9 +3019,11 @@ dependencies = [
 name = "midds-client"
 version = "0.1.0"
 dependencies = [
+ "midds-runtime-api",
  "midds-traits",
  "midds-types",
  "parity-scale-codec",
+ "scale-info",
  "subxt",
  "subxt-signer",
  "thiserror 1.0.69",
@@ -3077,6 +3079,8 @@ version = "0.1.0"
 dependencies = [
  "midds-traits",
  "parity-scale-codec",
+ "scale-info",
+ "serde",
  "sp-api",
  "sp-runtime",
 ]
@@ -3109,6 +3113,7 @@ dependencies = [
 name = "midds-validate"
 version = "0.1.0"
 dependencies = [
+ "frame-support",
  "midds-fixtures",
  "midds-traits",
  "midds-types",

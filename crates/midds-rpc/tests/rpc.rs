@@ -18,7 +18,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 
 use jsonrpsee::core::RpcResult;
 use midds_fixtures::musical_work::MusicalWorkBuilder;
-use midds_rpc::MiddsRpcApiServer;
+use midds_rpc::{DepositInfoOf, MiddsRpcApiServer};
 use midds_traits::{Iswc, Midds as _, MiddsId};
 use midds_types::MusicalWork;
 use sp_runtime::FixedU128;
@@ -39,7 +39,7 @@ struct StubState {
     items: BTreeMap<MiddsId, MusicalWork>,
     /// Multi-claim — every identifier maps to a list of ids.
     claims: BTreeMap<Iswc, Vec<MiddsId>>,
-    deposit_info: BTreeMap<MiddsId, (AccountId, Balance, Balance, bool)>,
+    deposit_info: BTreeMap<MiddsId, DepositInfoOf<AccountId, Balance>>,
 }
 
 impl Stub {
@@ -53,10 +53,24 @@ impl Stub {
         finalized: bool,
     ) {
         let mut s = self.state.lock().expect("stub state");
-        s.claims.entry(work.identifier()).or_default().push(id);
+        s.claims
+            .entry(work.identifier().clone())
+            .or_default()
+            .push(id);
         s.items.insert(id, work);
-        s.deposit_info
-            .insert(id, (depositor, bond, base_bond, finalized));
+        s.deposit_info.insert(
+            id,
+            DepositInfoOf {
+                depositor,
+                // Stub keeps `bond_payer == depositor` (self-deposit shape) —
+                // sponsored variants are exercised by pallet-level tests, not
+                // the RPC surface.
+                bond_payer: depositor,
+                amount: bond,
+                base_bond,
+                finalized,
+            },
+        );
     }
 }
 
@@ -90,14 +104,14 @@ impl MiddsRpcApiServer<BlockHash, Iswc, MusicalWork, AccountId, Balance> for Stu
         &self,
         id: MiddsId,
         _at: Option<BlockHash>,
-    ) -> RpcResult<Option<(AccountId, Balance, Balance, bool)>> {
+    ) -> RpcResult<Option<DepositInfoOf<AccountId, Balance>>> {
         Ok(self
             .state
             .lock()
             .expect("stub state")
             .deposit_info
             .get(&id)
-            .copied())
+            .cloned())
     }
 
     fn current_deposit_price(&self, size: u32, _at: Option<BlockHash>) -> RpcResult<Balance> {
@@ -270,13 +284,16 @@ async fn deposit_info_present_id_returns_full_view() {
     let request = r#"{"jsonrpc":"2.0","method":"midds_depositInfo","params":[3, null],"id":0}"#;
     let resp = call(stub, request).await;
     let result = resp.get("result").expect("result present");
-    let arr = result.as_array().expect("tuple serializes as JSON array");
-    // 4-tuple: depositor, total_held, base_bond, finalized.
-    assert_eq!(arr.len(), 4, "tuple must have exactly 4 components");
-    assert_eq!(arr[0].as_u64(), Some(99), "account id");
-    assert_eq!(arr[1].as_u64(), Some(12_345), "total held");
-    assert_eq!(arr[2].as_u64(), Some(10_000), "base bond");
-    assert_eq!(arr[3].as_bool(), Some(false), "finalized");
+    let obj = result
+        .as_object()
+        .expect("DepositInfoOf serializes as JSON object");
+    assert_eq!(obj.len(), 5, "DepositInfoOf has exactly 5 fields");
+    assert_eq!(obj.get("depositor").and_then(|v| v.as_u64()), Some(99));
+    // Stub uses self-deposit shape: bond_payer == depositor.
+    assert_eq!(obj.get("bond_payer").and_then(|v| v.as_u64()), Some(99));
+    assert_eq!(obj.get("amount").and_then(|v| v.as_u64()), Some(12_345));
+    assert_eq!(obj.get("base_bond").and_then(|v| v.as_u64()), Some(10_000),);
+    assert_eq!(obj.get("finalized").and_then(|v| v.as_bool()), Some(false));
 }
 
 // -----------------------------------------------------------------------------

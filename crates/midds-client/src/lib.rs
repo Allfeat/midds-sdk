@@ -31,11 +31,13 @@ pub mod batch;
 pub mod codec_bridge;
 pub mod error;
 pub mod musical_works;
+pub mod pallet;
 pub mod tx;
 
 pub use error::Error;
-pub use musical_works::{
-    DepositInfo, DepositReceipt, FixedU128Raw, MusicalWorksApi, PricingSnapshot, fixed_u128_to_f64,
+pub use musical_works::MusicalWorksApi;
+pub use pallet::{
+    DepositInfo, DepositReceipt, FixedU128Raw, PalletApi, PricingSnapshot, fixed_u128_to_f64,
 };
 pub use tx::wait_for_in_block;
 
@@ -73,7 +75,11 @@ impl MiddsClient {
 
     /// Façade for the `MusicalWorks` pallet instance.
     pub fn musical_works(&self) -> MusicalWorksApi<'_> {
-        MusicalWorksApi::new(self)
+        PalletApi::new(
+            self,
+            musical_works::PALLET_NAME,
+            musical_works::RUNTIME_API_NAME,
+        )
     }
 
     /// Read the current nonce for `account_id` at the latest finalised block.

@@ -1805,10 +1805,10 @@ fn remove_own_on_behalf_rejects_finalized_record() {
 
         let payload = remove_payload(0, BOB, 1);
         let sig = sign(ALICE, &payload);
-        // Window-closed fires before AlreadyFinalized in the ordering — the
-        // record is finalised *because* the window passed, so the user
-        // surfaces the same blocking error as for a stale post-window
-        // remove. AlreadyFinalized is checked after `ensure_in_window`.
+        // `!info.finalized` is checked before `ensure_in_window` in the
+        // extrinsic, so a finalized post-window record surfaces
+        // `AlreadyFinalized` rather than `CommitmentWindowClosed` — even
+        // though both conditions hold.
         assert_noop!(
             Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
             pallet_midds::Error::<Test, Instance>::AlreadyFinalized,

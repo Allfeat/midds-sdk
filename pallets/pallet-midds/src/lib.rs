@@ -90,7 +90,7 @@ pub mod pallet {
     use parity_scale_codec::Encode;
     use sp_runtime::{
         FixedU128,
-        traits::{IdentifyAccount, Saturating, Verify, Zero},
+        traits::{IdentifyAccount, Saturating, Verify},
     };
 
     #[pallet::pallet]
@@ -542,17 +542,8 @@ pub mod pallet {
             Self::ensure_identifier_unchanged(id, &item)?;
             Self::ensure_in_window(&info)?;
 
-            Self::apply_edit(id, item, info, &caller)?;
-            let updated = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
-            Self::deposit_event(Event::Updated {
-                id,
-                sponsor_bond: updated.sponsor_layer.amount,
-                owner_bond: updated
-                    .owner_layer
-                    .as_ref()
-                    .map(|l| l.amount)
-                    .unwrap_or_else(Zero::zero),
-            });
+            let updated = Self::apply_edit(id, item, info, &caller)?;
+            Self::emit_updated_event(id, &updated);
             Ok(())
         }
 
@@ -603,17 +594,8 @@ pub mod pallet {
 
             OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
 
-            Self::apply_edit(id, item, info, &operator)?;
-            let updated = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
-            Self::deposit_event(Event::Updated {
-                id,
-                sponsor_bond: updated.sponsor_layer.amount,
-                owner_bond: updated
-                    .owner_layer
-                    .as_ref()
-                    .map(|l| l.amount)
-                    .unwrap_or_else(Zero::zero),
-            });
+            let updated = Self::apply_edit(id, item, info, &operator)?;
+            Self::emit_updated_event(id, &updated);
             Ok(())
         }
 
@@ -636,29 +618,9 @@ pub mod pallet {
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             ensure!(info.depositor == caller, Error::<T, I>::NotProvider);
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
-
             Self::ensure_in_window(&info)?;
 
-            let sponsor_refund = info.sponsor_layer.base;
-            let owner_refund = info
-                .owner_layer
-                .as_ref()
-                .map(|l| l.base)
-                .unwrap_or_else(Zero::zero);
-            let premium_to_treasury = Self::total_premium(&info);
-
-            Self::settle_bond(&info, crate::types::SettlementKind::PremiumOnly)?;
-            Self::cleanup_storage(id, &info)?;
-
-            Self::deposit_event(Event::Refunded {
-                id,
-                depositor: info.depositor,
-                sponsor: info.sponsor_layer.payer,
-                sponsor_refund,
-                owner_refund,
-                premium_to_treasury,
-            });
-            Ok(())
+            Self::do_remove_own(id, info)
         }
 
         /// Permissionless catch-up for finalizations the eager `on_initialize`
@@ -776,7 +738,7 @@ pub mod pallet {
             let current_nonce = OnBehalfNonce::<T, I>::get(&owner);
             ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
 
-            let payload = RemoveOnBehalfPayload::<T::AccountId> {
+            let payload = RemoveOnBehalfPayload {
                 action: OnBehalfAction::Remove,
                 id,
                 operator,
@@ -788,26 +750,7 @@ pub mod pallet {
             // failure later on still consumes this signature (no replay).
             OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
 
-            let sponsor_refund = info.sponsor_layer.base;
-            let owner_refund = info
-                .owner_layer
-                .as_ref()
-                .map(|l| l.base)
-                .unwrap_or_else(Zero::zero);
-            let premium_to_treasury = Self::total_premium(&info);
-
-            Self::settle_bond(&info, crate::types::SettlementKind::PremiumOnly)?;
-            Self::cleanup_storage(id, &info)?;
-
-            Self::deposit_event(Event::Refunded {
-                id,
-                depositor: info.depositor,
-                sponsor: info.sponsor_layer.payer,
-                sponsor_refund,
-                owner_refund,
-                premium_to_treasury,
-            });
-            Ok(())
+            Self::do_remove_own(id, info)
         }
     }
 }

@@ -87,26 +87,36 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         T::DepositBase::get().saturating_add(per_byte.saturating_mul(size_balance))
     }
 
+    /// `owner_layer.amount` or zero if no owner layer exists.
+    pub(crate) fn owner_amount(info: &DepositOf<T, I>) -> BalanceOf<T, I> {
+        info.owner_layer
+            .as_ref()
+            .map(|l| l.amount)
+            .unwrap_or_else(Zero::zero)
+    }
+
+    /// `owner_layer.base` or zero if no owner layer exists.
+    pub(crate) fn owner_base(info: &DepositOf<T, I>) -> BalanceOf<T, I> {
+        info.owner_layer
+            .as_ref()
+            .map(|l| l.base)
+            .unwrap_or_else(Zero::zero)
+    }
+
     /// Total base across both layers — the canonical "current bond formula
     /// value" for the stored payload size.
     pub(crate) fn total_base(info: &DepositOf<T, I>) -> BalanceOf<T, I> {
-        info.sponsor_layer.base.saturating_add(
-            info.owner_layer
-                .as_ref()
-                .map(|l| l.base)
-                .unwrap_or_else(Zero::zero),
-        )
+        info.sponsor_layer
+            .base
+            .saturating_add(Self::owner_base(info))
     }
 
     /// Total amount currently held across both layers — what `do_finalize`
     /// transfers to the Treasury.
     pub(crate) fn total_amount(info: &DepositOf<T, I>) -> BalanceOf<T, I> {
-        info.sponsor_layer.amount.saturating_add(
-            info.owner_layer
-                .as_ref()
-                .map(|l| l.amount)
-                .unwrap_or_else(Zero::zero),
-        )
+        info.sponsor_layer
+            .amount
+            .saturating_add(Self::owner_amount(info))
     }
 
     /// Aggregated multiplier premium (= total amount − total base) across
@@ -225,7 +235,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         item: T::Midds,
         mut info: DepositOf<T, I>,
         caller: &T::AccountId,
-    ) -> DispatchResult {
+    ) -> Result<DepositOf<T, I>, DispatchError> {
         let new_size = item.encoded_size() as u32;
         let new_total_base = Self::compute_base_bond(new_size);
         let old_total_base = Self::total_base(&info);
@@ -253,8 +263,8 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         }
 
         Items::<T, I>::insert(id, item);
-        DepositInfo::<T, I>::insert(id, info);
-        Ok(())
+        DepositInfo::<T, I>::insert(id, &info);
+        Ok(info)
     }
 
     /// Apply the per-layer base + amount adjustments for an `apply_edit`
@@ -312,11 +322,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         // Shrink: split base reduction LIFO across layers, then recompute
         // each touched layer's amount via the per-layer premium rule.
         let delta_base = old_total_base.saturating_sub(new_total_base);
-        let owner_base = info
-            .owner_layer
-            .as_ref()
-            .map(|l| l.base)
-            .unwrap_or_else(Zero::zero);
+        let owner_base = Self::owner_base(info);
         let (sponsor_release_base, owner_release_base) = if caller_is_sponsor {
             // Caller = sponsor: drain sponsor first, overflow into owner
             // (only possible when an owner layer exists).
@@ -512,6 +518,42 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             depositor,
             sponsor,
             amount_to_treasury,
+        });
+        Ok(())
+    }
+
+    /// Surface the post-edit per-layer holds so off-chain consumers can
+    /// reflect the stratified bond without re-querying `DepositInfo`. Shared
+    /// by `update` and `update_on_behalf`; `force_edit` emits a different
+    /// event and intentionally skips this.
+    pub(crate) fn emit_updated_event(id: MiddsId, info: &DepositOf<T, I>) {
+        Self::deposit_event(Event::Updated {
+            id,
+            sponsor_bond: info.sponsor_layer.amount,
+            owner_bond: Self::owner_amount(info),
+        });
+    }
+
+    /// Settle a within-window cancellation (shared by `remove_own` and
+    /// `remove_own_on_behalf`): refund each layer's base to its own payer,
+    /// transfer aggregated premium to the Treasury, wipe storage, emit
+    /// `Refunded`. Callers are responsible for the auth and pre-state
+    /// checks (depositor / signature / window / finalized).
+    pub(crate) fn do_remove_own(id: MiddsId, info: DepositOf<T, I>) -> DispatchResult {
+        let sponsor_refund = info.sponsor_layer.base;
+        let owner_refund = Self::owner_base(&info);
+        let premium_to_treasury = Self::total_premium(&info);
+
+        Self::settle_bond(&info, SettlementKind::PremiumOnly)?;
+        Self::cleanup_storage(id, &info)?;
+
+        Self::deposit_event(Event::Refunded {
+            id,
+            depositor: info.depositor,
+            sponsor: info.sponsor_layer.payer,
+            sponsor_refund,
+            owner_refund,
+            premium_to_treasury,
         });
         Ok(())
     }

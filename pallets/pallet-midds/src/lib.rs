@@ -90,7 +90,7 @@ pub mod pallet {
     use parity_scale_codec::Encode;
     use sp_runtime::{
         FixedU128,
-        traits::{IdentifyAccount, Saturating, Verify},
+        traits::{IdentifyAccount, One, Saturating, Verify},
     };
 
     #[pallet::pallet]
@@ -263,10 +263,23 @@ pub mod pallet {
 
     /// Finalization queue keyed by expiry block (= `deposited_at +
     /// CommitmentWindow`). `iter_prefix(n)` enumerates the records due at
-    /// block `n` for the eager `on_initialize` path.
+    /// block `n` for the eager `on_initialize` path; older prefixes are
+    /// rolled over via [`NextFinalizationScan`] when a previous block hit
+    /// the per-block cap.
     #[pallet::storage]
     pub type PendingFinalization<T: Config<I>, I: 'static = ()> =
         StorageDoubleMap<_, Twox64Concat, BlockNumberFor<T>, Identity, MiddsId, (), OptionQuery>;
+
+    /// Rolling cursor pointing at the earliest finalization-queue prefix
+    /// that may still hold entries. `on_initialize(n)` drains prefixes
+    /// from this cursor up to `n` rather than only the current block, so a
+    /// burst that overflows [`Config::MaxFinalizationsPerBlock`] catches up
+    /// on subsequent blocks instead of stranding entries forever under
+    /// their original expiry prefix. Permissionless [`Pallet::finalize`]
+    /// remains as a tertiary fallback.
+    #[pallet::storage]
+    pub type NextFinalizationScan<T: Config<I>, I: 'static = ()> =
+        StorageValue<_, BlockNumberFor<T>, ValueQuery>;
 
     /// Number of `deposit` calls made during the current block. Drained by
     /// `on_initialize` to feed `M_fast` adjustment.
@@ -436,20 +449,42 @@ pub mod pallet {
                 weight = weight.saturating_add(T::DbWeight::get().reads_writes(2, 2));
             }
 
-            // 3) Eagerly finalize records whose commitment window expires at
-            //    this block. Capped to keep the hook bounded; remainders are
-            //    picked up by `finalize(id)` (permissionless) or by the next
-            //    blocks once the prefix re-fits in budget.
+            // 3) Drain pending finalizations from the rolling cursor up to
+            //    `n`, capped globally at `MaxFinalizationsPerBlock`. The
+            //    cursor only advances when budget remains after a prefix
+            //    drain, so a prefix the cap couldn't fully clear stays put
+            //    and gets re-scanned next block. Permissionless
+            //    `finalize(id)` is still available as a tertiary fallback.
             let cap = T::MaxFinalizationsPerBlock::get() as usize;
-            let due: Vec<MiddsId> = PendingFinalization::<T, I>::iter_prefix(n)
-                .take(cap)
-                .map(|(id, _)| id)
-                .collect();
-            for id in due {
-                // Best-effort: a single failure must not poison the rest of
-                // the queue. The slot can be retried via `finalize(id)`.
-                let _ = Self::do_finalize(id);
-                weight = weight.saturating_add(T::WeightInfo::finalize_one());
+            let mut remaining = cap;
+            let initial_cursor = NextFinalizationScan::<T, I>::get();
+            let mut cursor = initial_cursor;
+            weight = weight.saturating_add(T::DbWeight::get().reads(1));
+            while cursor <= n && remaining > 0 {
+                let due: Vec<MiddsId> = PendingFinalization::<T, I>::iter_prefix(cursor)
+                    .take(remaining)
+                    .map(|(id, _)| id)
+                    .collect();
+                let count = due.len();
+                for id in due {
+                    // Best-effort: a single failure must not poison the
+                    // rest of the queue. The slot can be retried via
+                    // `finalize(id)`.
+                    let _ = Self::do_finalize(id);
+                    weight = weight.saturating_add(T::WeightInfo::finalize_one());
+                }
+                remaining = remaining.saturating_sub(count);
+                if remaining > 0 {
+                    // Either the prefix was empty or we drained it under
+                    // budget — safe to step forward. If we hit the cap
+                    // mid-prefix `remaining == 0` and we leave the cursor
+                    // here so next block resumes draining the same slot.
+                    cursor = cursor.saturating_add(One::one());
+                }
+            }
+            if cursor != initial_cursor {
+                NextFinalizationScan::<T, I>::put(cursor);
+                weight = weight.saturating_add(T::DbWeight::get().writes(1));
             }
 
             weight

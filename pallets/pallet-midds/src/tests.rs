@@ -12,7 +12,7 @@ use crate::types::{
     DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, RemoveOnBehalfPayload,
     UpdateOnBehalfPayload,
 };
-use frame_support::{BoundedVec, assert_noop, assert_ok};
+use frame_support::{BoundedVec, assert_noop, assert_ok, traits::Get};
 use midds_traits::Midds as _;
 use parity_scale_codec::Encode;
 use sp_runtime::{FixedU128, traits::One};
@@ -594,6 +594,75 @@ fn on_initialize_finalizes_at_expiry_block() {
         assert_eq!(treasury_balance(), bond);
         let after = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info kept");
         assert!(after.finalized);
+    });
+}
+
+/// When more records expire on the same block than `MaxFinalizationsPerBlock`,
+/// the leftover entries must roll forward and finalize on subsequent blocks
+/// via the rolling cursor. Without that rollover they would stay stuck under
+/// their original expiry prefix and only the permissionless `finalize` crank
+/// could clear them.
+#[test]
+fn on_initialize_rolls_pending_finalizations_forward() {
+    new_test_ext().execute_with(|| {
+        // Deposit `cap + overflow` records at block 1 so they all share the
+        // same expiry prefix. The fast multiplier will spike under this
+        // burst — expected, irrelevant to what we exercise here.
+        let cap: u64 =
+            <<Test as pallet_midds::Config<Instance>>::MaxFinalizationsPerBlock as Get<u32>>::get()
+                .into();
+        let overflow = 5u64;
+        let total = cap + overflow;
+        for i in 0..total {
+            let mut id = [0u8; 4];
+            id[0] = b'a';
+            id[1..4].copy_from_slice(&[(i / 100) as u8 + b'0', ((i / 10) % 10) as u8 + b'0', (i % 10) as u8 + b'0']);
+            assert_ok!(Midds::deposit(
+                RuntimeOrigin::signed(ALICE),
+                mock_midds(&id, 1)
+            ));
+        }
+        let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("first info");
+        let expiry = info.deposited_at + COMMITMENT_WINDOW;
+
+        // First hook at the expiry block can only drain `cap` entries.
+        advance_to_block(expiry);
+        let finalized_first_pass = (0..total)
+            .filter(|i| {
+                pallet_midds::DepositInfo::<Test, Instance>::get(*i)
+                    .map(|d| d.finalized)
+                    .unwrap_or(false)
+            })
+            .count() as u64;
+        assert_eq!(
+            finalized_first_pass, cap,
+            "first hook should finalize exactly `cap` records"
+        );
+        // Cursor must still point at the overflowed prefix so the next hook
+        // resumes the drain instead of skipping ahead.
+        assert_eq!(
+            pallet_midds::NextFinalizationScan::<Test, Instance>::get(),
+            expiry,
+        );
+
+        // One more block clears the leftover and advances the cursor past
+        // the prefix.
+        advance_to_block(expiry + 1);
+        let finalized_total = (0..total)
+            .filter(|i| {
+                pallet_midds::DepositInfo::<Test, Instance>::get(*i)
+                    .map(|d| d.finalized)
+                    .unwrap_or(false)
+            })
+            .count() as u64;
+        assert_eq!(
+            finalized_total, total,
+            "rollover must catch up the entire backlog on the next block"
+        );
+        assert_eq!(
+            pallet_midds::NextFinalizationScan::<Test, Instance>::get(),
+            expiry + 2,
+        );
     });
 }
 

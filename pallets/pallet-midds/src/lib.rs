@@ -431,6 +431,11 @@ pub mod pallet {
         InvalidSignature,
         /// Provided nonce does not match `OnBehalfNonce[owner]`.
         InvalidNonce,
+        /// Current block exceeds the `valid_until` window the owner pinned
+        /// in their on-behalf payload — the signature is no longer
+        /// admissible. Reuse requires a fresh signature with a new
+        /// `valid_until`.
+        SignatureExpired,
         /// `update_on_behalf` caller is not the original sponsor (=
         /// `sponsor_layer.payer`). Only the deposit-time sponsor may extend
         /// their own layer.
@@ -529,18 +534,23 @@ pub mod pallet {
             owner: T::AccountId,
             item: T::Midds,
             nonce: u64,
+            valid_until: BlockNumberFor<T>,
             signature: T::OffchainSignature,
         ) -> DispatchResult {
             let operator = T::ProviderOrigin::ensure_origin(origin)?;
 
+            Self::ensure_signature_fresh(valid_until)?;
             let current_nonce = OnBehalfNonce::<T, I>::get(&owner);
             ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
 
             let payload = DepositOnBehalfPayload {
+                kind: Self::kind_bytes(),
+                genesis_hash: Self::genesis_hash(),
                 action: OnBehalfAction::Deposit,
                 item: item.clone(),
                 operator: operator.clone(),
                 nonce,
+                valid_until,
             };
             Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
 
@@ -605,10 +615,12 @@ pub mod pallet {
             id: MiddsId,
             item: T::Midds,
             nonce: u64,
+            valid_until: BlockNumberFor<T>,
             signature: T::OffchainSignature,
         ) -> DispatchResult {
             let operator = T::ProviderOrigin::ensure_origin(origin)?;
             Self::enforce_format(&item)?;
+            Self::ensure_signature_fresh(valid_until)?;
 
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
@@ -624,11 +636,14 @@ pub mod pallet {
             ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
 
             let payload = UpdateOnBehalfPayload {
+                kind: Self::kind_bytes(),
+                genesis_hash: Self::genesis_hash(),
                 action: OnBehalfAction::Update,
                 id,
                 item: item.clone(),
                 operator: operator.clone(),
                 nonce,
+                valid_until,
             };
             Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
 
@@ -766,10 +781,12 @@ pub mod pallet {
             origin: OriginFor<T>,
             id: MiddsId,
             nonce: u64,
+            valid_until: BlockNumberFor<T>,
             signature: T::OffchainSignature,
         ) -> DispatchResult {
             let operator = T::ProviderOrigin::ensure_origin(origin)?;
 
+            Self::ensure_signature_fresh(valid_until)?;
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
             Self::ensure_in_window(&info)?;
@@ -779,10 +796,13 @@ pub mod pallet {
             ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
 
             let payload = RemoveOnBehalfPayload {
+                kind: Self::kind_bytes(),
+                genesis_hash: Self::genesis_hash(),
                 action: OnBehalfAction::Remove,
                 id,
                 operator,
                 nonce,
+                valid_until,
             };
             Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
 

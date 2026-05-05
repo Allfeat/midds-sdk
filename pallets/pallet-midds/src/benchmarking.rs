@@ -25,7 +25,7 @@ use frame_support::{
     BoundedVec,
     traits::{Get, fungible::Mutate},
 };
-use frame_system::RawOrigin;
+use frame_system::{RawOrigin, pallet_prelude::BlockNumberFor};
 use midds_traits::Midds as MiddsTrait;
 use sp_runtime::traits::Bounded;
 
@@ -184,27 +184,37 @@ mod benchmarks {
         fund_caller::<T, I>(&operator);
         let item = T::BenchmarkHelper::bench_instance(s);
 
+        // Worst-case `valid_until` for benches: far enough in the future
+        // that signature freshness never trips during the run.
+        let valid_until = BlockNumberFor::<T>::max_value();
+
         // Derive the owner deterministically through the helper, then build
         // and sign the payload at the current `OnBehalfNonce[owner]` value.
-        let dummy = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
+        let dummy = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+            kind: MiddsPallet::<T, I>::kind_bytes(),
+            genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
             action: OnBehalfAction::Deposit,
             item: item.clone(),
             operator: operator.clone(),
             nonce: 0,
+            valid_until,
         };
         let (_, owner) = T::BenchmarkHelper::create_signature(b"owner", &dummy.encode());
 
         let nonce = crate::OnBehalfNonce::<T, I>::get(&owner);
-        let payload = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
+        let payload = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+            kind: MiddsPallet::<T, I>::kind_bytes(),
+            genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
             action: OnBehalfAction::Deposit,
             item: item.clone(),
             operator: operator.clone(),
             nonce,
+            valid_until,
         };
         let (sig, _) = T::BenchmarkHelper::create_signature(b"owner", &payload.encode());
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(operator), owner, item, nonce, sig);
+        _(RawOrigin::Signed(operator), owner, item, nonce, valid_until, sig);
 
         assert!(Items::<T, I>::contains_key(0));
         Ok(())
@@ -215,44 +225,57 @@ mod benchmarks {
         let operator: T::AccountId = whitelisted_caller();
         fund_caller::<T, I>(&operator);
 
+        let valid_until = BlockNumberFor::<T>::max_value();
         let initial = T::BenchmarkHelper::bench_instance(0);
-        let dummy = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
+        let dummy = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+            kind: MiddsPallet::<T, I>::kind_bytes(),
+            genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
             action: OnBehalfAction::Deposit,
             item: initial.clone(),
             operator: operator.clone(),
             nonce: 0,
+            valid_until,
         };
         let (_, owner) = T::BenchmarkHelper::create_signature(b"owner", &dummy.encode());
 
         let nonce0 = crate::OnBehalfNonce::<T, I>::get(&owner);
-        let dep_payload = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
-            action: OnBehalfAction::Deposit,
-            item: initial.clone(),
-            operator: operator.clone(),
-            nonce: nonce0,
-        };
+        let dep_payload =
+            DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+                kind: MiddsPallet::<T, I>::kind_bytes(),
+                genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
+                action: OnBehalfAction::Deposit,
+                item: initial.clone(),
+                operator: operator.clone(),
+                nonce: nonce0,
+                valid_until,
+            };
         let (dep_sig, _) = T::BenchmarkHelper::create_signature(b"owner", &dep_payload.encode());
         MiddsPallet::<T, I>::deposit_on_behalf(
             RawOrigin::Signed(operator.clone()).into(),
             owner.clone(),
             initial,
             nonce0,
+            valid_until,
             dep_sig,
         )?;
 
         let updated = T::BenchmarkHelper::bench_instance(s);
         let nonce1 = crate::OnBehalfNonce::<T, I>::get(&owner);
-        let upd_payload = UpdateOnBehalfPayload::<T::AccountId, T::Midds> {
-            action: OnBehalfAction::Update,
-            id: 0,
-            item: updated.clone(),
-            operator: operator.clone(),
-            nonce: nonce1,
-        };
+        let upd_payload =
+            UpdateOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+                kind: MiddsPallet::<T, I>::kind_bytes(),
+                genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
+                action: OnBehalfAction::Update,
+                id: 0,
+                item: updated.clone(),
+                operator: operator.clone(),
+                nonce: nonce1,
+                valid_until,
+            };
         let (upd_sig, _) = T::BenchmarkHelper::create_signature(b"owner", &upd_payload.encode());
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(operator), 0, updated, nonce1, upd_sig);
+        _(RawOrigin::Signed(operator), 0, updated, nonce1, valid_until, upd_sig);
 
         Ok(())
     }
@@ -262,28 +285,37 @@ mod benchmarks {
         let operator: T::AccountId = whitelisted_caller();
         fund_caller::<T, I>(&operator);
 
+        let valid_until = BlockNumberFor::<T>::max_value();
         let initial = T::BenchmarkHelper::bench_instance(0);
-        let dummy = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
+        let dummy = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+            kind: MiddsPallet::<T, I>::kind_bytes(),
+            genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
             action: OnBehalfAction::Deposit,
             item: initial.clone(),
             operator: operator.clone(),
             nonce: 0,
+            valid_until,
         };
         let (_, owner) = T::BenchmarkHelper::create_signature(b"owner", &dummy.encode());
 
         let nonce0 = crate::OnBehalfNonce::<T, I>::get(&owner);
-        let dep_payload = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
-            action: OnBehalfAction::Deposit,
-            item: initial.clone(),
-            operator: operator.clone(),
-            nonce: nonce0,
-        };
+        let dep_payload =
+            DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+                kind: MiddsPallet::<T, I>::kind_bytes(),
+                genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
+                action: OnBehalfAction::Deposit,
+                item: initial.clone(),
+                operator: operator.clone(),
+                nonce: nonce0,
+                valid_until,
+            };
         let (dep_sig, _) = T::BenchmarkHelper::create_signature(b"owner", &dep_payload.encode());
         MiddsPallet::<T, I>::deposit_on_behalf(
             RawOrigin::Signed(operator.clone()).into(),
             owner.clone(),
             initial,
             nonce0,
+            valid_until,
             dep_sig,
         )?;
 
@@ -294,16 +326,19 @@ mod benchmarks {
         fund_caller::<T, I>(&relayer);
 
         let nonce1 = crate::OnBehalfNonce::<T, I>::get(&owner);
-        let payload = RemoveOnBehalfPayload::<T::AccountId> {
+        let payload = RemoveOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash> {
+            kind: MiddsPallet::<T, I>::kind_bytes(),
+            genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
             action: OnBehalfAction::Remove,
             id: 0,
             operator: relayer.clone(),
             nonce: nonce1,
+            valid_until,
         };
         let (sig, _) = T::BenchmarkHelper::create_signature(b"owner", &payload.encode());
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(relayer), 0, nonce1, sig);
+        _(RawOrigin::Signed(relayer), 0, nonce1, valid_until, sig);
 
         assert!(!Items::<T, I>::contains_key(0));
         Ok(())

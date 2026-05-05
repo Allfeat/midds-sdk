@@ -18,6 +18,7 @@ use frame_support::{
         tokens::{Precision, Preservation},
     },
 };
+use frame_system::pallet_prelude::BlockNumberFor;
 use midds_traits::{Midds, MiddsId};
 use parity_scale_codec::Encode;
 use sp_runtime::traits::{Hash, Saturating, Verify, Zero};
@@ -48,6 +49,32 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             signature.verify(payload_bytes, expected_owner),
             Error::<T, I>::InvalidSignature
         );
+        Ok(())
+    }
+
+    /// Genesis hash of the chain — used as the chain-id portion of the
+    /// on-behalf domain separator. Different chains / forks produce
+    /// different genesis hashes, so a signature captured on one chain is
+    /// not replayable on another.
+    pub(crate) fn genesis_hash() -> T::Hash {
+        <frame_system::Pallet<T>>::block_hash(BlockNumberFor::<T>::zero())
+    }
+
+    /// `Midds::KIND` of this instance, encoded as bytes for inclusion in
+    /// the on-behalf payload. Pins the signature to a specific MIDDS type
+    /// so a signature for `MusicalWork` cannot be replayed against a
+    /// `Recording` instance whose `Item: M` happens to share the same
+    /// SCALE shape (e.g. a `Remove` payload that carries no `item`).
+    pub(crate) fn kind_bytes() -> Vec<u8> {
+        T::Midds::KIND.as_bytes().to_vec()
+    }
+
+    /// Reject if the signature's `valid_until` window has already passed.
+    /// The boundary is inclusive — the signer can pin `valid_until = now`
+    /// to authorize a single-block submission.
+    pub(crate) fn ensure_signature_fresh(valid_until: BlockNumberFor<T>) -> DispatchResult {
+        let now = <frame_system::Pallet<T>>::block_number();
+        ensure!(now <= valid_until, Error::<T, I>::SignatureExpired);
         Ok(())
     }
 

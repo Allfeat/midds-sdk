@@ -1,5 +1,6 @@
 //! Shared types used by `pallet-midds`.
 
+use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use midds_traits::MiddsId;
 
@@ -81,36 +82,62 @@ pub enum OnBehalfAction {
 
 /// Off-chain payload an owner signs to authorize a sponsored deposit.
 ///
-/// The `operator` field binds the signature to a specific sponsor — a third
-/// party who picks up the signature off-chain cannot submit it via a
-/// different account. `nonce` carries the per-owner replay protection value
-/// (`OnBehalfNonce<owner>`); the chain rejects a payload whose nonce does not
-/// match the current value, then bumps it.
+/// Domain separation header (cf. `docs/economics.md` §5.6 hardening) pins
+/// every signature to a specific chain (`genesis_hash`), MIDDS type
+/// (`kind` = `M::KIND`), action (`action` enum) and validity window
+/// (`valid_until`). Without this header, a signature captured on a fork
+/// or testnet could be replayed against mainnet, and a `Remove` signature
+/// (which carries no `item: M`) could be confused across pallet
+/// instances. The `operator` field binds the signature to a specific
+/// sponsor; `nonce` carries the per-owner replay protection.
 #[derive(Encode, Decode, DecodeWithMemTracking, TypeInfo, Clone, PartialEq, Eq, Debug)]
-pub struct DepositOnBehalfPayload<AccountId, M> {
+pub struct DepositOnBehalfPayload<AccountId, BlockNumber, Hash, M> {
+    /// `Midds::KIND` of the target instance — pins the signature to a
+    /// specific MIDDS type so the same payload cannot be resubmitted
+    /// against a different pallet instance.
+    pub kind: Vec<u8>,
+    /// Genesis hash of the chain the signature is valid against. Different
+    /// chains / forks have different genesis hashes, so a signature
+    /// captured on testnet is not replayable on mainnet.
+    pub genesis_hash: Hash,
     pub action: OnBehalfAction,
     pub item: M,
     pub operator: AccountId,
     pub nonce: u64,
+    /// Highest block number the signature is still valid at — beyond
+    /// this, the chain rejects with `SignatureExpired`. Lets owners scope
+    /// their authorization to a short submission window even if `nonce`
+    /// has not yet been consumed.
+    pub valid_until: BlockNumber,
 }
 
 /// Off-chain payload an owner signs to authorize a sponsored update.
 ///
-/// `id` pins the signature to a specific MIDDS record so it cannot be
-/// replayed against a different one the owner also owns. `operator` must
-/// match the original `sponsor_layer.payer` of the record (enforced
-/// on-chain) — only the deposit-time sponsor may extend their own hold.
+/// Same domain-separation header as [`DepositOnBehalfPayload`]. `id` pins
+/// the signature to a specific MIDDS record so it cannot be replayed
+/// against a different one the owner also owns; `operator` must match the
+/// original `sponsor_layer.payer` of the record (enforced on-chain) —
+/// only the deposit-time sponsor may extend their own hold.
 #[derive(Encode, Decode, DecodeWithMemTracking, TypeInfo, Clone, PartialEq, Eq, Debug)]
-pub struct UpdateOnBehalfPayload<AccountId, M> {
+pub struct UpdateOnBehalfPayload<AccountId, BlockNumber, Hash, M> {
+    pub kind: Vec<u8>,
+    pub genesis_hash: Hash,
     pub action: OnBehalfAction,
     pub id: MiddsId,
     pub item: M,
     pub operator: AccountId,
     pub nonce: u64,
+    pub valid_until: BlockNumber,
 }
 
 /// Off-chain payload an owner signs to authorize a sponsored cancellation
 /// (refund-then-cleanup) of one of their MIDDS records.
+///
+/// Same domain-separation header as [`DepositOnBehalfPayload`]. The
+/// `kind` field is especially load-bearing here: this payload does *not*
+/// carry an `item: M`, so without an explicit MIDDS-type discriminator a
+/// `Remove` signature would be structurally identical across pallet
+/// instances and a captured signature could be retargeted.
 ///
 /// `operator` is the on-chain submitter of the extrinsic. **Unlike
 /// [`UpdateOnBehalfPayload`], `operator` is *not* required to equal the
@@ -121,11 +148,14 @@ pub struct UpdateOnBehalfPayload<AccountId, M> {
 /// payload still binds the signature so a stolen sig cannot be re-targeted
 /// at a different relayer.
 #[derive(Encode, Decode, DecodeWithMemTracking, TypeInfo, Clone, PartialEq, Eq, Debug)]
-pub struct RemoveOnBehalfPayload<AccountId> {
+pub struct RemoveOnBehalfPayload<AccountId, BlockNumber, Hash> {
+    pub kind: Vec<u8>,
+    pub genesis_hash: Hash,
     pub action: OnBehalfAction,
     pub id: MiddsId,
     pub operator: AccountId,
     pub nonce: u64,
+    pub valid_until: BlockNumber,
 }
 
 /// Tear-down policy applied to each [`BondLayer`] of a removed record.

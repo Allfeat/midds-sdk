@@ -1231,6 +1231,19 @@ fn check_invariants(expected: &[(u64, AccountId, MockId)]) {
 // deposit_on_behalf / update_on_behalf
 // -----------------------------------------------------------------------------
 
+/// Convenience `valid_until` for tests that don't specifically exercise
+/// signature expiry — pinned far enough in the future that no realistic
+/// `advance_to_block` ever exceeds it.
+const FAR_FUTURE: BlockNumber = BlockNumber::MAX;
+
+fn test_genesis_hash() -> sp_core::H256 {
+    pallet_midds::Pallet::<Test, Instance>::genesis_hash()
+}
+
+fn test_kind_bytes() -> Vec<u8> {
+    pallet_midds::Pallet::<Test, Instance>::kind_bytes()
+}
+
 /// Build the canonical SCALE payload an owner signs to authorize a sponsored
 /// deposit. Mirrors the on-chain construction so a test signs exactly what the
 /// pallet will check.
@@ -1238,12 +1251,16 @@ fn deposit_payload(
     item: &MockMidds,
     operator: AccountId,
     nonce: u64,
-) -> DepositOnBehalfPayload<AccountId, MockMidds> {
+    valid_until: BlockNumber,
+) -> DepositOnBehalfPayload<AccountId, BlockNumber, sp_core::H256, MockMidds> {
     DepositOnBehalfPayload {
+        kind: test_kind_bytes(),
+        genesis_hash: test_genesis_hash(),
         action: OnBehalfAction::Deposit,
         item: item.clone(),
         operator,
         nonce,
+        valid_until,
     }
 }
 
@@ -1252,13 +1269,17 @@ fn update_payload(
     item: &MockMidds,
     operator: AccountId,
     nonce: u64,
-) -> UpdateOnBehalfPayload<AccountId, MockMidds> {
+    valid_until: BlockNumber,
+) -> UpdateOnBehalfPayload<AccountId, BlockNumber, sp_core::H256, MockMidds> {
     UpdateOnBehalfPayload {
+        kind: test_kind_bytes(),
+        genesis_hash: test_genesis_hash(),
         action: OnBehalfAction::Update,
         id,
         item: item.clone(),
         operator,
         nonce,
+        valid_until,
     }
 }
 
@@ -1266,12 +1287,16 @@ fn remove_payload(
     id: midds_traits::MiddsId,
     operator: AccountId,
     nonce: u64,
-) -> RemoveOnBehalfPayload<AccountId> {
+    valid_until: BlockNumber,
+) -> RemoveOnBehalfPayload<AccountId, BlockNumber, sp_core::H256> {
     RemoveOnBehalfPayload {
+        kind: test_kind_bytes(),
+        genesis_hash: test_genesis_hash(),
         action: OnBehalfAction::Remove,
         id,
         operator,
         nonce,
+        valid_until,
     }
 }
 
@@ -1281,7 +1306,7 @@ fn deposit_on_behalf_attributes_owner_holds_on_operator() {
         let item = mock_midds(b"sponsor1", 5);
         let bond = expected_total_bond_for(&item);
 
-        let payload = deposit_payload(&item, BOB, 0);
+        let payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
 
         assert_ok!(Midds::deposit_on_behalf(
@@ -1289,6 +1314,7 @@ fn deposit_on_behalf_attributes_owner_holds_on_operator() {
             ALICE,
             item.clone(),
             0,
+            FAR_FUTURE,
             sig,
         ));
 
@@ -1320,11 +1346,11 @@ fn deposit_on_behalf_rejects_invalid_signature() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"sponsor2", 5);
         // Sign a payload claiming a *different* operator than the one calling.
-        let payload = deposit_payload(&item, CHARLIE, 0);
+        let payload = deposit_payload(&item, CHARLIE, 0, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
 
         assert_noop!(
-            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, item, 0, sig),
+            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, item, 0, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::InvalidSignature
         );
     });
@@ -1334,24 +1360,81 @@ fn deposit_on_behalf_rejects_invalid_signature() {
 fn deposit_on_behalf_rejects_replay() {
     new_test_ext().execute_with(|| {
         let first = mock_midds(b"replay1", 5);
-        let payload = deposit_payload(&first, BOB, 0);
+        let payload = deposit_payload(&first, BOB, 0, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             first,
             0,
+            FAR_FUTURE,
             sig.clone(),
         ));
 
         // Same nonce used twice — the on-chain counter is now 1, replay
         // attempt at nonce=0 is refused.
         let second = mock_midds(b"replay2", 5);
-        let stale_payload = deposit_payload(&second, BOB, 0);
+        let stale_payload = deposit_payload(&second, BOB, 0, FAR_FUTURE);
         let stale_sig = sign(ALICE, &stale_payload);
         assert_noop!(
-            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, second, 0, stale_sig,),
+            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, second, 0, FAR_FUTURE, stale_sig,),
             pallet_midds::Error::<Test, Instance>::InvalidNonce
+        );
+    });
+}
+
+/// A signature whose `valid_until` has elapsed must be rejected with
+/// `SignatureExpired` — even if the nonce still matches. The owner
+/// pinned a freshness window and the chain enforces it.
+#[test]
+fn deposit_on_behalf_rejects_expired_signature() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"expires", 5);
+        // Sign with `valid_until = current_block`, then advance past it.
+        let now = System::block_number();
+        let payload = deposit_payload(&item, BOB, 0, now);
+        let sig = sign(ALICE, &payload);
+
+        System::set_block_number(now + 1);
+
+        assert_noop!(
+            Midds::deposit_on_behalf(
+                RuntimeOrigin::signed(BOB),
+                ALICE,
+                item,
+                0,
+                now,
+                sig
+            ),
+            pallet_midds::Error::<Test, Instance>::SignatureExpired
+        );
+    });
+}
+
+/// A payload whose `genesis_hash` does not match the running chain must be
+/// rejected — the on-chain side rebuilds the canonical encoding with the
+/// real genesis hash, so a forged hash produces a different SCALE blob and
+/// the signature fails verification.
+#[test]
+fn deposit_on_behalf_rejects_wrong_genesis_hash() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"otherchn", 5);
+        // Forge a payload pretending to come from a different chain (any
+        // non-real H256 will do; test_genesis_hash() returns the real one).
+        let mut payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
+        payload.genesis_hash = sp_core::H256::from([0xAB; 32]);
+        let sig = sign(ALICE, &payload);
+
+        assert_noop!(
+            Midds::deposit_on_behalf(
+                RuntimeOrigin::signed(BOB),
+                ALICE,
+                item,
+                0,
+                FAR_FUTURE,
+                sig
+            ),
+            pallet_midds::Error::<Test, Instance>::InvalidSignature
         );
     });
 }
@@ -1368,13 +1451,14 @@ fn remove_own_on_sponsored_record_refunds_sponsor() {
         let alice_free_before = free(ALICE);
         let treasury_before = treasury_balance();
 
-        let payload = deposit_payload(&item, BOB, 0);
+        let payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             item.clone(),
             0,
+            FAR_FUTURE,
             sig,
         ));
         // Owner keeps authority — they call remove_own.
@@ -1407,13 +1491,14 @@ fn update_grows_sponsored_record_via_escape_hatch() {
     new_test_ext().execute_with(|| {
         let initial = mock_midds(b"plainup", 5);
         let initial_base = expected_base_bond_for(&initial);
-        let payload = deposit_payload(&initial, BOB, 0);
+        let payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             sig,
         ));
         let sponsor_held_before = held(BOB);
@@ -1462,13 +1547,14 @@ fn update_grows_sponsored_record_via_escape_hatch() {
 fn update_on_behalf_coexists_with_owner_layer() {
     new_test_ext().execute_with(|| {
         let initial = mock_midds(b"coexist", 5);
-        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
@@ -1481,13 +1567,14 @@ fn update_on_behalf_coexists_with_owner_layer() {
 
         // Step 2 — sponsor extends further on top, both layers must coexist.
         let bigger = mock_midds(b"coexist", 18);
-        let upd_payload = update_payload(0, &bigger, BOB, 1);
+        let upd_payload = update_payload(0, &bigger, BOB, 1, FAR_FUTURE);
         let upd_sig = sign(ALICE, &upd_payload);
         assert_ok!(Midds::update_on_behalf(
             RuntimeOrigin::signed(BOB),
             0,
             bigger,
             1,
+            FAR_FUTURE,
             upd_sig,
         ));
 
@@ -1509,13 +1596,14 @@ fn update_on_behalf_coexists_with_owner_layer() {
 fn update_shrink_drains_owner_then_overflows_to_sponsor() {
     new_test_ext().execute_with(|| {
         let initial = mock_midds(b"shrink", 5);
-        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
         let bob_held_at_deposit = held(BOB);
@@ -1551,25 +1639,27 @@ fn update_shrink_drains_owner_then_overflows_to_sponsor() {
 fn update_on_behalf_extends_sponsor_hold() {
     new_test_ext().execute_with(|| {
         let initial = mock_midds(b"upbehalf", 5);
-        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
         let initial_held = held(BOB);
 
         let updated = mock_midds(b"upbehalf", 12);
-        let upd_payload = update_payload(0, &updated, BOB, 1);
+        let upd_payload = update_payload(0, &updated, BOB, 1, FAR_FUTURE);
         let upd_sig = sign(ALICE, &upd_payload);
         assert_ok!(Midds::update_on_behalf(
             RuntimeOrigin::signed(BOB),
             0,
             updated.clone(),
             1,
+            FAR_FUTURE,
             upd_sig,
         ));
 
@@ -1589,13 +1679,14 @@ fn update_on_behalf_extends_sponsor_hold() {
 fn update_on_behalf_rejects_wrong_sponsor() {
     new_test_ext().execute_with(|| {
         let initial = mock_midds(b"wrongsp", 5);
-        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
@@ -1603,10 +1694,10 @@ fn update_on_behalf_rejects_wrong_sponsor() {
         // co-authorizing the update. Refused: only the original sponsor may
         // grow their own hold.
         let updated = mock_midds(b"wrongsp", 8);
-        let upd_payload = update_payload(0, &updated, CHARLIE, 1);
+        let upd_payload = update_payload(0, &updated, CHARLIE, 1, FAR_FUTURE);
         let upd_sig = sign(ALICE, &upd_payload);
         assert_noop!(
-            Midds::update_on_behalf(RuntimeOrigin::signed(CHARLIE), 0, updated, 1, upd_sig),
+            Midds::update_on_behalf(RuntimeOrigin::signed(CHARLIE), 0, updated, 1, FAR_FUTURE, upd_sig),
             pallet_midds::Error::<Test, Instance>::WrongSponsor
         );
     });
@@ -1616,22 +1707,23 @@ fn update_on_behalf_rejects_wrong_sponsor() {
 fn update_on_behalf_rejects_invalid_signature() {
     new_test_ext().execute_with(|| {
         let initial = mock_midds(b"badsig", 5);
-        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
         let updated = mock_midds(b"badsig", 8);
-        let upd_payload = update_payload(0, &updated, BOB, 1);
+        let upd_payload = update_payload(0, &updated, BOB, 1, FAR_FUTURE);
         // Charlie (not the owner) signs — verification keys to ALICE, not CHARLIE.
         let bad_sig = sign(CHARLIE, &upd_payload);
         assert_noop!(
-            Midds::update_on_behalf(RuntimeOrigin::signed(BOB), 0, updated, 1, bad_sig),
+            Midds::update_on_behalf(RuntimeOrigin::signed(BOB), 0, updated, 1, FAR_FUTURE, bad_sig),
             pallet_midds::Error::<Test, Instance>::InvalidSignature
         );
     });
@@ -1668,25 +1760,27 @@ fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
         let treasury_before = treasury_balance();
 
         // Sponsor (BOB) deposits on behalf of owner (ALICE).
-        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             item.clone(),
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
         // Third-party relayer = CHARLIE (different from BOB the sponsor and
         // ALICE the owner). ALICE signs the payload pinning CHARLIE as the
         // submitter.
-        let payload = remove_payload(0, CHARLIE, 1);
+        let payload = remove_payload(0, CHARLIE, 1, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::remove_own_on_behalf(
             RuntimeOrigin::signed(CHARLIE),
             0,
             1,
+            FAR_FUTURE,
             sig,
         ));
 
@@ -1731,13 +1825,14 @@ fn remove_own_on_behalf_settles_owner_layer_when_present() {
         // Sponsor deposits at unit M (so sponsor_premium = 0 for clarity).
         let initial = mock_midds(b"twolayer", 5);
         let sponsor_base = expected_base_bond_for(&initial);
-        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             initial,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
@@ -1754,12 +1849,13 @@ fn remove_own_on_behalf_settles_owner_layer_when_present() {
         // *banked* per-layer premiums, not the current `M`.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::one());
 
-        let payload = remove_payload(0, BOB, 1);
+        let payload = remove_payload(0, BOB, 1, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::remove_own_on_behalf(
             RuntimeOrigin::signed(BOB),
             0,
             1,
+            FAR_FUTURE,
             sig,
         ));
 
@@ -1790,21 +1886,22 @@ fn remove_own_on_behalf_settles_owner_layer_when_present() {
 fn remove_own_on_behalf_rejects_invalid_signature() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"badsig", 5);
-        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             item,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
         // Charlie (not the owner) signs — verification keys to ALICE.
-        let payload = remove_payload(0, CHARLIE, 1);
+        let payload = remove_payload(0, CHARLIE, 1, FAR_FUTURE);
         let bad_sig = sign(CHARLIE, &payload);
         assert_noop!(
-            Midds::remove_own_on_behalf(RuntimeOrigin::signed(CHARLIE), 0, 1, bad_sig),
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(CHARLIE), 0, 1, FAR_FUTURE, bad_sig),
             pallet_midds::Error::<Test, Instance>::InvalidSignature,
         );
     });
@@ -1818,23 +1915,24 @@ fn remove_own_on_behalf_rejects_invalid_signature() {
 fn remove_own_on_behalf_rejects_wrong_action_tag() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"crosstag", 5);
-        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             item.clone(),
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
         // Forge a payload that *looks* like a remove (right id/operator/
         // nonce) but is signed under the `Update` action discriminant —
         // which would never validate against the chain's `Remove` payload.
-        let forged = update_payload(0, &item, BOB, 1);
+        let forged = update_payload(0, &item, BOB, 1, FAR_FUTURE);
         let sig = sign(ALICE, &forged);
         assert_noop!(
-            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::InvalidSignature,
         );
     });
@@ -1847,32 +1945,34 @@ fn remove_own_on_behalf_rejects_replay_with_stale_nonce() {
         let first = mock_midds(b"replay1", 5);
         let second = mock_midds(b"replay2", 5);
         for (item, n) in [(&first, 0), (&second, 1)] {
-            let dep_payload = deposit_payload(item, BOB, n);
+            let dep_payload = deposit_payload(item, BOB, n, FAR_FUTURE);
             let dep_sig = sign(ALICE, &dep_payload);
             assert_ok!(Midds::deposit_on_behalf(
                 RuntimeOrigin::signed(BOB),
                 ALICE,
                 item.clone(),
                 n,
+                FAR_FUTURE,
                 dep_sig,
             ));
         }
 
         // Burn nonce 2 on the first remove.
-        let p1 = remove_payload(0, BOB, 2);
+        let p1 = remove_payload(0, BOB, 2, FAR_FUTURE);
         let s1 = sign(ALICE, &p1);
         assert_ok!(Midds::remove_own_on_behalf(
             RuntimeOrigin::signed(BOB),
             0,
             2,
+            FAR_FUTURE,
             s1,
         ));
 
         // Replay-attempt the *same* nonce on the second record — refused.
-        let p2_stale = remove_payload(1, BOB, 2);
+        let p2_stale = remove_payload(1, BOB, 2, FAR_FUTURE);
         let s2_stale = sign(ALICE, &p2_stale);
         assert_noop!(
-            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 1, 2, s2_stale),
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 1, 2, FAR_FUTURE, s2_stale),
             pallet_midds::Error::<Test, Instance>::InvalidNonce,
         );
     });
@@ -1882,23 +1982,24 @@ fn remove_own_on_behalf_rejects_replay_with_stale_nonce() {
 fn remove_own_on_behalf_rejects_after_window_closed() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"latebird", 5);
-        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             item,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
 
         // Drift past the window so settlement is finalize-only.
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
 
-        let payload = remove_payload(0, BOB, 1);
+        let payload = remove_payload(0, BOB, 1, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_noop!(
-            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::CommitmentWindowClosed,
         );
         // Nonce must NOT bump on a rejected call.
@@ -1910,26 +2011,27 @@ fn remove_own_on_behalf_rejects_after_window_closed() {
 fn remove_own_on_behalf_rejects_finalized_record() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"final", 5);
-        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
             item,
             0,
+            FAR_FUTURE,
             dep_sig,
         ));
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
         assert_ok!(Midds::finalize(RuntimeOrigin::signed(BOB), 0));
 
-        let payload = remove_payload(0, BOB, 1);
+        let payload = remove_payload(0, BOB, 1, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         // `!info.finalized` is checked before `ensure_in_window` in the
         // extrinsic, so a finalized post-window record surfaces
         // `AlreadyFinalized` rather than `CommitmentWindowClosed` — even
         // though both conditions hold.
         assert_noop!(
-            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::AlreadyFinalized,
         );
     });

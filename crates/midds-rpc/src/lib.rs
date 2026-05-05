@@ -10,35 +10,41 @@
 //!
 //! # Multi-instance namespacing
 //!
-//! `#[rpc(server)]` hardcodes the method names that the macro emits. With
-//! one instance this is fine; once the node hosts several instances
-//! (`MusicalWorks`, `Recordings`, `Releases`, …) every instance would emit
-//! the same `midds_*` method names and `RpcModule::merge` would refuse the
-//! collision.
-//!
-//! V1 ships a single instance so we keep the trait emitting the canonical
-//! `midds_*` names and document the node-side pattern for renamespacing.
-//! When a second instance lands, the recommended approach is for the node
-//! to wrap each [`MiddsRpc`] with a thin `#[rpc(server)]` trait that
-//! redeclares the methods under prefixed names (e.g.
-//! `midds_musicalWorks_lookupByIdentifier`) and forwards each call to the
-//! generic implementation. That keeps the per-method body trivial (one
-//! delegated call per method) and avoids any `Methods` re-keying gymnastics
-//! against jsonrpsee internals. The pattern is roughly:
+//! `#[rpc(server)]` hardcodes the method names that the macro emits, so
+//! merging two [`MiddsRpc`] instances under the same node (e.g.
+//! `MusicalWorks` + `Recordings`) would collide on the canonical
+//! `midds_*` names. The default [`MiddsRpcApiServer`] impl emits those
+//! names for V1 — a single instance — and the node sidesteps collisions
+//! by wrapping each instance with its own thin `#[rpc(server)]` trait
+//! that picks a prefixed namespace and delegates to the inherent
+//! handlers ([`MiddsRpc::lookup_by_identifier_at`], etc.).
 //!
 //! ```ignore
+//! use std::sync::Arc;
+//! use jsonrpsee::{core::RpcResult, proc_macros::rpc};
+//! use midds_rpc::{MiddsRpc, DepositInfoOf};
+//!
 //! #[rpc(server)]
-//! pub trait MusicalWorksRpcApi {
+//! pub trait MusicalWorksRpcApi<BlockHash, Identifier, Item, AccountId, Balance> {
 //!     #[method(name = "midds_musicalWorks_lookupByIdentifier")]
-//!     fn lookup_by_identifier(&self, ...) -> RpcResult<...>;
-//!     // ... one method per generic MIDDS RPC, prefixed with the instance.
+//!     fn lookup_by_identifier(
+//!         &self,
+//!         identifier: Identifier,
+//!         at: Option<BlockHash>,
+//!     ) -> RpcResult<Vec<midds_traits::MiddsId>>;
+//!     // ...one method per RPC, prefixed with the instance namespace.
 //! }
+//!
+//! pub struct MusicalWorksRpc<C, B, I, M, A, Bal>(pub Arc<MiddsRpc<C, B, I, M, A, Bal>>);
+//!
+//! // The trait impl forwards every call to the inherent `*_at` handler —
+//! // no logic duplication.
 //! ```
 //!
-//! Recordings / Releases follow the same template. This keeps `midds-rpc`
-//! agnostic of the exact pallet-instance topology (which lives in the node)
-//! and avoids dragging a proc macro into the SDK for a problem that, by
-//! design, has at most a handful of instantiation sites.
+//! Recordings / Releases follow the same template. The midds-rpc crate
+//! stays agnostic of the pallet-instance topology, and the node controls
+//! the namespace exclusively. Inherent handlers are public so wrappers
+//! never need to round-trip through trait dispatch.
 
 use std::{marker::PhantomData, sync::Arc};
 
@@ -154,6 +160,119 @@ impl<Client, Block, Identifier, Item, AccountId, Balance>
     }
 }
 
+/// Inherent (unprefixed) handlers — node-side wrappers can call these
+/// directly to wire a per-instance RPC namespace without going through
+/// the canonical `MiddsRpcApiServer` trait. Each method mirrors a
+/// runtime-API call; the only adjustment is the friendly error message
+/// surfaced to clients.
+impl<Client, Block, Identifier, Item, AccountId, Balance>
+    MiddsRpc<Client, Block, Identifier, Item, AccountId, Balance>
+where
+    Block: BlockT,
+    Client: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
+    Client::Api: MiddsApi<Block, Identifier, Item, AccountId, Balance>,
+    Identifier: Codec + Send + Sync + 'static,
+    Item: Codec + Send + Sync + 'static,
+    AccountId: Codec + Send + Sync + 'static,
+    Balance: Codec + Send + Sync + 'static,
+{
+    fn at_hash(&self, at: Option<<Block as BlockT>::Hash>) -> <Block as BlockT>::Hash {
+        at.unwrap_or_else(|| self.client.info().best_hash)
+    }
+
+    pub fn lookup_by_identifier_at(
+        &self,
+        identifier: Identifier,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<Vec<MiddsId>> {
+        self.client
+            .runtime_api()
+            .lookup_by_identifier(self.at_hash(at), identifier)
+            .map_err(|e| runtime_err(e, "Unable to resolve identifier."))
+    }
+
+    pub fn lookup_by_identifier_paged_at(
+        &self,
+        identifier: Identifier,
+        after: Option<MiddsId>,
+        limit: u32,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<Vec<MiddsId>> {
+        self.client
+            .runtime_api()
+            .lookup_by_identifier_paged(self.at_hash(at), identifier, after, limit)
+            .map_err(|e| runtime_err(e, "Unable to resolve identifier page."))
+    }
+
+    pub fn count_by_identifier_at(
+        &self,
+        identifier: Identifier,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<u32> {
+        self.client
+            .runtime_api()
+            .count_by_identifier(self.at_hash(at), identifier)
+            .map_err(|e| runtime_err(e, "Unable to count claims for identifier."))
+    }
+
+    pub fn get_at(
+        &self,
+        id: MiddsId,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<Option<Item>> {
+        self.client
+            .runtime_api()
+            .get(self.at_hash(at), id)
+            .map_err(|e| runtime_err(e, "Unable to fetch MIDDS record."))
+    }
+
+    pub fn deposit_info_at(
+        &self,
+        id: MiddsId,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<Option<DepositInfoOf<AccountId, Balance>>> {
+        self.client
+            .runtime_api()
+            .deposit_info(self.at_hash(at), id)
+            .map_err(|e| runtime_err(e, "Unable to fetch deposit info."))
+    }
+
+    pub fn current_deposit_price_at(
+        &self,
+        size: u32,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<Balance> {
+        self.client
+            .runtime_api()
+            .current_deposit_price(self.at_hash(at), size)
+            .map_err(|e| runtime_err(e, "Unable to compute deposit price."))
+    }
+
+    pub fn current_multipliers_at(
+        &self,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<(FixedU128, FixedU128)> {
+        self.client
+            .runtime_api()
+            .current_multipliers(self.at_hash(at))
+            .map_err(|e| runtime_err(e, "Unable to fetch current multipliers."))
+    }
+
+    pub fn weekly_target_at(&self, at: Option<<Block as BlockT>::Hash>) -> RpcResult<u32> {
+        self.client
+            .runtime_api()
+            .weekly_target(self.at_hash(at))
+            .map_err(|e| runtime_err(e, "Unable to fetch weekly target."))
+    }
+
+    pub fn weekly_actual_at(&self, at: Option<<Block as BlockT>::Hash>) -> RpcResult<u32> {
+        self.client
+            .runtime_api()
+            .weekly_actual(self.at_hash(at))
+            .map_err(|e| runtime_err(e, "Unable to fetch weekly actual."))
+    }
+}
+
 impl<Client, Block, Identifier, Item, AccountId, Balance>
     MiddsRpcApiServer<<Block as BlockT>::Hash, Identifier, Item, AccountId, Balance>
     for MiddsRpc<Client, Block, Identifier, Item, AccountId, Balance>
@@ -171,10 +290,7 @@ where
         identifier: Identifier,
         at: Option<<Block as BlockT>::Hash>,
     ) -> RpcResult<Vec<MiddsId>> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.lookup_by_identifier(at_hash, identifier)
-            .map_err(|e| runtime_err(e, "Unable to resolve identifier."))
+        self.lookup_by_identifier_at(identifier, at)
     }
 
     fn lookup_by_identifier_paged(
@@ -184,10 +300,7 @@ where
         limit: u32,
         at: Option<<Block as BlockT>::Hash>,
     ) -> RpcResult<Vec<MiddsId>> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.lookup_by_identifier_paged(at_hash, identifier, after, limit)
-            .map_err(|e| runtime_err(e, "Unable to resolve identifier page."))
+        self.lookup_by_identifier_paged_at(identifier, after, limit, at)
     }
 
     fn count_by_identifier(
@@ -195,17 +308,11 @@ where
         identifier: Identifier,
         at: Option<<Block as BlockT>::Hash>,
     ) -> RpcResult<u32> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.count_by_identifier(at_hash, identifier)
-            .map_err(|e| runtime_err(e, "Unable to count claims for identifier."))
+        self.count_by_identifier_at(identifier, at)
     }
 
     fn get(&self, id: MiddsId, at: Option<<Block as BlockT>::Hash>) -> RpcResult<Option<Item>> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.get(at_hash, id)
-            .map_err(|e| runtime_err(e, "Unable to fetch MIDDS record."))
+        self.get_at(id, at)
     }
 
     fn deposit_info(
@@ -213,10 +320,7 @@ where
         id: MiddsId,
         at: Option<<Block as BlockT>::Hash>,
     ) -> RpcResult<Option<DepositInfoOf<AccountId, Balance>>> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.deposit_info(at_hash, id)
-            .map_err(|e| runtime_err(e, "Unable to fetch deposit info."))
+        self.deposit_info_at(id, at)
     }
 
     fn current_deposit_price(
@@ -224,34 +328,22 @@ where
         size: u32,
         at: Option<<Block as BlockT>::Hash>,
     ) -> RpcResult<Balance> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.current_deposit_price(at_hash, size)
-            .map_err(|e| runtime_err(e, "Unable to compute deposit price."))
+        self.current_deposit_price_at(size, at)
     }
 
     fn current_multipliers(
         &self,
         at: Option<<Block as BlockT>::Hash>,
     ) -> RpcResult<(FixedU128, FixedU128)> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.current_multipliers(at_hash)
-            .map_err(|e| runtime_err(e, "Unable to fetch current multipliers."))
+        self.current_multipliers_at(at)
     }
 
     fn weekly_target(&self, at: Option<<Block as BlockT>::Hash>) -> RpcResult<u32> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.weekly_target(at_hash)
-            .map_err(|e| runtime_err(e, "Unable to fetch weekly target."))
+        self.weekly_target_at(at)
     }
 
     fn weekly_actual(&self, at: Option<<Block as BlockT>::Hash>) -> RpcResult<u32> {
-        let api = self.client.runtime_api();
-        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
-        api.weekly_actual(at_hash)
-            .map_err(|e| runtime_err(e, "Unable to fetch weekly actual."))
+        self.weekly_actual_at(at)
     }
 }
 

@@ -337,6 +337,15 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             if delta.is_zero() {
                 return Ok(());
             }
+            // Growth bumps the multiplier demand counters: storage byte
+            // volume genuinely increases, so feeding `M_fast` / `M_slow`
+            // closes the bypass where an actor could deposit small at low
+            // multiplier then grow later without paying the current market
+            // rate (cf. `docs/economics.md` §5.5: the sticky-premium per
+            // layer keeps the grow itself cheap, but the network as a
+            // whole still observes the demand). Shrinks deliberately do
+            // not record demand — they free storage, not occupy it.
+            Self::record_deposit_demand();
             if caller_is_sponsor {
                 // Sponsor extends own layer; premium preserved per layer.
                 Self::extend_layer_in_place(

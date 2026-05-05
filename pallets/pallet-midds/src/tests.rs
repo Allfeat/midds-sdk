@@ -1092,6 +1092,45 @@ fn deposit_fails_when_account_lacks_funds_for_bond() {
     });
 }
 
+/// Growth via `update` must feed the multiplier demand counters — the
+/// pallet should not let an actor deposit at a tiny size while
+/// multipliers are low and then grow the payload without the network
+/// ever observing the storage increase. The sticky-premium rule keeps
+/// the *growth itself* cheap (anti-arbitrage §5.5), but the demand
+/// signal is what feeds `M_fast` / `M_slow`.
+#[test]
+fn update_grow_records_deposit_demand() {
+    new_test_ext().execute_with(|| {
+        // Fresh chain: nothing recorded yet.
+        assert_eq!(pallet_midds::DepositsThisBlock::<Test, Instance>::get(), 0);
+
+        let small = mock_midds(b"grow1", 1);
+        assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), small));
+        let after_deposit = pallet_midds::DepositsThisBlock::<Test, Instance>::get();
+        assert_eq!(after_deposit, 1, "deposit always counts");
+
+        // Same-block grow via `update` must increment the counter — the
+        // network observes a storage extension just like a fresh deposit.
+        let bigger = mock_midds(b"grow1", 8);
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
+        assert_eq!(
+            pallet_midds::DepositsThisBlock::<Test, Instance>::get(),
+            after_deposit + 1,
+            "update grow must bump per-block demand"
+        );
+
+        // A subsequent shrink must NOT count — freeing storage is the
+        // opposite of demand.
+        let smaller = mock_midds(b"grow1", 3);
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, smaller));
+        assert_eq!(
+            pallet_midds::DepositsThisBlock::<Test, Instance>::get(),
+            after_deposit + 1,
+            "shrink must not feed the demand signal"
+        );
+    });
+}
+
 // -----------------------------------------------------------------------------
 // reverse lookup
 // -----------------------------------------------------------------------------

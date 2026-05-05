@@ -178,7 +178,10 @@ pub mod pallet {
         #[pallet::constant]
         type FastTargetPerBlock: Get<u32>;
 
-        /// Maximum per-block multiplicative step applied to `M_fast`.
+        /// Per-block step rate applied to `M_fast`. The actual move per
+        /// block is `rate × |observed − target| / target`, so a deviation
+        /// of `k × target` yields a `k × rate` step (proportional EIP-1559
+        /// form). At deviation = 1× target the move equals `rate` exactly.
         #[pallet::constant]
         type FastAdjustmentRate: Get<FixedU128>;
 
@@ -195,7 +198,9 @@ pub mod pallet {
         #[pallet::constant]
         type SlowTargetPerWindow: Get<u32>;
 
-        /// Maximum per-day multiplicative step applied to `M_slow`.
+        /// Per-day step rate applied to `M_slow` (same proportional EIP-1559
+        /// form as `FastAdjustmentRate`, evaluated against the rolling
+        /// 7-day bucket sum).
         #[pallet::constant]
         type SlowAdjustmentRate: Get<FixedU128>;
 

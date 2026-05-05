@@ -61,9 +61,11 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         });
     }
 
-    /// EIP-1559-style adjustment: ±`FastAdjustmentRate` per block, clamped to
-    /// `[FastMultiplierMin, FastMultiplierMax]`. Concrete numbers per
-    /// `docs/economics.md` §5.1.
+    /// EIP-1559-style adjustment: per-block step proportional to the
+    /// observed/target deviation, clamped to `[FastMultiplierMin,
+    /// FastMultiplierMax]`. A bloc landing at 10× the target therefore moves
+    /// `M_fast` by `10 × FastAdjustmentRate`, not just `FastAdjustmentRate`.
+    /// Concrete numbers per `docs/economics.md` §5.1.
     pub(crate) fn adjust_fast_multiplier(observed: u32) {
         let new = Self::adjust_multiplier(
             FastMultiplier::<T, I>::get(),
@@ -89,9 +91,10 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         SlowWindowHead::<T, I>::put(next_head);
     }
 
-    /// EIP-1559-style adjustment over the 7-day rolling sum, clamped to
-    /// `[SlowMultiplierMin, SlowMultiplierMax]`. Concrete numbers per
-    /// `docs/economics.md` §5.2.
+    /// EIP-1559-style adjustment over the 7-day rolling sum: per-day step
+    /// proportional to the deviation between the bucket sum and
+    /// `SlowTargetPerWindow`, clamped to `[SlowMultiplierMin,
+    /// SlowMultiplierMax]`. Concrete numbers per `docs/economics.md` §5.2.
     pub(crate) fn adjust_slow_multiplier() {
         let new = Self::adjust_multiplier(
             SlowMultiplier::<T, I>::get(),
@@ -104,11 +107,14 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         SlowMultiplier::<T, I>::put(new);
     }
 
-    /// Shift `current` by ±`rate` toward the observed/target ratio, clamped
-    /// to `[min, max]`. The down step uses `current / (1 + rate)` so a
-    /// sequence of opposing steps round-trips back to the original value
-    /// (rather than asymmetrically biasing against the floor under
-    /// `current * (1 - rate)`).
+    /// Shift `current` toward the observed/target deviation, clamped to
+    /// `[min, max]`. EIP-1559 form: the up step is
+    /// `current × (1 + rate × δ)` with `δ = (observed − target) / target`,
+    /// so a 10× burst yields a 10× rate move instead of the constant 1×
+    /// step the previous binary version did. The down step mirrors that
+    /// via `current × 1 / (1 + rate × δ)` (with `δ` flipped) so a pair of
+    /// opposing same-magnitude observations round-trips the multiplier
+    /// back to its starting value, preserving symmetry.
     fn adjust_multiplier(
         current: FixedU128,
         observed: u32,
@@ -118,15 +124,33 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         max: FixedU128,
     ) -> FixedU128 {
         use core::cmp::Ordering;
+        // `target == 0` means no target was wired — treat any observation as
+        // "on target" so we don't divide by zero. The runtime always wires a
+        // positive target (cf. `docs/economics.md` §5); this branch only
+        // protects pathological mock / config setups.
+        if target == 0 {
+            return current;
+        }
         let one = FixedU128::one();
-        let factor_up = one.saturating_add(rate);
         let candidate = match observed.cmp(&target) {
-            Ordering::Greater => current.saturating_mul(factor_up),
-            Ordering::Less => one
-                .const_checked_div(factor_up)
-                .map(|down| current.saturating_mul(down))
-                .unwrap_or(current),
             Ordering::Equal => current,
+            Ordering::Greater => {
+                // δ = (observed − target) / target ∈ [0, ∞).
+                let excess = observed.saturating_sub(target);
+                let delta_ratio = FixedU128::saturating_from_rational(excess, target);
+                let factor_up = one.saturating_add(rate.saturating_mul(delta_ratio));
+                current.saturating_mul(factor_up)
+            }
+            Ordering::Less => {
+                // δ = (target − observed) / target ∈ (0, 1].
+                let shortfall = target.saturating_sub(observed);
+                let delta_ratio = FixedU128::saturating_from_rational(shortfall, target);
+                let scaled = rate.saturating_mul(delta_ratio);
+                let factor_down = one
+                    .const_checked_div(one.saturating_add(scaled))
+                    .unwrap_or(one);
+                current.saturating_mul(factor_down)
+            }
         };
         if candidate < min {
             min

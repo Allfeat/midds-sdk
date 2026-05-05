@@ -15,7 +15,10 @@ use crate::types::{
 use frame_support::{BoundedVec, assert_noop, assert_ok, traits::Get};
 use midds_traits::Midds as _;
 use parity_scale_codec::Encode;
-use sp_runtime::{FixedU128, traits::One};
+use sp_runtime::{
+    FixedU128,
+    traits::{One, Saturating},
+};
 
 type Instance = ();
 
@@ -1034,6 +1037,53 @@ fn fast_multiplier_climbs_on_burst() {
         let after = pallet_midds::FastMultiplier::<Test, Instance>::get();
         assert!(after > before, "M_fast must climb after a burst");
     });
+}
+
+/// The proportional EIP-1559 form means the per-block move scales with
+/// `(observed − target) / target`. A 10× burst must therefore lift `M_fast`
+/// substantially more than a 2× burst over the same starting value — the
+/// previous binary "above/below" code clamped both cases to a single
+/// `+rate` step and missed the spec's "spike proportional to demand"
+/// claim (`docs/economics.md` §5.1).
+#[test]
+fn fast_multiplier_step_scales_with_deviation() {
+    use frame_support::traits::Hooks;
+
+    fn observe(deposits: u32) -> FixedU128 {
+        new_test_ext().execute_with(|| {
+            // Genesis multipliers are 1.0×; we feed `deposits` directly into
+            // `DepositsThisBlock` instead of going through `Midds::deposit`
+            // so the test isolates the multiplier math from the rest of the
+            // pallet (bonds, format checks, etc.).
+            pallet_midds::DepositsThisBlock::<Test, Instance>::put(deposits);
+            let n = System::block_number() + 1;
+            System::set_block_number(n);
+            <crate::Pallet<Test, ()> as Hooks<BlockNumber>>::on_initialize(n);
+            pallet_midds::FastMultiplier::<Test, Instance>::get()
+        })
+    }
+
+    let target = FAST_TARGET_PER_BLOCK;
+    let m_at_2x = observe(2 * target);
+    let m_at_10x = observe(10 * target);
+
+    // Both should be > 1.0× (above target).
+    assert!(m_at_2x > FixedU128::one());
+    assert!(m_at_10x > FixedU128::one());
+    // 10× burst must lift the multiplier strictly more than a 2× burst —
+    // proves the step is not a constant `+rate` regardless of amplitude.
+    assert!(
+        m_at_10x > m_at_2x,
+        "10× burst ({m_at_10x:?}) must outpace 2× burst ({m_at_2x:?})"
+    );
+    // And the gap must be material: the 10× step should be at least double
+    // the 2× step (in linear-step terms `9·rate` vs `1·rate`).
+    let step_2x = m_at_2x - FixedU128::one();
+    let step_10x = m_at_10x - FixedU128::one();
+    assert!(
+        step_10x > step_2x.saturating_mul(FixedU128::from_u32(2)),
+        "step at 10× ({step_10x:?}) must be > 2× the step at 2× ({step_2x:?})"
+    );
 }
 
 #[test]

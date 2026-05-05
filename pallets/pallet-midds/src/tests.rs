@@ -976,6 +976,57 @@ fn force_remove_many_mixed_batch_per_id_kind() {
     });
 }
 
+/// `#[transactional]` on `force_remove_many` must roll the entire batch
+/// back if any single id fails — without atomicity the operator would
+/// observe an unstable middle state where some ids were settled and
+/// others were not.
+#[test]
+fn force_remove_many_rolls_back_partial_batch_on_failure() {
+    new_test_ext().execute_with(|| {
+        let a = mock_midds(b"a", 5);
+        let b = mock_midds(b"b", 6);
+        let total_a = expected_total_bond_for(&a);
+        let total_b = expected_total_bond_for(&b);
+
+        for it in [&a, &b] {
+            assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), it.clone()));
+        }
+        let held_after_deposit = held(ALICE);
+        assert_eq!(held_after_deposit, total_a + total_b);
+
+        // Submit a batch where the second id (=42) does not exist. Without
+        // `#[transactional]`, the loop would settle id=0 then bail at id=42,
+        // leaving ALICE's hold = total_b. With it, the failure rolls back
+        // both layers and ALICE's hold is unchanged.
+        assert_noop!(
+            Midds::force_remove_many(
+                RuntimeOrigin::root(),
+                BoundedVec::try_from(vec![
+                    RemovalRequest {
+                        id: 0,
+                        kind: RemovalKind::Refund,
+                    },
+                    RemovalRequest {
+                        id: 42, // never deposited
+                        kind: RemovalKind::Refund,
+                    },
+                ])
+                .expect("2 ≤ MaxRemovalsPerCall"),
+            ),
+            pallet_midds::Error::<Test, Instance>::MiddsNotFound,
+        );
+
+        assert_eq!(
+            held(ALICE),
+            held_after_deposit,
+            "partial batch must roll back both layers' settlement"
+        );
+        assert!(pallet_midds::DepositInfo::<Test, Instance>::contains_key(
+            0
+        ));
+    });
+}
+
 // -----------------------------------------------------------------------------
 // pathological: bond hold failure
 // -----------------------------------------------------------------------------

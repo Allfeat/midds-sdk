@@ -515,6 +515,7 @@ pub mod pallet {
         /// and attributed to the caller.
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::deposit(item.encoded_size() as u32))]
+        #[frame_support::transactional]
         pub fn deposit(origin: OriginFor<T>, item: T::Midds) -> DispatchResult {
             let who = T::ProviderOrigin::ensure_origin(origin)?;
             // For self-deposit `depositor == bond_payer == caller`.
@@ -535,6 +536,7 @@ pub mod pallet {
         /// operator who took the financial risk.
         #[pallet::call_index(8)]
         #[pallet::weight(T::WeightInfo::deposit_on_behalf(item.encoded_size() as u32))]
+        #[frame_support::transactional]
         pub fn deposit_on_behalf(
             origin: OriginFor<T>,
             owner: T::AccountId,
@@ -589,6 +591,7 @@ pub mod pallet {
         /// longer requires the sponsor's full bond.
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::update(item.encoded_size() as u32))]
+        #[frame_support::transactional]
         pub fn update(origin: OriginFor<T>, id: MiddsId, item: T::Midds) -> DispatchResult {
             let caller = T::ProviderOrigin::ensure_origin(origin)?;
             Self::enforce_format(&item)?;
@@ -617,6 +620,7 @@ pub mod pallet {
         /// extensions through this path — each layer grows independently.
         #[pallet::call_index(9)]
         #[pallet::weight(T::WeightInfo::update_on_behalf(item.encoded_size() as u32))]
+        #[frame_support::transactional]
         pub fn update_on_behalf(
             origin: OriginFor<T>,
             id: MiddsId,
@@ -675,6 +679,7 @@ pub mod pallet {
         /// sponsor accepted at `deposit_on_behalf` time.
         #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::remove_own())]
+        #[frame_support::transactional]
         pub fn remove_own(origin: OriginFor<T>, id: MiddsId) -> DispatchResult {
             let caller = T::ProviderOrigin::ensure_origin(origin)?;
 
@@ -691,6 +696,7 @@ pub mod pallet {
         /// called by anyone at or after the record's expiry block.
         #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::finalize_one())]
+        #[frame_support::transactional]
         pub fn finalize(_origin: OriginFor<T>, id: MiddsId) -> DispatchResult {
             // Origin is intentionally ignored: this is a maintenance crank.
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
@@ -713,6 +719,7 @@ pub mod pallet {
         /// deposit-time multiplier premium is preserved.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::force_edit(item.encoded_size() as u32))]
+        #[frame_support::transactional]
         pub fn force_edit(origin: OriginFor<T>, id: MiddsId, item: T::Midds) -> DispatchResult {
             T::ForceOrigin::ensure_origin(origin)?;
             Self::enforce_format(&item)?;
@@ -732,6 +739,7 @@ pub mod pallet {
         /// bond is already in the Treasury).
         #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::force_remove_refund())]
+        #[frame_support::transactional]
         pub fn force_remove_refund(origin: OriginFor<T>, id: MiddsId) -> DispatchResult {
             T::ForceOrigin::ensure_origin(origin)?;
             Self::do_force_remove_refund(id)
@@ -743,6 +751,7 @@ pub mod pallet {
         /// cleaned.
         #[pallet::call_index(6)]
         #[pallet::weight(T::WeightInfo::force_remove_slash())]
+        #[frame_support::transactional]
         pub fn force_remove_slash(origin: OriginFor<T>, id: MiddsId) -> DispatchResult {
             T::ForceOrigin::ensure_origin(origin)?;
             Self::do_force_remove_slash(id)
@@ -754,6 +763,7 @@ pub mod pallet {
         /// [`Config::MaxRemovalsPerCall`] for predictable weight.
         #[pallet::call_index(7)]
         #[pallet::weight(T::WeightInfo::force_remove_many(requests.len() as u32))]
+        #[frame_support::transactional]
         pub fn force_remove_many(
             origin: OriginFor<T>,
             requests: BoundedVec<RemovalRequest, T::MaxRemovalsPerCall>,
@@ -785,6 +795,7 @@ pub mod pallet {
         /// captured payload cannot be re-targeted.
         #[pallet::call_index(10)]
         #[pallet::weight(T::WeightInfo::remove_own_on_behalf())]
+        #[frame_support::transactional]
         pub fn remove_own_on_behalf(
             origin: OriginFor<T>,
             id: MiddsId,

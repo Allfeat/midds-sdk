@@ -18,6 +18,7 @@ pub trait WeightInfo {
     fn update(s: u32) -> Weight;
     fn update_on_behalf(s: u32) -> Weight;
     fn remove_own() -> Weight;
+    fn remove_own_on_behalf() -> Weight;
     fn finalize_one() -> Weight;
     fn force_edit(s: u32) -> Weight;
     fn force_remove_refund() -> Weight;
@@ -40,6 +41,9 @@ impl WeightInfo for () {
         Weight::zero()
     }
     fn remove_own() -> Weight {
+        Weight::zero()
+    }
+    fn remove_own_on_behalf() -> Weight {
         Weight::zero()
     }
     fn finalize_one() -> Weight {

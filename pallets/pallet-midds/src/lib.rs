@@ -73,7 +73,8 @@ pub mod pallet {
     use super::{BalanceOf, WeightInfo};
     use crate::multipliers::{DefaultSlowBuckets, DefaultUnitMultiplier, SLOW_WINDOW_DAYS};
     use crate::types::{
-        DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, UpdateOnBehalfPayload,
+        DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, RemoveOnBehalfPayload,
+        UpdateOnBehalfPayload,
     };
     use alloc::vec::Vec;
     use frame_support::{
@@ -739,6 +740,73 @@ pub mod pallet {
                     RemovalKind::Slash => Self::do_force_remove_slash(req.id)?,
                 }
             }
+            Ok(())
+        }
+
+        /// Sponsored cancellation. The owner authorises a `remove_own`-style
+        /// refund off-chain via a signed [`RemoveOnBehalfPayload`], and any
+        /// `ProviderOrigin` (typically a relayer paying the fees) submits
+        /// the extrinsic on the owner's behalf. Closes the
+        /// **meta-transaction** loop opened by `deposit_on_behalf` /
+        /// `update_on_behalf`: a sponsored owner can retract their record
+        /// without ever holding native tokens.
+        ///
+        /// The settlement is identical to [`Pallet::remove_own`] — each
+        /// layer's `base` returns to its payer and each layer's premium
+        /// flows to the Treasury. Authority sits with the off-chain
+        /// signature; the on-chain `caller` does not need to match either
+        /// the sponsor or the owner. Pinning `operator` inside the signed
+        /// payload binds the signature to a specific submitter so a
+        /// captured payload cannot be re-targeted.
+        #[pallet::call_index(10)]
+        #[pallet::weight(T::WeightInfo::remove_own_on_behalf())]
+        pub fn remove_own_on_behalf(
+            origin: OriginFor<T>,
+            id: MiddsId,
+            nonce: u64,
+            signature: T::OffchainSignature,
+        ) -> DispatchResult {
+            let operator = T::ProviderOrigin::ensure_origin(origin)?;
+
+            let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
+            ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
+            Self::ensure_in_window(&info)?;
+
+            let owner = info.depositor.clone();
+            let current_nonce = OnBehalfNonce::<T, I>::get(&owner);
+            ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
+
+            let payload = RemoveOnBehalfPayload::<T::AccountId> {
+                action: OnBehalfAction::Remove,
+                id,
+                operator,
+                nonce,
+            };
+            Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
+
+            // Bump nonce *before* the heavy state mutations so a partial
+            // failure later on still consumes this signature (no replay).
+            OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
+
+            let sponsor_refund = info.sponsor_layer.base;
+            let owner_refund = info
+                .owner_layer
+                .as_ref()
+                .map(|l| l.base)
+                .unwrap_or_else(Zero::zero);
+            let premium_to_treasury = Self::total_premium(&info);
+
+            Self::settle_bond(&info, crate::types::SettlementKind::PremiumOnly)?;
+            Self::cleanup_storage(id, &info)?;
+
+            Self::deposit_event(Event::Refunded {
+                id,
+                depositor: info.depositor,
+                sponsor: info.sponsor_layer.payer,
+                sponsor_refund,
+                owner_refund,
+                premium_to_treasury,
+            });
             Ok(())
         }
     }

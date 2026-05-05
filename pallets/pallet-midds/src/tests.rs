@@ -9,7 +9,8 @@
 use crate as pallet_midds;
 use crate::mock::{test_helpers::*, *};
 use crate::types::{
-    DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, UpdateOnBehalfPayload,
+    DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, RemoveOnBehalfPayload,
+    UpdateOnBehalfPayload,
 };
 use frame_support::{BoundedVec, assert_noop, assert_ok};
 use midds_traits::Midds as _;
@@ -1142,6 +1143,19 @@ fn update_payload(
     }
 }
 
+fn remove_payload(
+    id: midds_traits::MiddsId,
+    operator: AccountId,
+    nonce: u64,
+) -> RemoveOnBehalfPayload<AccountId> {
+    RemoveOnBehalfPayload {
+        action: OnBehalfAction::Remove,
+        id,
+        operator,
+        nonce,
+    }
+}
+
 #[test]
 fn deposit_on_behalf_attributes_owner_holds_on_operator() {
     new_test_ext().execute_with(|| {
@@ -1500,6 +1514,304 @@ fn update_on_behalf_rejects_invalid_signature() {
         assert_noop!(
             Midds::update_on_behalf(RuntimeOrigin::signed(BOB), 0, updated, 1, bad_sig),
             pallet_midds::Error::<Test, Instance>::InvalidSignature
+        );
+    });
+}
+
+// -----------------------------------------------------------------------------
+// remove_own_on_behalf
+// -----------------------------------------------------------------------------
+
+/// Closes the meta-tx loop: an owner with **no AFT at all** retracts a
+/// sponsored record by signing a payload off-chain, while a third-party
+/// relayer (≠ sponsor, ≠ owner) submits the extrinsic and pays the
+/// fees. Each layer's base returns to its respective payer; the owner's
+/// balance never moves.
+#[test]
+fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
+    new_test_ext().execute_with(|| {
+        // 2× M_fast so we can verify the per-layer premium splits cleanly.
+        pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
+
+        let item = mock_midds(b"meta", 5);
+        let base = expected_base_bond_for(&item);
+        let total = expected_total_bond_for(&item);
+        let premium = total - base;
+        assert!(premium > 0);
+
+        // Capture balances BEFORE deposit so the ED/provider-bookkeeping
+        // around the first hold is symmetric in both snapshots (the
+        // assertions hold equally well whichever way `reducible_balance`
+        // accounts for ED — same shape on both sides).
+        let bob_free_before = free(BOB);
+        let alice_free_before = free(ALICE);
+        let charlie_free_before = free(CHARLIE);
+        let treasury_before = treasury_balance();
+
+        // Sponsor (BOB) deposits on behalf of owner (ALICE).
+        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            item.clone(),
+            0,
+            dep_sig,
+        ));
+
+        // Third-party relayer = CHARLIE (different from BOB the sponsor and
+        // ALICE the owner). ALICE signs the payload pinning CHARLIE as the
+        // submitter.
+        let payload = remove_payload(0, CHARLIE, 1);
+        let sig = sign(ALICE, &payload);
+        assert_ok!(Midds::remove_own_on_behalf(
+            RuntimeOrigin::signed(CHARLIE),
+            0,
+            1,
+            sig,
+        ));
+
+        // Sponsor recovered base; their net loss is the multiplier premium
+        // they banked at deposit time. Owner balance untouched (they signed
+        // off-chain, paid nothing). Relayer balance untouched (mock has no
+        // tx fees).
+        assert_eq!(held(BOB), 0);
+        assert_eq!(free(BOB), bob_free_before - premium);
+        assert_eq!(free(ALICE), alice_free_before);
+        assert_eq!(free(CHARLIE), charlie_free_before);
+        assert_eq!(treasury_balance(), treasury_before + premium);
+        // Storage cleared.
+        assert!(pallet_midds::Items::<Test, Instance>::get(0).is_none());
+        // Nonce bumped on the owner.
+        assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 2);
+
+        System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
+            id: 0,
+            depositor: ALICE,
+            sponsor: BOB,
+            sponsor_refund: base,
+            owner_refund: 0,
+            premium_to_treasury: premium,
+        }));
+    });
+}
+
+/// After the owner has materialised an `owner_layer` via plain `update`,
+/// `remove_own_on_behalf` settles **both** layers — sponsor base back to
+/// sponsor, owner base back to owner, premiums to Treasury.
+#[test]
+fn remove_own_on_behalf_settles_owner_layer_when_present() {
+    new_test_ext().execute_with(|| {
+        // Capture starting balances so the ED/consumer accounting is
+        // symmetric in both snapshots (cf. the relayer test for the same
+        // motivation).
+        let bob_free_before = free(BOB);
+        let alice_free_before = free(ALICE);
+        let treasury_before = treasury_balance();
+
+        // Sponsor deposits at unit M (so sponsor_premium = 0 for clarity).
+        let initial = mock_midds(b"twolayer", 5);
+        let sponsor_base = expected_base_bond_for(&initial);
+        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            initial,
+            0,
+            dep_sig,
+        ));
+
+        // Owner extends in solo at 2× M, banking an owner-side premium.
+        pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
+        let bigger = mock_midds(b"twolayer", 12);
+        let bigger_total_base = expected_base_bond_for(&bigger);
+        let owner_delta_base = bigger_total_base - sponsor_base;
+        let owner_amount = owner_delta_base * 2;
+        let owner_premium = owner_amount - owner_delta_base;
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
+
+        // Reset multipliers to 1× to make sure remove math reads the
+        // *banked* per-layer premiums, not the current `M`.
+        pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::one());
+
+        let payload = remove_payload(0, BOB, 1);
+        let sig = sign(ALICE, &payload);
+        assert_ok!(Midds::remove_own_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            0,
+            1,
+            sig,
+        ));
+
+        // Sponsor: deposit_on_behalf paid `sponsor_base` (unit M, premium=0)
+        // and remove returned all of it. Net delta = 0.
+        assert_eq!(free(BOB), bob_free_before);
+        // Owner: paid `owner_amount` for the solo extend, got back
+        // `owner_delta_base`. Net loss = `owner_premium`.
+        assert_eq!(free(ALICE), alice_free_before - owner_premium);
+        // Treasury collects only the owner-side premium.
+        assert_eq!(treasury_balance(), treasury_before + owner_premium);
+        // Both holds drained.
+        assert_eq!(held(BOB), 0);
+        assert_eq!(held(ALICE), 0);
+
+        System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
+            id: 0,
+            depositor: ALICE,
+            sponsor: BOB,
+            sponsor_refund: sponsor_base,
+            owner_refund: owner_delta_base,
+            premium_to_treasury: owner_premium,
+        }));
+    });
+}
+
+#[test]
+fn remove_own_on_behalf_rejects_invalid_signature() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"badsig", 5);
+        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            item,
+            0,
+            dep_sig,
+        ));
+
+        // Charlie (not the owner) signs — verification keys to ALICE.
+        let payload = remove_payload(0, CHARLIE, 1);
+        let bad_sig = sign(CHARLIE, &payload);
+        assert_noop!(
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(CHARLIE), 0, 1, bad_sig),
+            pallet_midds::Error::<Test, Instance>::InvalidSignature,
+        );
+    });
+}
+
+/// `OnBehalfAction::Remove` is part of the SCALE-encoded payload, so a
+/// `Deposit`-tagged signature cannot be replayed against a `Remove`
+/// extrinsic — the verification recomputes the canonical bytes from the
+/// `Remove` discriminant.
+#[test]
+fn remove_own_on_behalf_rejects_wrong_action_tag() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"crosstag", 5);
+        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            item.clone(),
+            0,
+            dep_sig,
+        ));
+
+        // Forge a payload that *looks* like a remove (right id/operator/
+        // nonce) but is signed under the `Update` action discriminant —
+        // which would never validate against the chain's `Remove` payload.
+        let forged = update_payload(0, &item, BOB, 1);
+        let sig = sign(ALICE, &forged);
+        assert_noop!(
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
+            pallet_midds::Error::<Test, Instance>::InvalidSignature,
+        );
+    });
+}
+
+#[test]
+fn remove_own_on_behalf_rejects_replay_with_stale_nonce() {
+    new_test_ext().execute_with(|| {
+        // Two records so the second remove has a target.
+        let first = mock_midds(b"replay1", 5);
+        let second = mock_midds(b"replay2", 5);
+        for (item, n) in [(&first, 0), (&second, 1)] {
+            let dep_payload = deposit_payload(item, BOB, n);
+            let dep_sig = sign(ALICE, &dep_payload);
+            assert_ok!(Midds::deposit_on_behalf(
+                RuntimeOrigin::signed(BOB),
+                ALICE,
+                item.clone(),
+                n,
+                dep_sig,
+            ));
+        }
+
+        // Burn nonce 2 on the first remove.
+        let p1 = remove_payload(0, BOB, 2);
+        let s1 = sign(ALICE, &p1);
+        assert_ok!(Midds::remove_own_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            0,
+            2,
+            s1,
+        ));
+
+        // Replay-attempt the *same* nonce on the second record — refused.
+        let p2_stale = remove_payload(1, BOB, 2);
+        let s2_stale = sign(ALICE, &p2_stale);
+        assert_noop!(
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 1, 2, s2_stale),
+            pallet_midds::Error::<Test, Instance>::InvalidNonce,
+        );
+    });
+}
+
+#[test]
+fn remove_own_on_behalf_rejects_after_window_closed() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"latebird", 5);
+        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            item,
+            0,
+            dep_sig,
+        ));
+
+        // Drift past the window so settlement is finalize-only.
+        System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
+
+        let payload = remove_payload(0, BOB, 1);
+        let sig = sign(ALICE, &payload);
+        assert_noop!(
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
+            pallet_midds::Error::<Test, Instance>::CommitmentWindowClosed,
+        );
+        // Nonce must NOT bump on a rejected call.
+        assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 1);
+    });
+}
+
+#[test]
+fn remove_own_on_behalf_rejects_finalized_record() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"final", 5);
+        let dep_payload = deposit_payload(&item, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            item,
+            0,
+            dep_sig,
+        ));
+        System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
+        assert_ok!(Midds::finalize(RuntimeOrigin::signed(BOB), 0));
+
+        let payload = remove_payload(0, BOB, 1);
+        let sig = sign(ALICE, &payload);
+        // Window-closed fires before AlreadyFinalized in the ordering — the
+        // record is finalised *because* the window passed, so the user
+        // surfaces the same blocking error as for a stale post-window
+        // remove. AlreadyFinalized is checked after `ensure_in_window`.
+        assert_noop!(
+            Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, sig),
+            pallet_midds::Error::<Test, Instance>::AlreadyFinalized,
         );
     });
 }

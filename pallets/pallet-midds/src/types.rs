@@ -67,15 +67,16 @@ pub struct Deposit<AccountId, Balance, BlockNumber, Hash> {
 }
 
 /// Tag distinguishing the on-behalf actions inside a signed payload.
-/// Prevents a `Deposit` signature from being replayed as an `Update` (and
-/// vice-versa) since the `action` field is part of the SCALE-encoded message
-/// the owner signs.
+/// Prevents a `Deposit` signature from being replayed as an `Update` /
+/// `Remove` (or vice-versa) since the `action` field is part of the
+/// SCALE-encoded message the owner signs.
 #[derive(
     Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo, Clone, PartialEq, Eq, Debug,
 )]
 pub enum OnBehalfAction {
     Deposit,
     Update,
+    Remove,
 }
 
 /// Off-chain payload an owner signs to authorize a sponsored deposit.
@@ -104,6 +105,25 @@ pub struct UpdateOnBehalfPayload<AccountId, M> {
     pub action: OnBehalfAction,
     pub id: MiddsId,
     pub item: M,
+    pub operator: AccountId,
+    pub nonce: u64,
+}
+
+/// Off-chain payload an owner signs to authorize a sponsored cancellation
+/// (refund-then-cleanup) of one of their MIDDS records.
+///
+/// `operator` is the on-chain submitter of the extrinsic. **Unlike
+/// [`UpdateOnBehalfPayload`], `operator` is *not* required to equal the
+/// record's `sponsor_layer.payer`** — `remove_own_on_behalf` accepts any
+/// `ProviderOrigin` as caller (a generic relayer pays the fees) since the
+/// operation only releases each layer's hold to its respective payer and
+/// can never grow a third party's exposure. Pinning `operator` in the
+/// payload still binds the signature so a stolen sig cannot be re-targeted
+/// at a different relayer.
+#[derive(Encode, Decode, DecodeWithMemTracking, TypeInfo, Clone, PartialEq, Eq, Debug)]
+pub struct RemoveOnBehalfPayload<AccountId> {
+    pub action: OnBehalfAction,
+    pub id: MiddsId,
     pub operator: AccountId,
     pub nonce: u64,
 }

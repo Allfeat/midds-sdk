@@ -14,7 +14,8 @@
 use super::*;
 use crate::Pallet as MiddsPallet;
 use crate::types::{
-    DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, UpdateOnBehalfPayload,
+    DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, RemoveOnBehalfPayload,
+    UpdateOnBehalfPayload,
 };
 use parity_scale_codec::Encode as _;
 
@@ -253,6 +254,58 @@ mod benchmarks {
         #[extrinsic_call]
         _(RawOrigin::Signed(operator), 0, updated, nonce1, upd_sig);
 
+        Ok(())
+    }
+
+    #[benchmark]
+    fn remove_own_on_behalf() -> Result<(), BenchmarkError> {
+        let operator: T::AccountId = whitelisted_caller();
+        fund_caller::<T, I>(&operator);
+
+        let initial = T::BenchmarkHelper::bench_instance(0);
+        let dummy = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
+            action: OnBehalfAction::Deposit,
+            item: initial.clone(),
+            operator: operator.clone(),
+            nonce: 0,
+        };
+        let (_, owner) = T::BenchmarkHelper::create_signature(b"owner", &dummy.encode());
+
+        let nonce0 = crate::OnBehalfNonce::<T, I>::get(&owner);
+        let dep_payload = DepositOnBehalfPayload::<T::AccountId, T::Midds> {
+            action: OnBehalfAction::Deposit,
+            item: initial.clone(),
+            operator: operator.clone(),
+            nonce: nonce0,
+        };
+        let (dep_sig, _) = T::BenchmarkHelper::create_signature(b"owner", &dep_payload.encode());
+        MiddsPallet::<T, I>::deposit_on_behalf(
+            RawOrigin::Signed(operator.clone()).into(),
+            owner.clone(),
+            initial,
+            nonce0,
+            dep_sig,
+        )?;
+
+        // Worst case: a third-party relayer (≠ sponsor, ≠ owner) submits.
+        // Use a distinct funded account so the bench measures the souple
+        // caller path rather than collapsing to the sponsor case.
+        let relayer: T::AccountId = account("relayer", 0, 0);
+        fund_caller::<T, I>(&relayer);
+
+        let nonce1 = crate::OnBehalfNonce::<T, I>::get(&owner);
+        let payload = RemoveOnBehalfPayload::<T::AccountId> {
+            action: OnBehalfAction::Remove,
+            id: 0,
+            operator: relayer.clone(),
+            nonce: nonce1,
+        };
+        let (sig, _) = T::BenchmarkHelper::create_signature(b"owner", &payload.encode());
+
+        #[extrinsic_call]
+        _(RawOrigin::Signed(relayer), 0, nonce1, sig);
+
+        assert!(!Items::<T, I>::contains_key(0));
         Ok(())
     }
 

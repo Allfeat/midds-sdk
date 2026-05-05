@@ -232,10 +232,15 @@ main sur sa donnée sans dépendre de la balance du sponsor. La règle :
   sponsor et owner co-existent (Q2.b).
 - Sur un shrink où le `Δbase` à libérer dépasse la couche du caller, la
   réduction overflow LIFO sur l'autre couche, qui se voit alors refundée.
+- `remove_own_on_behalf` ferme la boucle meta-tx : caller libre (relayer
+  tiers, sponsor, ou peu importe), signature owner suffit pour autoriser
+  la rétractation. Un owner qui n'a *jamais* tenu d'AFT peut donc
+  reprendre tous ses fonds sans se soucier des fees on-chain.
 
-Sur `remove_own` / `force_remove_refund`, chaque couche se réconcilie
-indépendamment avec son `payer` ; sur `finalize` / `force_remove_slash`,
-chaque couche transfère son montant complet à la Treasury. La séparation
+Sur `remove_own` / `remove_own_on_behalf` / `force_remove_refund`, chaque
+couche se réconcilie indépendamment avec son `payer` ; sur `finalize` /
+`force_remove_slash`, chaque couche transfère son montant complet à la
+Treasury. La séparation
 financière est intégrale : aucun fonds d'une couche ne paie pour la
 pénalité de l'autre.
 
@@ -305,6 +310,7 @@ parameter_types! {
 | `update(id, item)` | depositor, ≤ 7j | Sur self-deposit : étend `sponsor_layer`. Sur record sponsorisé : étend ou crée `owner_layer` (escape hatch web3) | — | — |
 | `update_on_behalf(id, item, nonce, sig)` | original sponsor + signature owner, ≤ 7j | Étend `sponsor_layer`. Co-existe avec une `owner_layer` déjà créée | — | — |
 | `remove_own(id)` | depositor, ≤ 7j | Refund base de chaque couche à son payeur, primes vers Treasury | ✅ partiel | — |
+| `remove_own_on_behalf(id, nonce, sig)` | n'importe quel `ProviderOrigin` (relayer) + signature owner, ≤ 7j | Idem `remove_own` mais pilotable par tout relayer ; closes meta-tx loop pour owner sans AFT | ✅ partiel | — |
 | `finalize(id)` | n'importe qui, > 7j | Release HOLD de chaque couche vers Treasury | — | — |
 | `force_edit(id, item)` | sudo | Update via `sponsor_layer` (governance ne crée jamais d'`owner_layer`) | — | ✅ |
 | `force_remove_refund(id)` | sudo, ≤ 7j | Cleanup + refund total à chaque payeur (typo bonne foi) | ✅ total | ✅ |

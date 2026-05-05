@@ -619,7 +619,11 @@ fn on_initialize_rolls_pending_finalizations_forward() {
         for i in 0..total {
             let mut id = [0u8; 4];
             id[0] = b'a';
-            id[1..4].copy_from_slice(&[(i / 100) as u8 + b'0', ((i / 10) % 10) as u8 + b'0', (i % 10) as u8 + b'0']);
+            id[1..4].copy_from_slice(&[
+                (i / 100) as u8 + b'0',
+                ((i / 10) % 10) as u8 + b'0',
+                (i % 10) as u8 + b'0',
+            ]);
             assert_ok!(Midds::deposit(
                 RuntimeOrigin::signed(ALICE),
                 mock_midds(&id, 1)
@@ -1051,9 +1055,7 @@ fn force_remove_many_rolls_back_partial_batch_on_failure() {
             held_after_deposit,
             "partial batch must roll back both layers' settlement"
         );
-        assert!(pallet_midds::DepositInfo::<Test, Instance>::contains_key(
-            0
-        ));
+        assert!(pallet_midds::DepositInfo::<Test, Instance>::contains_key(0));
     });
 }
 
@@ -1562,7 +1564,14 @@ fn deposit_on_behalf_rejects_replay() {
         let stale_payload = deposit_payload(&second, BOB, 0, FAR_FUTURE);
         let stale_sig = sign(ALICE, &stale_payload);
         assert_noop!(
-            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, second, 0, FAR_FUTURE, stale_sig,),
+            Midds::deposit_on_behalf(
+                RuntimeOrigin::signed(BOB),
+                ALICE,
+                second,
+                0,
+                FAR_FUTURE,
+                stale_sig,
+            ),
             pallet_midds::Error::<Test, Instance>::InvalidNonce
         );
     });
@@ -1610,14 +1619,7 @@ fn deposit_on_behalf_rejects_expired_signature() {
         System::set_block_number(now + 1);
 
         assert_noop!(
-            Midds::deposit_on_behalf(
-                RuntimeOrigin::signed(BOB),
-                ALICE,
-                item,
-                0,
-                now,
-                sig
-            ),
+            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, item, 0, now, sig),
             pallet_midds::Error::<Test, Instance>::SignatureExpired
         );
     });
@@ -1638,14 +1640,7 @@ fn deposit_on_behalf_rejects_wrong_genesis_hash() {
         let sig = sign(ALICE, &payload);
 
         assert_noop!(
-            Midds::deposit_on_behalf(
-                RuntimeOrigin::signed(BOB),
-                ALICE,
-                item,
-                0,
-                FAR_FUTURE,
-                sig
-            ),
+            Midds::deposit_on_behalf(RuntimeOrigin::signed(BOB), ALICE, item, 0, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::InvalidSignature
         );
     });
@@ -1909,7 +1904,14 @@ fn update_on_behalf_rejects_wrong_sponsor() {
         let upd_payload = update_payload(0, &updated, CHARLIE, 1, FAR_FUTURE);
         let upd_sig = sign(ALICE, &upd_payload);
         assert_noop!(
-            Midds::update_on_behalf(RuntimeOrigin::signed(CHARLIE), 0, updated, 1, FAR_FUTURE, upd_sig),
+            Midds::update_on_behalf(
+                RuntimeOrigin::signed(CHARLIE),
+                0,
+                updated,
+                1,
+                FAR_FUTURE,
+                upd_sig
+            ),
             pallet_midds::Error::<Test, Instance>::WrongSponsor
         );
     });
@@ -1935,7 +1937,14 @@ fn update_on_behalf_rejects_invalid_signature() {
         // Charlie (not the owner) signs — verification keys to ALICE, not CHARLIE.
         let bad_sig = sign(CHARLIE, &upd_payload);
         assert_noop!(
-            Midds::update_on_behalf(RuntimeOrigin::signed(BOB), 0, updated, 1, FAR_FUTURE, bad_sig),
+            Midds::update_on_behalf(
+                RuntimeOrigin::signed(BOB),
+                0,
+                updated,
+                1,
+                FAR_FUTURE,
+                bad_sig
+            ),
             pallet_midds::Error::<Test, Instance>::InvalidSignature
         );
     });

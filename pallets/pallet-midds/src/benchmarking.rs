@@ -214,7 +214,14 @@ mod benchmarks {
         let (sig, _) = T::BenchmarkHelper::create_signature(b"owner", &payload.encode());
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(operator), owner, item, nonce, valid_until, sig);
+        _(
+            RawOrigin::Signed(operator),
+            owner,
+            item,
+            nonce,
+            valid_until,
+            sig,
+        );
 
         assert!(Items::<T, I>::contains_key(0));
         Ok(())
@@ -275,7 +282,14 @@ mod benchmarks {
         let (upd_sig, _) = T::BenchmarkHelper::create_signature(b"owner", &upd_payload.encode());
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(operator), 0, updated, nonce1, valid_until, upd_sig);
+        _(
+            RawOrigin::Signed(operator),
+            0,
+            updated,
+            nonce1,
+            valid_until,
+            upd_sig,
+        );
 
         Ok(())
     }

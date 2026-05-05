@@ -78,6 +78,38 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         Ok(())
     }
 
+    /// Validate and consume an owner-authorized meta-transaction.
+    ///
+    /// Callers run [`Self::ensure_signature_fresh`] first, preserving each
+    /// extrinsic's existing cheap-expiry rejection point. The payload is then
+    /// built lazily so stale-nonce submissions are rejected before cloning /
+    /// encoding the MIDDS item. Once the signature is valid, the nonce is
+    /// advanced before the caller performs the state mutation. Because the
+    /// public extrinsics are transactional, any later returned error rolls
+    /// this nonce write back with the rest of the call.
+    pub(crate) fn consume_on_behalf_authorization<P, F>(
+        owner: &T::AccountId,
+        nonce: u64,
+        signature: &T::OffchainSignature,
+        build_payload: F,
+    ) -> DispatchResult
+    where
+        P: Encode,
+        F: FnOnce() -> P,
+    {
+        let current_nonce = OnBehalfNonce::<T, I>::get(owner);
+        ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
+
+        let payload = build_payload();
+        Self::verify_owner_signature(&payload.encode(), signature, owner)?;
+
+        let next_nonce = current_nonce
+            .checked_add(1)
+            .ok_or(Error::<T, I>::NonceOverflow)?;
+        OnBehalfNonce::<T, I>::insert(owner, next_nonce);
+        Ok(())
+    }
+
     /// Reject if the new payload's canonical identifier does not still index
     /// to `id`. Covers both single-claim records and one-of-several claims
     /// (multi-claim) on the same identifier.

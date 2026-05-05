@@ -92,11 +92,7 @@ pub trait MiddsRpcApi<BlockHash, Identifier, Item, AccountId, Balance> {
     /// industry identifier — useful for UIs that need to surface "X
     /// claims" alongside a paginated list.
     #[method(name = "midds_countByIdentifier")]
-    fn count_by_identifier(
-        &self,
-        identifier: Identifier,
-        at: Option<BlockHash>,
-    ) -> RpcResult<u32>;
+    fn count_by_identifier(&self, identifier: Identifier, at: Option<BlockHash>) -> RpcResult<u32>;
 
     /// Fetch a stored MIDDS record by its on-chain id.
     #[method(name = "midds_get")]

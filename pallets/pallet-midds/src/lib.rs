@@ -548,24 +548,17 @@ pub mod pallet {
             let operator = T::ProviderOrigin::ensure_origin(origin)?;
 
             Self::ensure_signature_fresh(valid_until)?;
-            let current_nonce = OnBehalfNonce::<T, I>::get(&owner);
-            ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
-
-            let payload = DepositOnBehalfPayload {
-                kind: Self::kind_bytes(),
-                genesis_hash: Self::genesis_hash(),
-                action: OnBehalfAction::Deposit,
-                item: item.clone(),
-                operator: operator.clone(),
-                nonce,
-                valid_until,
-            };
-            Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
-
-            // Bump nonce *before* the heavy state mutations so a partial
-            // failure later on still consumes this signature (no replay).
-            let next_nonce = current_nonce.checked_add(1).ok_or(Error::<T, I>::NonceOverflow)?;
-            OnBehalfNonce::<T, I>::insert(&owner, next_nonce);
+            Self::consume_on_behalf_authorization(&owner, nonce, &signature, || {
+                DepositOnBehalfPayload {
+                    kind: Self::kind_bytes(),
+                    genesis_hash: Self::genesis_hash(),
+                    action: OnBehalfAction::Deposit,
+                    item: item.clone(),
+                    operator: operator.clone(),
+                    nonce,
+                    valid_until,
+                }
+            })?;
 
             Self::do_deposit(owner, operator, item)
         }
@@ -643,23 +636,18 @@ pub mod pallet {
             Self::ensure_in_window(&info)?;
 
             let owner = info.depositor.clone();
-            let current_nonce = OnBehalfNonce::<T, I>::get(&owner);
-            ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
-
-            let payload = UpdateOnBehalfPayload {
-                kind: Self::kind_bytes(),
-                genesis_hash: Self::genesis_hash(),
-                action: OnBehalfAction::Update,
-                id,
-                item: item.clone(),
-                operator: operator.clone(),
-                nonce,
-                valid_until,
-            };
-            Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
-
-            let next_nonce = current_nonce.checked_add(1).ok_or(Error::<T, I>::NonceOverflow)?;
-            OnBehalfNonce::<T, I>::insert(&owner, next_nonce);
+            Self::consume_on_behalf_authorization(&owner, nonce, &signature, || {
+                UpdateOnBehalfPayload {
+                    kind: Self::kind_bytes(),
+                    genesis_hash: Self::genesis_hash(),
+                    action: OnBehalfAction::Update,
+                    id,
+                    item: item.clone(),
+                    operator: operator.clone(),
+                    nonce,
+                    valid_until,
+                }
+            })?;
 
             let updated = Self::apply_edit(id, item, info, &operator)?;
             Self::emit_updated_event(id, &updated);
@@ -822,24 +810,17 @@ pub mod pallet {
             Self::ensure_in_window(&info)?;
 
             let owner = info.depositor.clone();
-            let current_nonce = OnBehalfNonce::<T, I>::get(&owner);
-            ensure!(nonce == current_nonce, Error::<T, I>::InvalidNonce);
-
-            let payload = RemoveOnBehalfPayload {
-                kind: Self::kind_bytes(),
-                genesis_hash: Self::genesis_hash(),
-                action: OnBehalfAction::Remove,
-                id,
-                operator,
-                nonce,
-                valid_until,
-            };
-            Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
-
-            // Bump nonce *before* the heavy state mutations so a partial
-            // failure later on still consumes this signature (no replay).
-            let next_nonce = current_nonce.checked_add(1).ok_or(Error::<T, I>::NonceOverflow)?;
-            OnBehalfNonce::<T, I>::insert(&owner, next_nonce);
+            Self::consume_on_behalf_authorization(&owner, nonce, &signature, || {
+                RemoveOnBehalfPayload {
+                    kind: Self::kind_bytes(),
+                    genesis_hash: Self::genesis_hash(),
+                    action: OnBehalfAction::Remove,
+                    id,
+                    operator,
+                    nonce,
+                    valid_until,
+                }
+            })?;
 
             Self::do_remove_own(id, info)
         }

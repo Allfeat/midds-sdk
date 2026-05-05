@@ -683,11 +683,57 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         Self::apply_multipliers(Self::compute_base_bond(size))
     }
 
-    /// All `MiddsId`s registered against the canonical identifier
-    /// (multi-claim).
+    /// Hard cap applied by every reverse-lookup helper exposed to the
+    /// runtime API / RPC. Multi-claim is unbounded by design (`docs/
+    /// economics.md` §1) so a popular identifier could otherwise produce
+    /// arbitrarily large `Vec<MiddsId>` payloads and stall the RPC node.
+    /// Consumers who need more should paginate via
+    /// [`Self::lookup_by_identifier_paged`].
+    pub const MAX_LOOKUP_LIMIT: u32 = 256;
+
+    /// First page of `MiddsId`s registered against the canonical
+    /// identifier, capped at [`Self::MAX_LOOKUP_LIMIT`]. The result is
+    /// sorted by `MiddsId` ascending so the cap is deterministic and
+    /// pagination via [`Self::lookup_by_identifier_paged`] resumes
+    /// cleanly from the last id returned here.
     pub fn lookup_by_identifier(identifier: <T::Midds as Midds>::Identifier) -> Vec<MiddsId> {
-        IdentifierClaims::<T, I>::iter_prefix(identifier)
+        Self::lookup_by_identifier_paged(identifier, None, Self::MAX_LOOKUP_LIMIT)
+    }
+
+    /// Paginated variant: return `MiddsId`s strictly greater than `after`
+    /// (or all of them when `after` is `None`), sorted ascending, capped
+    /// at `min(limit, MAX_LOOKUP_LIMIT)`. The natural cursor for the next
+    /// page is the last id of the returned vector.
+    pub fn lookup_by_identifier_paged(
+        identifier: <T::Midds as Midds>::Identifier,
+        after: Option<MiddsId>,
+        limit: u32,
+    ) -> Vec<MiddsId> {
+        let cap = core::cmp::min(limit, Self::MAX_LOOKUP_LIMIT) as usize;
+        if cap == 0 {
+            return Vec::new();
+        }
+        let mut ids: Vec<MiddsId> = IdentifierClaims::<T, I>::iter_prefix(identifier)
             .map(|(id, _)| id)
-            .collect()
+            .filter(|id| match after {
+                Some(after_id) => *id > after_id,
+                None => true,
+            })
+            .collect();
+        ids.sort_unstable();
+        ids.truncate(cap);
+        ids
+    }
+
+    /// Total number of `MiddsId`s registered against the canonical
+    /// identifier — useful for UIs that need to render "X claims" next
+    /// to a paginated list. Iterates the prefix once, so the cost scales
+    /// linearly with the number of claims; callers that only need a
+    /// "more than N?" indicator should compare against
+    /// [`Self::MAX_LOOKUP_LIMIT`] from the lookup helper instead.
+    pub fn count_by_identifier(identifier: <T::Midds as Midds>::Identifier) -> u32 {
+        IdentifierClaims::<T, I>::iter_prefix(identifier)
+            .take(u32::MAX as usize)
+            .count() as u32
     }
 }

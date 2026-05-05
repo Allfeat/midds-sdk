@@ -1093,6 +1093,71 @@ fn deposit_fails_when_account_lacks_funds_for_bond() {
 }
 
 // -----------------------------------------------------------------------------
+// reverse lookup
+// -----------------------------------------------------------------------------
+
+/// Pin the cap surfaced by `lookup_by_identifier`: a popular identifier
+/// must not produce an unbounded `Vec<MiddsId>`, otherwise the runtime
+/// API / RPC would OOM the node. Pagination via
+/// `lookup_by_identifier_paged` is the supported way past the cap.
+#[test]
+fn lookup_by_identifier_paginates_and_caps() {
+    new_test_ext().execute_with(|| {
+        // Six different payloads sharing the same identifier "shared".
+        let total = 6u8;
+        for i in 0..total {
+            let mut item = mock_midds(b"shared", 5);
+            item.data.iter_mut().for_each(|byte| *byte = i);
+            assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item));
+        }
+        let identifier = mock_midds(b"shared", 5).id.clone();
+
+        // Unpaginated call returns every id sorted ascending (under cap).
+        let all = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier(identifier.clone());
+        assert_eq!(all, (0..total as u64).collect::<Vec<_>>());
+        assert_eq!(
+            pallet_midds::Pallet::<Test, Instance>::count_by_identifier(identifier.clone()),
+            total as u32,
+        );
+
+        // Page through with limit=2 and walk the cursor.
+        let page1 = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
+            identifier.clone(),
+            None,
+            2,
+        );
+        assert_eq!(page1, vec![0, 1]);
+        let page2 = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
+            identifier.clone(),
+            Some(*page1.last().expect("page1 not empty")),
+            2,
+        );
+        assert_eq!(page2, vec![2, 3]);
+        let page3 = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
+            identifier.clone(),
+            Some(*page2.last().expect("page2 not empty")),
+            2,
+        );
+        assert_eq!(page3, vec![4, 5]);
+        let page4 = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
+            identifier.clone(),
+            Some(*page3.last().expect("page3 not empty")),
+            2,
+        );
+        assert!(page4.is_empty(), "exhausted cursor must yield empty page");
+
+        // Limit beyond the cap clamps silently.
+        let cap = pallet_midds::Pallet::<Test, Instance>::MAX_LOOKUP_LIMIT;
+        let oversize = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
+            identifier,
+            None,
+            cap + 100,
+        );
+        assert_eq!(oversize.len(), total as usize);
+    });
+}
+
+// -----------------------------------------------------------------------------
 // multiplier dynamics
 // -----------------------------------------------------------------------------
 

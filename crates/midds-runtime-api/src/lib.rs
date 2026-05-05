@@ -81,10 +81,30 @@ sp_api::decl_runtime_apis! {
         AccountId: Codec,
         Balance: Codec,
     {
-        /// All `MiddsId`s registered against the canonical industry
-        /// identifier. Returns an empty vector when nothing matches —
-        /// multi-claim is the rule (`docs/economics.md` §1).
+        /// First page of `MiddsId`s registered against the canonical
+        /// industry identifier, sorted by id ascending and capped at the
+        /// pallet's `MAX_LOOKUP_LIMIT`. Returns an empty vector when
+        /// nothing matches — multi-claim is the rule (`docs/economics.md`
+        /// §1). Use `lookup_by_identifier_paged` to walk past the cap.
         fn lookup_by_identifier(identifier: Identifier) -> Vec<MiddsId>;
+
+        /// Paginated variant of `lookup_by_identifier`: returns ids
+        /// strictly greater than `after` (or all of them when `after` is
+        /// `None`), sorted ascending, capped at `min(limit, MAX_LOOKUP_LIMIT)`.
+        /// Resume the next page by passing the last returned id as the
+        /// new `after`.
+        fn lookup_by_identifier_paged(
+            identifier: Identifier,
+            after: Option<MiddsId>,
+            limit: u32,
+        ) -> Vec<MiddsId>;
+
+        /// Total number of `MiddsId`s registered against the canonical
+        /// identifier. Single linear scan over the prefix — fine for
+        /// any realistic claim count, callers wanting just a "many?"
+        /// signal should rely on `lookup_by_identifier` returning the
+        /// `MAX_LOOKUP_LIMIT` cap instead.
+        fn count_by_identifier(identifier: Identifier) -> u32;
 
         /// Fetch a stored MIDDS record by its on-chain id.
         fn get(id: MiddsId) -> Option<Item>;

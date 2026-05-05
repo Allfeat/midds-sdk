@@ -93,6 +93,41 @@ impl MiddsRpcApiServer<BlockHash, Iswc, MusicalWork, AccountId, Balance> for Stu
             .unwrap_or_default())
     }
 
+    fn lookup_by_identifier_paged(
+        &self,
+        identifier: Iswc,
+        after: Option<MiddsId>,
+        limit: u32,
+        _at: Option<BlockHash>,
+    ) -> RpcResult<Vec<MiddsId>> {
+        let mut ids: Vec<MiddsId> = self
+            .state
+            .lock()
+            .expect("stub state")
+            .claims
+            .get(&identifier)
+            .cloned()
+            .unwrap_or_default();
+        ids.sort_unstable();
+        ids.retain(|id| match after {
+            Some(after_id) => *id > after_id,
+            None => true,
+        });
+        ids.truncate(limit as usize);
+        Ok(ids)
+    }
+
+    fn count_by_identifier(&self, identifier: Iswc, _at: Option<BlockHash>) -> RpcResult<u32> {
+        Ok(self
+            .state
+            .lock()
+            .expect("stub state")
+            .claims
+            .get(&identifier)
+            .map(|v| v.len() as u32)
+            .unwrap_or(0))
+    }
+
     fn get(&self, id: MiddsId, _at: Option<BlockHash>) -> RpcResult<Option<MusicalWork>> {
         Ok(self
             .state

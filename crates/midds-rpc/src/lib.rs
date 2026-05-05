@@ -58,14 +58,39 @@ use sp_runtime::{FixedU128, traits::Block as BlockT};
 /// JSON-RPC surface for one MIDDS pallet instance.
 #[rpc(server)]
 pub trait MiddsRpcApi<BlockHash, Identifier, Item, AccountId, Balance> {
-    /// All `MiddsId`s registered against the canonical industry identifier.
-    /// Returns an empty list when nothing matches.
+    /// First page of `MiddsId`s registered against the canonical
+    /// industry identifier, sorted ascending and capped at the pallet's
+    /// `MAX_LOOKUP_LIMIT`. Use `midds_lookupByIdentifierPaged` to walk
+    /// past the cap.
     #[method(name = "midds_lookupByIdentifier")]
     fn lookup_by_identifier(
         &self,
         identifier: Identifier,
         at: Option<BlockHash>,
     ) -> RpcResult<Vec<MiddsId>>;
+
+    /// Paginated variant of `lookup_by_identifier`: returns ids strictly
+    /// greater than `after` (or the head of the list when `after` is
+    /// `None`), sorted ascending, capped at the pallet's lookup limit.
+    /// The next page resumes with the last id of the returned vector.
+    #[method(name = "midds_lookupByIdentifierPaged")]
+    fn lookup_by_identifier_paged(
+        &self,
+        identifier: Identifier,
+        after: Option<MiddsId>,
+        limit: u32,
+        at: Option<BlockHash>,
+    ) -> RpcResult<Vec<MiddsId>>;
+
+    /// Total number of `MiddsId`s registered against the canonical
+    /// industry identifier — useful for UIs that need to surface "X
+    /// claims" alongside a paginated list.
+    #[method(name = "midds_countByIdentifier")]
+    fn count_by_identifier(
+        &self,
+        identifier: Identifier,
+        at: Option<BlockHash>,
+    ) -> RpcResult<u32>;
 
     /// Fetch a stored MIDDS record by its on-chain id.
     #[method(name = "midds_get")]
@@ -150,6 +175,30 @@ where
         let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
         api.lookup_by_identifier(at_hash, identifier)
             .map_err(|e| runtime_err(e, "Unable to resolve identifier."))
+    }
+
+    fn lookup_by_identifier_paged(
+        &self,
+        identifier: Identifier,
+        after: Option<MiddsId>,
+        limit: u32,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<Vec<MiddsId>> {
+        let api = self.client.runtime_api();
+        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
+        api.lookup_by_identifier_paged(at_hash, identifier, after, limit)
+            .map_err(|e| runtime_err(e, "Unable to resolve identifier page."))
+    }
+
+    fn count_by_identifier(
+        &self,
+        identifier: Identifier,
+        at: Option<<Block as BlockT>::Hash>,
+    ) -> RpcResult<u32> {
+        let api = self.client.runtime_api();
+        let at_hash = at.unwrap_or_else(|| self.client.info().best_hash);
+        api.count_by_identifier(at_hash, identifier)
+            .map_err(|e| runtime_err(e, "Unable to count claims for identifier."))
     }
 
     fn get(&self, id: MiddsId, at: Option<<Block as BlockT>::Hash>) -> RpcResult<Option<Item>> {

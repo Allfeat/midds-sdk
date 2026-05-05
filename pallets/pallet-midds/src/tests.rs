@@ -713,19 +713,49 @@ fn force_edit_requires_root() {
     });
 }
 
+/// Post-finalization `force_edit` (cf. `docs/economics.md` §4) updates
+/// the on-chain payload + reverse hash index without touching the bond
+/// — which already lives in the Treasury at this point. Lets governance
+/// fix a typo on a permanent record without losing attribution.
 #[test]
-fn force_edit_rejects_after_finalization() {
+fn force_edit_post_finalization_updates_payload_only() {
+    use sp_runtime::traits::Hash as _;
+
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"abc", 5);
+        let original_hash = <Test as frame_system::Config>::Hashing::hash_of(&item);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item));
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
         assert_ok!(Midds::finalize(RuntimeOrigin::signed(BOB), 0));
 
-        let other = mock_midds(b"abc", 6);
-        assert_noop!(
-            Midds::force_edit(RuntimeOrigin::root(), 0, other),
-            pallet_midds::Error::<Test, Instance>::AlreadyFinalized,
+        let treasury_at_finalize = treasury_balance();
+        let info_before = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
+        assert!(info_before.finalized);
+        assert_eq!(info_before.payload_hash, original_hash);
+
+        let edited = mock_midds(b"abc", 6);
+        let new_hash = <Test as frame_system::Config>::Hashing::hash_of(&edited);
+        assert_ne!(new_hash, original_hash);
+
+        assert_ok!(Midds::force_edit(RuntimeOrigin::root(), 0, edited.clone()));
+
+        // Payload + hash index swapped; bond accounting untouched.
+        assert_eq!(pallet_midds::Items::<Test, Instance>::get(0), Some(edited));
+        let info_after = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
+        assert!(info_after.finalized);
+        assert_eq!(info_after.payload_hash, new_hash);
+        assert_eq!(info_after.sponsor_layer, info_before.sponsor_layer);
+        assert_eq!(info_after.owner_layer, info_before.owner_layer);
+        assert_eq!(treasury_balance(), treasury_at_finalize);
+        assert!(pallet_midds::PayloadHashes::<Test, Instance>::get(new_hash).is_some());
+        assert!(
+            pallet_midds::PayloadHashes::<Test, Instance>::get(original_hash).is_none(),
+            "stale payload hash must be evicted"
         );
+
+        System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::ForceEdited {
+            id: 0,
+        }));
     });
 }
 

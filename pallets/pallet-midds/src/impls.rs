@@ -294,6 +294,34 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         Ok(info)
     }
 
+    /// Variant of [`Self::apply_edit`] used by `force_edit` on records
+    /// that have already finalized: the bond has been transferred to
+    /// the Treasury (`finalized = true`) so there is no remaining hold
+    /// to rebalance. We only need to update the stored payload and the
+    /// reverse `PayloadHashes` index — duplicate detection still applies
+    /// since exact-payload uniqueness is a global invariant of the
+    /// pallet, finalized or not.
+    pub(crate) fn apply_finalized_edit(
+        id: MiddsId,
+        item: T::Midds,
+        mut info: DepositOf<T, I>,
+    ) -> Result<DepositOf<T, I>, DispatchError> {
+        let new_hash = Self::hash_payload(&item);
+        if new_hash != info.payload_hash {
+            if let Some(existing) = PayloadHashes::<T, I>::get(new_hash) {
+                if existing != id {
+                    return Err(Error::<T, I>::DuplicatePayload.into());
+                }
+            }
+            PayloadHashes::<T, I>::remove(info.payload_hash);
+            PayloadHashes::<T, I>::insert(new_hash, id);
+            info.payload_hash = new_hash;
+        }
+        Items::<T, I>::insert(id, item);
+        DepositInfo::<T, I>::insert(id, &info);
+        Ok(info)
+    }
+
     /// Apply the per-layer base + amount adjustments for an `apply_edit`
     /// call and synchronise the on-chain holds accordingly.
     fn route_size_delta(

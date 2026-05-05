@@ -713,10 +713,18 @@ pub mod pallet {
         }
 
         /// `ForceOrigin` edit, bypassing the commitment window. The bond
-        /// delta is taken from / refunded to the **original sponsor** —
-        /// governance edits are routed through the sponsor layer, never
-        /// conjure an owner layer out of an admin intervention. The
-        /// deposit-time multiplier premium is preserved.
+        /// delta (if any) is taken from / refunded to the **original
+        /// sponsor** — governance edits are routed through the sponsor
+        /// layer, never conjure an owner layer out of an admin
+        /// intervention. The deposit-time multiplier premium is
+        /// preserved.
+        ///
+        /// Post-finalization variant (cf. `docs/economics.md` §4): when
+        /// the record is already finalized the bond is in the Treasury
+        /// and there is nothing to re-price — `force_edit` then only
+        /// rewrites the on-chain payload and the reverse hash index.
+        /// Lets governance correct a typo on a permanent record without
+        /// slashing + re-depositing (which would lose attribution).
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::force_edit(item.encoded_size() as u32))]
         #[frame_support::transactional]
@@ -725,11 +733,14 @@ pub mod pallet {
             Self::enforce_format(&item)?;
 
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
-            ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
             Self::ensure_identifier_unchanged(id, &item)?;
 
-            let sponsor = info.sponsor_layer.payer.clone();
-            Self::apply_edit(id, item, info, &sponsor)?;
+            if info.finalized {
+                Self::apply_finalized_edit(id, item, info)?;
+            } else {
+                let sponsor = info.sponsor_layer.payer.clone();
+                Self::apply_edit(id, item, info, &sponsor)?;
+            }
             Self::deposit_event(Event::ForceEdited { id });
             Ok(())
         }

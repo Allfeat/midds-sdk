@@ -42,8 +42,10 @@ fn deposit_works() {
         let info =
             pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("deposit info present");
         assert_eq!(info.depositor, ALICE);
-        assert_eq!(info.amount, bond);
-        assert_eq!(info.base_bond, base);
+        assert_eq!(info.sponsor_layer.payer, ALICE);
+        assert_eq!(info.sponsor_layer.amount, bond);
+        assert_eq!(info.sponsor_layer.base, base);
+        assert!(info.owner_layer.is_none());
         assert_eq!(info.deposited_at, System::block_number());
         assert!(!info.finalized);
         assert_eq!(pallet_midds::NextMiddsId::<Test, Instance>::get(), 1);
@@ -184,14 +186,16 @@ fn update_within_window_works() {
 
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("deposit info");
         assert_eq!(pallet_midds::Items::<Test, Instance>::get(0), Some(updated));
-        assert_eq!(info.base_bond, new_base);
+        // Self-deposit: delta lands on sponsor_layer (no owner layer needed).
+        assert_eq!(info.sponsor_layer.base, new_base);
         // Multipliers unchanged across the test → premium = 0, amount = base.
-        assert_eq!(info.amount, new_base);
+        assert_eq!(info.sponsor_layer.amount, new_base);
+        assert!(info.owner_layer.is_none());
 
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Updated {
             id: 0,
-            bond_payer: ALICE,
-            new_bond: new_base,
+            sponsor_bond: new_base,
+            owner_bond: 0,
         }));
     });
 }
@@ -310,8 +314,8 @@ fn update_preserves_deposit_time_premium() {
         // deposit time and survives the price drop.
         assert_eq!(held(ALICE), total);
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
-        assert_eq!(info.amount, total);
-        assert_eq!(info.base_bond, base);
+        assert_eq!(info.sponsor_layer.amount, total);
+        assert_eq!(info.sponsor_layer.base, base);
     });
 }
 
@@ -403,8 +407,9 @@ fn remove_own_refunds_base_and_sends_premium_to_treasury() {
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
             id: 0,
             depositor: ALICE,
-            bond_payer: ALICE,
-            refund: base,
+            sponsor: ALICE,
+            sponsor_refund: base,
+            owner_refund: 0,
             premium_to_treasury: premium,
         }));
     });
@@ -484,7 +489,7 @@ fn finalize_after_window_moves_bond_to_treasury() {
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Finalized {
             id: 0,
             depositor: ALICE,
-            bond_payer: ALICE,
+            sponsor: ALICE,
             amount_to_treasury: bond,
         }));
     });
@@ -679,8 +684,9 @@ fn force_remove_refund_returns_full_bond() {
             pallet_midds::Event::ForceRemovedRefund {
                 id: 0,
                 depositor: ALICE,
-                bond_payer: ALICE,
-                refund: total,
+                sponsor: ALICE,
+                sponsor_refund: total,
+                owner_refund: 0,
             },
         ));
     });
@@ -989,7 +995,7 @@ fn current_deposit_price_matches_actual_bond() {
             pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("deposit info present");
 
         assert_eq!(
-            info.amount, quoted,
+            info.sponsor_layer.amount, quoted,
             "runtime-API quote must equal the bond actually placed on hold"
         );
         assert_eq!(held(ALICE), quoted, "held bond must match the quote");
@@ -1067,16 +1073,28 @@ fn check_invariants(expected: &[(u64, AccountId, MockId)]) {
             pallet_midds::IdentifierClaims::<Test, Instance>::contains_key(identifier, *id),
             "IdentifierClaims missing entry for id={id}"
         );
+        let total_base = info.sponsor_layer.base
+            + info
+                .owner_layer
+                .as_ref()
+                .map(|l| l.base)
+                .unwrap_or_default();
         assert_eq!(
-            info.base_bond,
+            total_base,
             expected_base_bond_for(&item),
-            "DepositInfo.base_bond drifted from the bond formula at id={id}"
+            "Σ layer.base drifted from the bond formula at id={id}"
         );
-        // amount = base + premium ≥ base.
-        assert!(info.amount >= info.base_bond);
+        // Each layer: amount = base + premium ≥ base.
+        assert!(info.sponsor_layer.amount >= info.sponsor_layer.base);
+        if let Some(layer) = info.owner_layer.as_ref() {
+            assert!(layer.amount >= layer.base);
+        }
 
         if !info.finalized {
-            *total_held.entry(*depositor).or_default() += info.amount;
+            *total_held.entry(info.sponsor_layer.payer).or_default() += info.sponsor_layer.amount;
+            if let Some(layer) = info.owner_layer.as_ref() {
+                *total_held.entry(layer.payer).or_default() += layer.amount;
+            }
         }
     }
 
@@ -1084,7 +1102,7 @@ fn check_invariants(expected: &[(u64, AccountId, MockId)]) {
         assert_eq!(
             held(account),
             expected_held,
-            "hold(account={account}) ≠ Σ DepositInfo.amount over non-finalized records",
+            "hold(account={account}) ≠ Σ layer.amount over non-finalized records",
         );
     }
 }
@@ -1144,8 +1162,9 @@ fn deposit_on_behalf_attributes_owner_holds_on_operator() {
         let info =
             pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("deposit info present");
         assert_eq!(info.depositor, ALICE);
-        assert_eq!(info.bond_payer, BOB);
-        assert_eq!(info.amount, bond);
+        assert_eq!(info.sponsor_layer.payer, BOB);
+        assert_eq!(info.sponsor_layer.amount, bond);
+        assert!(info.owner_layer.is_none());
 
         // Bond is held against the sponsor, not the owner.
         assert_eq!(held(BOB), bond);
@@ -1158,7 +1177,7 @@ fn deposit_on_behalf_attributes_owner_holds_on_operator() {
             depositor: ALICE,
             bond_payer: BOB,
             bond,
-            base_bond: info.base_bond,
+            base_bond: info.sponsor_layer.base,
         }));
     });
 }
@@ -1238,33 +1257,160 @@ fn remove_own_on_sponsored_record_refunds_sponsor() {
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
             id: 0,
             depositor: ALICE,
-            bond_payer: BOB,
-            refund: base,
+            sponsor: BOB,
+            sponsor_refund: base,
+            owner_refund: 0,
             premium_to_treasury: premium,
         }));
     });
 }
 
+/// Web3 escape hatch: the owner of a sponsored record can extend it via
+/// plain `update`, paying the delta out of their own balance. The
+/// `sponsor_layer` is left untouched; an `owner_layer` materializes and
+/// banks the current multiplier premium against the depositor.
 #[test]
-fn update_rejects_sponsored_record() {
+fn update_grows_sponsored_record_via_escape_hatch() {
     new_test_ext().execute_with(|| {
-        let item = mock_midds(b"plainup", 5);
-        let payload = deposit_payload(&item, BOB, 0);
+        let initial = mock_midds(b"plainup", 5);
+        let initial_base = expected_base_bond_for(&initial);
+        let payload = deposit_payload(&initial, BOB, 0);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::deposit_on_behalf(
             RuntimeOrigin::signed(BOB),
             ALICE,
-            item.clone(),
+            initial,
             0,
             sig,
         ));
+        let sponsor_held_before = held(BOB);
 
-        // Owner attempts to grow the payload through plain `update` — refused.
+        // Force a 2× M_fast so we can observe the owner's premium getting
+        // banked at *current* multipliers when the owner_layer is created.
+        pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
+
         let bigger = mock_midds(b"plainup", 10);
-        assert_noop!(
-            Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger),
-            pallet_midds::Error::<Test, Instance>::SponsoredUpdateRequired
-        );
+        let bigger_base = expected_base_bond_for(&bigger);
+        let delta_base = bigger_base - initial_base;
+        let owner_amount = delta_base * 2; // current M = 2.0×
+
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
+
+        let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
+        assert_eq!(info.sponsor_layer.payer, BOB);
+        assert_eq!(info.sponsor_layer.amount, sponsor_held_before);
+        let owner_layer = info
+            .owner_layer
+            .expect("escape-hatch owner_layer materialized");
+        assert_eq!(owner_layer.payer, ALICE);
+        assert_eq!(owner_layer.base, delta_base);
+        assert_eq!(owner_layer.amount, owner_amount);
+
+        // Sponsor's hold is unchanged; owner's hold equals the multiplied
+        // delta. (We don't assert on `free(ALICE)` here because the first
+        // hold on a previously-untouched account also kicks in the ED
+        // accounting in `pallet_balances::reducible_balance`.)
+        assert_eq!(held(BOB), sponsor_held_before);
+        assert_eq!(held(ALICE), owner_amount);
+
+        System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Updated {
+            id: 0,
+            sponsor_bond: sponsor_held_before,
+            owner_bond: owner_amount,
+        }));
+    });
+}
+
+/// Owner extends, then the *original sponsor* still extends their own
+/// layer through `update_on_behalf`. Both layers grow independently — the
+/// stratified model lets the SaaS sponsor and the autonomous owner
+/// co-exist on the same record (cf. design Q2.b).
+#[test]
+fn update_on_behalf_coexists_with_owner_layer() {
+    new_test_ext().execute_with(|| {
+        let initial = mock_midds(b"coexist", 5);
+        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            initial,
+            0,
+            dep_sig,
+        ));
+
+        // Step 1 — owner extends in solo, materializes owner_layer.
+        let mid = mock_midds(b"coexist", 10);
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, mid));
+        let after_owner = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
+        let owner_after_step1 = after_owner.owner_layer.as_ref().expect("layer").amount;
+        let sponsor_after_step1 = after_owner.sponsor_layer.amount;
+
+        // Step 2 — sponsor extends further on top, both layers must coexist.
+        let bigger = mock_midds(b"coexist", 18);
+        let upd_payload = update_payload(0, &bigger, BOB, 1);
+        let upd_sig = sign(ALICE, &upd_payload);
+        assert_ok!(Midds::update_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            0,
+            bigger,
+            1,
+            upd_sig,
+        ));
+
+        let after_sponsor = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
+        // Sponsor layer grew; owner layer untouched.
+        assert!(after_sponsor.sponsor_layer.amount > sponsor_after_step1);
+        let owner_layer = after_sponsor
+            .owner_layer
+            .as_ref()
+            .expect("owner_layer survives sponsor extend");
+        assert_eq!(owner_layer.amount, owner_after_step1);
+        assert_eq!(owner_layer.payer, ALICE);
+    });
+}
+
+/// Owner shrinks below their own layer's base — the overflow refunds the
+/// sponsor (LIFO release across layers).
+#[test]
+fn update_shrink_drains_owner_then_overflows_to_sponsor() {
+    new_test_ext().execute_with(|| {
+        let initial = mock_midds(b"shrink", 5);
+        let dep_payload = deposit_payload(&initial, BOB, 0);
+        let dep_sig = sign(ALICE, &dep_payload);
+        assert_ok!(Midds::deposit_on_behalf(
+            RuntimeOrigin::signed(BOB),
+            ALICE,
+            initial,
+            0,
+            dep_sig,
+        ));
+        let bob_held_at_deposit = held(BOB);
+
+        // Owner extends so owner_layer.base = 25 - 5 = 20 (unit multipliers).
+        let bigger = mock_midds(b"shrink", 25);
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
+        let alice_held_after_extend = held(ALICE);
+
+        // Owner shrinks back to size 0: total base = DEPOSIT_BASE only,
+        // delta = -(25 unit bytes). LIFO drains owner first (20), then
+        // overflows 5 into sponsor's base.
+        let smaller = mock_midds(b"shrink", 0);
+        assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, smaller));
+
+        let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
+        // Owner layer kept (premium=0 at unit multipliers, but the layer
+        // survives) with base = 0.
+        let owner_layer = info.owner_layer.as_ref().expect("layer survives");
+        assert_eq!(owner_layer.base, 0);
+        assert_eq!(owner_layer.amount, 0);
+        // Sponsor base shrunk by the overflow (5 bytes).
+        assert!(info.sponsor_layer.base < bob_held_at_deposit);
+        // Owner fully released.
+        assert_eq!(held(ALICE), 0);
+        // Sponsor partially released.
+        assert!(held(BOB) < bob_held_at_deposit);
+        assert!(alice_held_after_extend > 0); // sanity for the helper variable
     });
 }
 
@@ -1296,10 +1442,12 @@ fn update_on_behalf_extends_sponsor_hold() {
 
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
         assert_eq!(info.depositor, ALICE);
-        assert_eq!(info.bond_payer, BOB);
+        assert_eq!(info.sponsor_layer.payer, BOB);
         // Hold against the sponsor grew, not against the owner.
         assert!(held(BOB) > initial_held);
         assert_eq!(held(ALICE), 0);
+        // No owner contribution yet — sponsor is the sole payer.
+        assert!(info.owner_layer.is_none());
         assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 2);
     });
 }

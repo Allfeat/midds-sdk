@@ -60,15 +60,18 @@ fn decode_fee_paid(bytes: &[u8]) -> Option<Balance> {
     Balance::decode(&mut cursor).ok()
 }
 
-/// Decode the `Deposited { id, depositor, bond, base_bond }` event payload.
-/// Wire shape is `(MiddsId, AccountId, Balance, Balance)`. Depositor is
-/// dropped on the floor — the caller is the submitting signer and already
-/// knows it — but still `Decode`d to advance the cursor (cf.
-/// [`decode_fee_paid`] for the rationale).
+/// Decode the `Deposited { id, depositor, bond_payer, bond, base_bond }`
+/// event payload. Wire shape is `(MiddsId, AccountId, AccountId, Balance,
+/// Balance)`. Both account fields are dropped on the floor (the caller is
+/// the submitting signer, the sponsor is the same for self-deposits and
+/// already known by the operator for sponsored deposits) but still
+/// `Decode`d to advance the cursor (cf. [`decode_fee_paid`] for the
+/// rationale).
 fn decode_deposited(bytes: &[u8]) -> Option<(MiddsId, Balance, Balance)> {
     let mut cursor = bytes;
     let id = MiddsId::decode(&mut cursor).ok()?;
-    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?;
+    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?; // depositor
+    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?; // bond_payer
     let bond = Balance::decode(&mut cursor).ok()?;
     let base_bond = Balance::decode(&mut cursor).ok()?;
     Some((id, bond, base_bond))

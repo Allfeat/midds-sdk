@@ -47,8 +47,8 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{ErrorObject, ErrorObjectOwned},
 };
-pub use midds_runtime_api::DepositInfoOf;
 use midds_runtime_api::MiddsApi;
+pub use midds_runtime_api::{BondLayerOf, DepositInfoOf};
 use midds_traits::MiddsId;
 use parity_scale_codec::Codec;
 use sp_api::ProvideRuntimeApi;

@@ -18,7 +18,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 
 use jsonrpsee::core::RpcResult;
 use midds_fixtures::musical_work::MusicalWorkBuilder;
-use midds_rpc::{DepositInfoOf, MiddsRpcApiServer};
+use midds_rpc::{BondLayerOf, DepositInfoOf, MiddsRpcApiServer};
 use midds_traits::{Iswc, Midds as _, MiddsId};
 use midds_types::MusicalWork;
 use sp_runtime::FixedU128;
@@ -62,12 +62,15 @@ impl Stub {
             id,
             DepositInfoOf {
                 depositor,
-                // Stub keeps `bond_payer == depositor` (self-deposit shape) —
-                // sponsored variants are exercised by pallet-level tests, not
-                // the RPC surface.
-                bond_payer: depositor,
-                amount: bond,
-                base_bond,
+                // Stub keeps the self-deposit shape (sponsor_layer.payer ==
+                // depositor, no owner_layer) — sponsored variants are
+                // exercised by pallet-level tests, not the RPC surface.
+                sponsor_layer: BondLayerOf {
+                    payer: depositor,
+                    amount: bond,
+                    base: base_bond,
+                },
+                owner_layer: None,
                 finalized,
             },
         );
@@ -287,12 +290,24 @@ async fn deposit_info_present_id_returns_full_view() {
     let obj = result
         .as_object()
         .expect("DepositInfoOf serializes as JSON object");
-    assert_eq!(obj.len(), 5, "DepositInfoOf has exactly 5 fields");
+    assert_eq!(
+        obj.len(),
+        4,
+        "DepositInfoOf has exactly 4 fields: depositor, sponsor_layer, owner_layer, finalized"
+    );
     assert_eq!(obj.get("depositor").and_then(|v| v.as_u64()), Some(99));
-    // Stub uses self-deposit shape: bond_payer == depositor.
-    assert_eq!(obj.get("bond_payer").and_then(|v| v.as_u64()), Some(99));
-    assert_eq!(obj.get("amount").and_then(|v| v.as_u64()), Some(12_345));
-    assert_eq!(obj.get("base_bond").and_then(|v| v.as_u64()), Some(10_000),);
+    let sponsor = obj
+        .get("sponsor_layer")
+        .and_then(|v| v.as_object())
+        .expect("sponsor_layer object");
+    // Stub uses self-deposit shape: sponsor_layer.payer == depositor.
+    assert_eq!(sponsor.get("payer").and_then(|v| v.as_u64()), Some(99));
+    assert_eq!(sponsor.get("amount").and_then(|v| v.as_u64()), Some(12_345));
+    assert_eq!(sponsor.get("base").and_then(|v| v.as_u64()), Some(10_000));
+    assert!(
+        obj.get("owner_layer").is_some_and(|v| v.is_null()),
+        "self-deposit stub leaves owner_layer null"
+    );
     assert_eq!(obj.get("finalized").and_then(|v| v.as_bool()), Some(false));
 }
 

@@ -348,8 +348,8 @@ proptest! {
                     id,
                     depositor: ALICE,
                     bond_payer: ALICE,
-                    bond: info.amount,
-                    base_bond: info.base_bond,
+                    bond: info.sponsor_layer.amount,
+                    base_bond: info.sponsor_layer.base,
                 },
             ));
             Ok(())
@@ -419,21 +419,32 @@ proptest! {
                     }
                 }
 
-                // Invariant 1: bond cumulé per account = Σ amount over
-                // non-finalized records. A record can legitimately end up
+                // Invariant 1: bond cumulé per account = Σ layer.amount over
+                // non-finalized records. A layer can legitimately end up
                 // with `amount == 0` after the multipliers crash to their
                 // floor on a quiet chain — `MutateHold::hold(_, 0)` is a
-                // no-op so zero-amount records don't contribute to the
-                // observed held balance.
+                // no-op so zero-amount layers don't contribute to the
+                // observed held balance. Each layer settles against its own
+                // payer (sponsor vs owner), so the aggregation walks both
+                // legs.
                 let mut expected: BTreeMap<AccountId, Balance> = BTreeMap::new();
                 for (_id, info) in pallet_midds::DepositInfo::<Test, Instance>::iter() {
-                    if !info.finalized && info.amount > 0 {
-                        *expected.entry(info.depositor).or_insert(0) += info.amount;
+                    if info.finalized {
+                        continue;
+                    }
+                    if info.sponsor_layer.amount > 0 {
+                        *expected.entry(info.sponsor_layer.payer).or_insert(0) +=
+                            info.sponsor_layer.amount;
+                    }
+                    if let Some(layer) = info.owner_layer.as_ref() {
+                        if layer.amount > 0 {
+                            *expected.entry(layer.payer).or_insert(0) += layer.amount;
+                        }
                     }
                 }
                 prop_assert_eq!(
                     &now.holds, &expected,
-                    "held balance vs Σ DepositInfo.amount mismatch",
+                    "held balance vs Σ layer.amount mismatch",
                 );
 
                 prev = now;

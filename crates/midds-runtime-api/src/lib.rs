@@ -18,36 +18,56 @@ use parity_scale_codec::{Codec, Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_runtime::FixedU128;
 
+/// A single bond contribution attached to a stored MIDDS record.
+///
+/// Mirrors the on-chain `pallet_midds::types::BondLayer` so consumers see
+/// the same per-payer accounting the pallet enforces internally. `amount`
+/// is the currently held balance (base + premium); `base` is the
+/// unmultiplied portion. Subsequent edits adjust both fields together —
+/// extensions of an existing layer add `delta_base` to both, never
+/// re-banking premium at the new multipliers.
+#[derive(Encode, Decode, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BondLayerOf<AccountId, Balance> {
+    /// Account whose balance backs this layer.
+    pub payer: AccountId,
+    /// Currently held amount (`base + premium` with `M < 1` cases capped to
+    /// the held amount).
+    pub amount: Balance,
+    /// Unmultiplied base portion this layer covers.
+    pub base: Balance,
+}
+
 /// Bond information attached to a stored MIDDS record.
 ///
-/// Replaces the original tuple shape (`(AccountId, Balance, Balance, bool)`)
-/// with named fields. The struct is the wire shape: changing it is a
-/// breaking SCALE change for every consumer that decodes it (RPC clients,
-/// indexers), but the named fields make the contract self-documenting and
-/// the layout extends-friendly via deliberate `enum`-based versioning.
+/// Two-layer accounting backing the **web3 escape hatch**: the
+/// `sponsor_layer` is always present (it represents the bond posted at
+/// deposit time, by the depositor for self-deposits or by the sponsor for
+/// `deposit_on_behalf`); the `owner_layer` is `Some` only when the owner
+/// has extended a sponsored record via plain `update` and contributed
+/// funds out of their own balance.
+///
+/// Each layer settles independently against its own `payer` on
+/// `remove_own` / finalize / `force_remove_*` (cf.
+/// `docs/economics.md`). Consumers should not assume `owner_layer.payer`
+/// equals `depositor` defensively — the pallet enforces that invariant
+/// but exposing the explicit pair keeps the wire shape unambiguous.
 #[derive(Encode, Decode, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DepositInfoOf<AccountId, Balance> {
     /// Account that owns the record (attribution holder). Allowed to
-    /// `update` / `remove_own` while the commitment window is open. Equal to
-    /// `bond_payer` for self-deposits; differs after `deposit_on_behalf`,
-    /// where the operator paid on behalf of this owner.
+    /// `update` / `remove_own` while the commitment window is open.
     pub depositor: AccountId,
-    /// Account whose balance posted the bond. All refunds (`remove_own`,
-    /// `force_remove_refund`) and the post-finalization Treasury flow target
-    /// this account, not `depositor`.
-    pub bond_payer: AccountId,
-    /// Currently held amount = base bond × `M_fast(t0)` × `M_slow(t0)` where
-    /// `t0` is the deposit block. Re-pricing on `update` adjusts the base
-    /// portion only — the multiplier premium captured at deposit time is
-    /// preserved (cf. `docs/economics.md` §5.5).
-    pub amount: Balance,
-    /// Unmultiplied base bond (`DepositBase + DepositPerByte * size`) at
-    /// deposit time. This is what `remove_own` refunds; the difference with
-    /// `amount` is the multiplier premium that flows to the Treasury.
-    pub base_bond: Balance,
-    /// Whether the bond has already been moved to the Treasury at the end of
-    /// the commitment window. Once `true` the record is permanent —
+    /// Initial bond layer posted at deposit. `payer == depositor` for
+    /// self-deposits; differs after `deposit_on_behalf`.
+    pub sponsor_layer: BondLayerOf<AccountId, Balance>,
+    /// Owner-side bond layer. Materializes the first time the depositor
+    /// extends a sponsored record via plain `update`; `None` for
+    /// self-deposits and for sponsored records the owner has not touched
+    /// in solo.
+    pub owner_layer: Option<BondLayerOf<AccountId, Balance>>,
+    /// Whether the bond has already been moved to the Treasury at the end
+    /// of the commitment window. Once `true` the record is permanent —
     /// `remove_own` becomes a no-op and only `force_remove_*` can act.
     pub finalized: bool,
 }

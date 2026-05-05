@@ -308,8 +308,13 @@ pub mod pallet {
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config<I>, I: 'static = ()> {
         /// A new MIDDS record was deposited. `depositor` is the attribution
-        /// owner; `bond_payer` is who actually posted the bond. They differ
-        /// after [`Pallet::deposit_on_behalf`] (sponsored deposit).
+        /// owner; `bond_payer` is who actually posted the bond (= original
+        /// sponsor). They differ after [`Pallet::deposit_on_behalf`].
+        ///
+        /// Only the `sponsor_layer` is populated at this point; the optional
+        /// `owner_layer` may appear later if the owner extends a sponsored
+        /// record via plain `update` (cf. the web3 escape hatch in
+        /// `docs/economics.md`).
         Deposited {
             id: MiddsId,
             depositor: T::AccountId,
@@ -317,43 +322,48 @@ pub mod pallet {
             bond: BalanceOf<T, I>,
             base_bond: BalanceOf<T, I>,
         },
-        /// A MIDDS record was updated by its depositor (or by `force_edit`),
-        /// or via [`Pallet::update_on_behalf`]. `bond_payer` is the account
-        /// against which the bond delta was held / released.
+        /// A MIDDS record was updated by its depositor (`update`), by the
+        /// original sponsor (`update_on_behalf`), or by `force_edit`. The
+        /// per-layer holds after the edit are surfaced so off-chain
+        /// consumers can reflect the stratified bond without re-querying
+        /// `DepositInfo`.
         Updated {
             id: MiddsId,
-            bond_payer: T::AccountId,
-            new_bond: BalanceOf<T, I>,
+            sponsor_bond: BalanceOf<T, I>,
+            owner_bond: BalanceOf<T, I>,
         },
         /// A MIDDS record was edited by `ForceOrigin`.
         ForceEdited { id: MiddsId },
-        /// The depositor refunded their record within the commitment window.
-        /// `refund` (the unmultiplied base bond) is returned to `bond_payer`;
-        /// `premium_to_treasury` is the multiplier surplus permanently
-        /// transferred to the Treasury (taken from `bond_payer`'s hold).
+        /// The owner cancelled within the commitment window. Each layer's
+        /// `base` returns to its payer (`sponsor_refund` to the original
+        /// sponsor, `owner_refund` to the depositor when an owner layer
+        /// existed) and `premium_to_treasury` is the aggregated multiplier
+        /// surplus permanently transferred to the Treasury (taken from each
+        /// layer's hold respectively).
         Refunded {
             id: MiddsId,
             depositor: T::AccountId,
-            bond_payer: T::AccountId,
-            refund: BalanceOf<T, I>,
+            sponsor: T::AccountId,
+            sponsor_refund: BalanceOf<T, I>,
+            owner_refund: BalanceOf<T, I>,
             premium_to_treasury: BalanceOf<T, I>,
         },
-        /// A MIDDS record's bond was finalized: the full held amount moved
-        /// from `bond_payer`'s hold to the Treasury and the record became
-        /// permanent.
+        /// A MIDDS record's bond was finalized: every layer's full hold moved
+        /// to the Treasury and the record became permanent.
         Finalized {
             id: MiddsId,
             depositor: T::AccountId,
-            bond_payer: T::AccountId,
+            sponsor: T::AccountId,
             amount_to_treasury: BalanceOf<T, I>,
         },
         /// A MIDDS record was removed by `ForceOrigin` with the bond fully
-        /// refunded to `bond_payer` (good-faith typo path).
+        /// refunded to each layer's payer (good-faith typo path).
         ForceRemovedRefund {
             id: MiddsId,
             depositor: T::AccountId,
-            bond_payer: T::AccountId,
-            refund: BalanceOf<T, I>,
+            sponsor: T::AccountId,
+            sponsor_refund: BalanceOf<T, I>,
+            owner_refund: BalanceOf<T, I>,
         },
         /// A MIDDS record was removed by `ForceOrigin` without refund. If the
         /// bond was still held at the time, it was sent to the Treasury;
@@ -361,7 +371,7 @@ pub mod pallet {
         ForceRemovedSlash {
             id: MiddsId,
             depositor: T::AccountId,
-            bond_payer: T::AccountId,
+            sponsor: T::AccountId,
             amount_to_treasury: BalanceOf<T, I>,
         },
     }
@@ -402,12 +412,9 @@ pub mod pallet {
         InvalidSignature,
         /// Provided nonce does not match `OnBehalfNonce[owner]`.
         InvalidNonce,
-        /// Plain `update` was called on a sponsored record (where `depositor
-        /// != bond_payer`). Use [`Pallet::update_on_behalf`] instead so the
-        /// sponsor co-authorizes the bond delta.
-        SponsoredUpdateRequired,
-        /// `update_on_behalf` caller is not the original `bond_payer`. Only
-        /// the deposit-time sponsor may extend their own bond exposure.
+        /// `update_on_behalf` caller is not the original sponsor (=
+        /// `sponsor_layer.payer`). Only the deposit-time sponsor may extend
+        /// their own layer.
         WrongSponsor,
     }
 
@@ -505,15 +512,23 @@ pub mod pallet {
 
         /// Update an existing MIDDS record. Only the original depositor may
         /// call this, and only while still inside the commitment window. The
-        /// canonical identifier is immutable; the multiplier premium banked
-        /// at deposit time is preserved (cf. `docs/economics.md` §5.5) — only
-        /// the unmultiplied base portion is re-priced against the new size.
+        /// canonical identifier is immutable.
         ///
-        /// **Sponsored records** (`depositor != bond_payer`, after a
-        /// `deposit_on_behalf`) cannot be updated through this path: the
-        /// owner cannot unilaterally consume more of the sponsor's balance.
-        /// Use [`Pallet::update_on_behalf`] instead — the sponsor co-signs
-        /// the bond delta by being the on-chain caller.
+        /// **Self-deposit** (`depositor == sponsor_layer.payer`): the
+        /// resulting base delta extends the sponsor layer (no new premium
+        /// banked, premium is sticky to deposit time per `docs/economics.md`
+        /// §5.5).
+        ///
+        /// **Sponsored record** (`depositor != sponsor_layer.payer`): the
+        /// caller pays the delta out of their own balance — the **web3
+        /// escape hatch**. On grow, the delta materializes the
+        /// `owner_layer` (creating it on the first solo update with the
+        /// current multipliers banking a fresh premium) so the owner
+        /// extends their record without depending on the sponsor's balance.
+        /// On shrink, the released amount drains the owner layer first
+        /// (LIFO), overflowing into the sponsor layer if the shrink exceeds
+        /// the owner's contribution — fair, since a smaller payload no
+        /// longer requires the sponsor's full bond.
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::update(item.encoded_size() as u32))]
         pub fn update(origin: OriginFor<T>, id: MiddsId, item: T::Midds) -> DispatchResult {
@@ -523,32 +538,34 @@ pub mod pallet {
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             ensure!(info.depositor == caller, Error::<T, I>::NotProvider);
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
-            // Sponsored record: bond_payer != depositor. The plain `update`
-            // path is reserved for self-deposits where the caller controls
-            // both the attribution slot and the bond.
-            ensure!(
-                info.bond_payer == info.depositor,
-                Error::<T, I>::SponsoredUpdateRequired
-            );
             Self::ensure_identifier_unchanged(id, &item)?;
             Self::ensure_in_window(&info)?;
 
-            let bond_payer = info.bond_payer.clone();
-            let new_bond = Self::apply_edit(id, item, info)?;
+            Self::apply_edit(id, item, info, &caller)?;
+            let updated = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             Self::deposit_event(Event::Updated {
                 id,
-                bond_payer,
-                new_bond,
+                sponsor_bond: updated.sponsor_layer.amount,
+                owner_bond: updated
+                    .owner_layer
+                    .as_ref()
+                    .map(|l| l.amount)
+                    .unwrap_or_else(Zero::zero),
             });
             Ok(())
         }
 
         /// Sponsored update. The original sponsor (= caller) extends their
-        /// bond exposure on the owner's behalf. The owner authorizes the new
+        /// own layer on the owner's behalf. The owner authorizes the new
         /// payload off-chain via a signed [`UpdateOnBehalfPayload`]. The
-        /// caller **must** match the record's `bond_payer` — only the
-        /// deposit-time sponsor may grow their own hold. To switch sponsor,
-        /// the owner must `remove_own` and re-deposit through a new sponsor.
+        /// caller **must** match the record's `sponsor_layer.payer` — only
+        /// the deposit-time sponsor may grow their own hold; to switch
+        /// sponsor, the owner must `remove_own` and re-deposit.
+        ///
+        /// Co-exists with the owner-driven escape hatch: a sponsored record
+        /// the owner has already extended via plain `update` (i.e.
+        /// `owner_layer = Some(_)`) can still receive sponsor-driven
+        /// extensions through this path — each layer grows independently.
         #[pallet::call_index(9)]
         #[pallet::weight(T::WeightInfo::update_on_behalf(item.encoded_size() as u32))]
         pub fn update_on_behalf(
@@ -563,7 +580,10 @@ pub mod pallet {
 
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
-            ensure!(info.bond_payer == operator, Error::<T, I>::WrongSponsor);
+            ensure!(
+                info.sponsor_layer.payer == operator,
+                Error::<T, I>::WrongSponsor
+            );
             Self::ensure_identifier_unchanged(id, &item)?;
             Self::ensure_in_window(&info)?;
 
@@ -582,27 +602,31 @@ pub mod pallet {
 
             OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
 
-            let bond_payer = info.bond_payer.clone();
-            let new_bond = Self::apply_edit(id, item, info)?;
+            Self::apply_edit(id, item, info, &operator)?;
+            let updated = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             Self::deposit_event(Event::Updated {
                 id,
-                bond_payer,
-                new_bond,
+                sponsor_bond: updated.sponsor_layer.amount,
+                owner_bond: updated
+                    .owner_layer
+                    .as_ref()
+                    .map(|l| l.amount)
+                    .unwrap_or_else(Zero::zero),
             });
             Ok(())
         }
 
-        /// Cancel an own deposit while the commitment window is open. The
-        /// unmultiplied base bond is refunded to the **bond payer** (= the
-        /// original sponsor for on-behalf deposits, the depositor otherwise);
-        /// the multiplier premium is permanently transferred to the Treasury,
-        /// which removes the burst-arbitrage opportunity (cf.
-        /// `docs/economics.md` §5.5).
+        /// Cancel an own deposit while the commitment window is open. Each
+        /// layer's unmultiplied base returns to its payer (sponsor and
+        /// owner separately); each layer's multiplier premium is
+        /// permanently transferred to the Treasury, which removes the
+        /// burst-arbitrage opportunity (cf. `docs/economics.md` §5.5) — and
+        /// keeps the sponsor and the owner financially insulated.
         ///
         /// Authority sits with `depositor` (the attribution owner). On a
-        /// sponsored record, the owner can still cancel and the funds go
-        /// back to the sponsor — that is the financial risk the sponsor
-        /// accepted at `deposit_on_behalf` time.
+        /// sponsored record, the owner can still cancel and the sponsor's
+        /// base goes back to the sponsor — that is the financial risk the
+        /// sponsor accepted at `deposit_on_behalf` time.
         #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::remove_own())]
         pub fn remove_own(origin: OriginFor<T>, id: MiddsId) -> DispatchResult {
@@ -614,17 +638,24 @@ pub mod pallet {
 
             Self::ensure_in_window(&info)?;
 
-            // Bond payer keeps `base_bond`, Treasury receives the multiplier premium.
-            let premium = info.amount.saturating_sub(info.base_bond);
-            Self::settle_bond(&info, premium)?;
+            let sponsor_refund = info.sponsor_layer.base;
+            let owner_refund = info
+                .owner_layer
+                .as_ref()
+                .map(|l| l.base)
+                .unwrap_or_else(Zero::zero);
+            let premium_to_treasury = Self::total_premium(&info);
+
+            Self::settle_bond(&info, crate::types::SettlementKind::PremiumOnly)?;
             Self::cleanup_storage(id, &info)?;
 
             Self::deposit_event(Event::Refunded {
                 id,
                 depositor: info.depositor,
-                bond_payer: info.bond_payer,
-                refund: info.base_bond,
-                premium_to_treasury: premium,
+                sponsor: info.sponsor_layer.payer,
+                sponsor_refund,
+                owner_refund,
+                premium_to_treasury,
             });
             Ok(())
         }
@@ -649,9 +680,11 @@ pub mod pallet {
             Self::do_finalize(id)
         }
 
-        /// `ForceOrigin` edit, bypassing the commitment window. Bond delta is
-        /// taken from / refunded to the original depositor; the deposit-time
-        /// multiplier premium is preserved.
+        /// `ForceOrigin` edit, bypassing the commitment window. The bond
+        /// delta is taken from / refunded to the **original sponsor** —
+        /// governance edits are routed through the sponsor layer, never
+        /// conjure an owner layer out of an admin intervention. The
+        /// deposit-time multiplier premium is preserved.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::force_edit(item.encoded_size() as u32))]
         pub fn force_edit(origin: OriginFor<T>, id: MiddsId, item: T::Midds) -> DispatchResult {
@@ -662,7 +695,8 @@ pub mod pallet {
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
             Self::ensure_identifier_unchanged(id, &item)?;
 
-            Self::apply_edit(id, item, info)?;
+            let sponsor = info.sponsor_layer.payer.clone();
+            Self::apply_edit(id, item, info, &sponsor)?;
             Self::deposit_event(Event::ForceEdited { id });
             Ok(())
         }

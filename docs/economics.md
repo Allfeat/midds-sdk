@@ -199,14 +199,54 @@ Aligné sur le rythme métier de l'industrie musicale :
 
 ### 5.5 Refund et multiplicateur
 
-Le refund pendant la fenêtre (`remove_own`) rend **100 % du bond locké**,
-y compris la prime de multiplicateur. **Mais** le delta multiplicateur
-(au-delà du base bond) est conservé pour transfert vers la Treasury à la
+Le refund pendant la fenêtre (`remove_own`) rend la **base de chaque
+couche** à son payeur respectif. La prime de multiplicateur (au-delà du
+base bond) banked dans chaque couche est transférée vers la Treasury à la
 finalisation, même si l'item est ensuite refundé.
 
 Justification : empêcher l'arbitrage *deposit-burst-cher → remove → re-deposit-creux*. Sans cette règle, un user attendrait que `M_slow` baisse et resoumettrait à moindre coût en récupérant l'intégralité de son bond initial. Avec cette règle, la prime payée pour bursté reste perdue même après refund — ce qui aligne l'incentive sur "ne pas burst en premier lieu".
 
-Implémentation : `remove_own` rend `MiddsBondBase + MiddsBondPerByte × size`. Le delta `(M_fast × M_slow − 1) × base` est transféré à la Treasury immédiatement.
+Implémentation : `remove_own` rend `sponsor.base` au sponsor + `owner.base` au depositor (le cas échéant). Le delta `(M_fast × M_slow − 1) × base` capté par chaque couche est transféré à la Treasury immédiatement, **par couche** — ainsi un sponsor et un depositor qui ont posté chacun leur part ne se partagent pas mutuellement la pénalité de burst.
+
+### 5.6 Bond stratifié et escape hatch web3
+
+Un MIDDS porte deux couches de bond, indépendantes :
+
+- **`sponsor_layer`** (toujours présente) — la base + prime payée au
+  `deposit` initial. Sur un self-deposit, le payeur est le depositor ; sur
+  un `deposit_on_behalf`, c'est l'opérateur sponsor.
+- **`owner_layer`** (`Option`) — apparaît uniquement quand le **depositor
+  d'un record sponsorisé** étend la donnée via `update` plain. À cette
+  occasion, le depositor paie le `Δbase × M_courant` sur ses propres fonds
+  ; sa couche bank sa propre prime.
+
+Cette stratification implémente l'**escape hatch web3** : un artiste
+onboardé via une plateforme SaaS (sponsor) peut à tout moment reprendre la
+main sur sa donnée sans dépendre de la balance du sponsor. La règle :
+
+- `update` (caller = depositor) sur record sponsorisé → la couche cible
+  est `owner_layer` (créée à la première extension solo, étendue ensuite
+  sans nouvelle prime).
+- `update_on_behalf` (caller = sponsor) → la couche cible est
+  `sponsor_layer`. Compatible avec l'existence d'une `owner_layer` —
+  sponsor et owner co-existent (Q2.b).
+- Sur un shrink où le `Δbase` à libérer dépasse la couche du caller, la
+  réduction overflow LIFO sur l'autre couche, qui se voit alors refundée.
+
+Sur `remove_own` / `force_remove_refund`, chaque couche se réconcilie
+indépendamment avec son `payer` ; sur `finalize` / `force_remove_slash`,
+chaque couche transfère son montant complet à la Treasury. La séparation
+financière est intégrale : aucun fonds d'une couche ne paie pour la
+pénalité de l'autre.
+
+Préservation de prime per-layer : sur `update`, la base d'une couche
+existante évolue par la formule `new_amount = new_base + max(0,
+old_amount − old_base)`. La prime banked à la création est sticky et ne
+se re-prix pas au multiplicateur courant (anti-arbitrage §5.5). Une couche
+créée sous `M < 1` (cas dégénéré, multiplicateurs au plancher) est
+sous-payée à la création — son extension ultérieure rebase la couche au
+nouveau total base, ce qui peut faire grossir le hold ; ce comportement
+miroite la pré-stratification.
 
 ---
 
@@ -260,13 +300,15 @@ parameter_types! {
 
 | Extrinsic | Origin | Effet | Refund | Sudo |
 |---|---|---|---|---|
-| `deposit(item)` | `ProviderOrigin` (signed) | HOLD bond, insert MIDDS, queue finalisation | — | — |
-| `update(id, item)` | depositor, ≤ 7j | Update payload, recalc hold, identifier immuable | — | — |
-| `remove_own(id)` | depositor, ≤ 7j | Refund base bond, delta vers Treasury | ✅ partiel | — |
-| `finalize(id)` | n'importe qui, > 7j | Release HOLD vers Treasury | — | — |
-| `force_edit(id, item)` | sudo | Update sans contrainte fenêtre, économie inchangée | — | ✅ |
-| `force_remove_refund(id)` | sudo, ≤ 7j | Cleanup + refund total (typo bonne foi) | ✅ total | ✅ |
-| `force_remove_slash(id)` | sudo | Cleanup, pas de refund (abus signalé) | ❌ | ✅ |
+| `deposit(item)` | `ProviderOrigin` (signed) | HOLD bond sur `sponsor_layer` (= depositor), insert MIDDS, queue finalisation | — | — |
+| `deposit_on_behalf(owner, item, nonce, sig)` | `ProviderOrigin` (operator) + signature owner | HOLD bond sur `sponsor_layer` (= operator), attribution = owner | — | — |
+| `update(id, item)` | depositor, ≤ 7j | Sur self-deposit : étend `sponsor_layer`. Sur record sponsorisé : étend ou crée `owner_layer` (escape hatch web3) | — | — |
+| `update_on_behalf(id, item, nonce, sig)` | original sponsor + signature owner, ≤ 7j | Étend `sponsor_layer`. Co-existe avec une `owner_layer` déjà créée | — | — |
+| `remove_own(id)` | depositor, ≤ 7j | Refund base de chaque couche à son payeur, primes vers Treasury | ✅ partiel | — |
+| `finalize(id)` | n'importe qui, > 7j | Release HOLD de chaque couche vers Treasury | — | — |
+| `force_edit(id, item)` | sudo | Update via `sponsor_layer` (governance ne crée jamais d'`owner_layer`) | — | ✅ |
+| `force_remove_refund(id)` | sudo, ≤ 7j | Cleanup + refund total à chaque payeur (typo bonne foi) | ✅ total | ✅ |
+| `force_remove_slash(id)` | sudo | Cleanup, holds de chaque couche → Treasury (abus signalé) | ❌ | ✅ |
 | `force_remove_many(Vec<id>)` | sudo | Batch cleanup, weight linéaire | dépend du flag | ✅ |
 
 ### 7.1 Hooks runtime

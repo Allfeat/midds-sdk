@@ -1383,6 +1383,33 @@ fn deposit_on_behalf_rejects_replay() {
     });
 }
 
+/// At `OnBehalfNonce[owner] == u64::MAX` the next bump must surface
+/// `NonceOverflow` rather than silently saturating — otherwise the same
+/// `nonce = u64::MAX` signature would remain accepted forever (replay).
+#[test]
+fn deposit_on_behalf_rejects_nonce_overflow() {
+    new_test_ext().execute_with(|| {
+        // Pin the on-chain counter at the boundary.
+        pallet_midds::OnBehalfNonce::<Test, Instance>::insert(ALICE, u64::MAX);
+
+        let item = mock_midds(b"maxnonce", 5);
+        let payload = deposit_payload(&item, BOB, u64::MAX, FAR_FUTURE);
+        let sig = sign(ALICE, &payload);
+
+        assert_noop!(
+            Midds::deposit_on_behalf(
+                RuntimeOrigin::signed(BOB),
+                ALICE,
+                item,
+                u64::MAX,
+                FAR_FUTURE,
+                sig
+            ),
+            pallet_midds::Error::<Test, Instance>::NonceOverflow
+        );
+    });
+}
+
 /// A signature whose `valid_until` has elapsed must be rejected with
 /// `SignatureExpired` — even if the nonce still matches. The owner
 /// pinned a freshness window and the chain enforces it.

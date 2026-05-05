@@ -436,6 +436,12 @@ pub mod pallet {
         /// admissible. Reuse requires a fresh signature with a new
         /// `valid_until`.
         SignatureExpired,
+        /// Bumping `OnBehalfNonce[owner]` would overflow `u64`. With a
+        /// `saturating_add` the counter would freeze at `u64::MAX` and
+        /// the same signature could be replayed indefinitely; this error
+        /// surfaces the boundary explicitly. Unreachable in practice
+        /// (`u64::MAX` signatures per owner) but cheap to guard against.
+        NonceOverflow,
         /// `update_on_behalf` caller is not the original sponsor (=
         /// `sponsor_layer.payer`). Only the deposit-time sponsor may extend
         /// their own layer.
@@ -556,7 +562,8 @@ pub mod pallet {
 
             // Bump nonce *before* the heavy state mutations so a partial
             // failure later on still consumes this signature (no replay).
-            OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
+            let next_nonce = current_nonce.checked_add(1).ok_or(Error::<T, I>::NonceOverflow)?;
+            OnBehalfNonce::<T, I>::insert(&owner, next_nonce);
 
             Self::do_deposit(owner, operator, item)
         }
@@ -647,7 +654,8 @@ pub mod pallet {
             };
             Self::verify_owner_signature(&payload.encode(), &signature, &owner)?;
 
-            OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
+            let next_nonce = current_nonce.checked_add(1).ok_or(Error::<T, I>::NonceOverflow)?;
+            OnBehalfNonce::<T, I>::insert(&owner, next_nonce);
 
             let updated = Self::apply_edit(id, item, info, &operator)?;
             Self::emit_updated_event(id, &updated);
@@ -808,7 +816,8 @@ pub mod pallet {
 
             // Bump nonce *before* the heavy state mutations so a partial
             // failure later on still consumes this signature (no replay).
-            OnBehalfNonce::<T, I>::insert(&owner, current_nonce.saturating_add(1));
+            let next_nonce = current_nonce.checked_add(1).ok_or(Error::<T, I>::NonceOverflow)?;
+            OnBehalfNonce::<T, I>::insert(&owner, next_nonce);
 
             Self::do_remove_own(id, info)
         }

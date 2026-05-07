@@ -11,11 +11,15 @@ use scale_info::TypeInfo;
 macro_rules! define_languages {
     ($($variant:ident = $code:literal),* $(,)?) => {
         /// ISO 639-1 alpha-2 language code.
+        ///
+        /// JSON shape: lowercase string matching the ISO 639-1 code (e.g.
+        /// `Language::En` ↔ `"en"`), aligned with [`Language::as_code`].
         #[derive(
             Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen,
             Clone, Copy, PartialEq, Eq, Debug,
         )]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
         pub enum Language {
             $($variant,)*
         }

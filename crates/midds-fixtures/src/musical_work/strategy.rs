@@ -84,8 +84,10 @@ pub fn arb_title() -> impl Strategy<Value = Title> {
 /// Strategy producing non-empty off-chain extension hashes.
 pub fn arb_offchain_hash() -> impl Strategy<Value = OffchainHash> {
     // Cap at 64 — the on-chain bound. Lower bound 1 — `validate_offchain_hash`
-    // rejects empty.
-    proptest::collection::vec(any::<u8>(), 1..=64usize)
+    // rejects empty. Restrict to printable ASCII because the field is by
+    // convention a CIDv1 multibase string (see `OffchainHash` doc), which the
+    // off-chain JSON wire format relies on for round-tripping as a string.
+    proptest::collection::vec(printable_ascii(), 1..=64usize)
         .prop_map(|bytes| BoundedVec::try_from(bytes).expect("offchain hash within bound"))
 }
 
@@ -264,7 +266,7 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
         proptest::collection::vec(any::<[u8; 15]>(), CREATORS_MAX as usize),
         proptest::collection::vec(printable_ascii(), OPUS_MAX_LEN as usize),
         proptest::collection::vec(printable_ascii(), CATALOG_NUMBER_MAX_LEN as usize),
-        proptest::collection::vec(any::<u8>(), 64usize),
+        proptest::collection::vec(printable_ascii(), 64usize),
         proptest::collection::vec(0u32..1_000_000_000u32, WORK_REFERENCES_MAX as usize),
     )
         .prop_map(

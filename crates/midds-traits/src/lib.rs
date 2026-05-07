@@ -5,6 +5,8 @@ use parity_scale_codec::MaxEncodedLen;
 
 pub mod error;
 pub mod identifier;
+#[cfg(feature = "serde")]
+pub mod serde_helpers;
 
 pub use error::MiddsFormatError;
 pub use identifier::*;

@@ -103,11 +103,25 @@ pub enum WorkType {
     /// Standalone work — no source reference.
     Original,
     /// Several source works performed back-to-back.
-    Medley(WorkReferences),
+    Medley(
+        #[cfg_attr(
+            feature = "serde",
+            serde(with = "midds_traits::serde_helpers::ascii_vec")
+        )]
+        WorkReferences,
+    ),
     /// Several source works combined into a single new work.
-    Mashup(WorkReferences),
+    Mashup(
+        #[cfg_attr(
+            feature = "serde",
+            serde(with = "midds_traits::serde_helpers::ascii_vec")
+        )]
+        WorkReferences,
+    ),
     /// Derivative work based on exactly one source.
-    Adaptation(Iswc),
+    Adaptation(
+        #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Iswc,
+    ),
 }
 
 /// Role attributed to a creator within a work.
@@ -138,8 +152,8 @@ pub enum CreatorRole {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CreatorId {
-    Ipi(Ipi),
-    Isni(Isni),
+    Ipi(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipi),
+    Isni(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Isni),
 }
 
 impl CreatorId {
@@ -175,7 +189,15 @@ impl Creator {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClassicalInfo {
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "midds_traits::serde_helpers::ascii_opt")
+    )]
     pub opus: Option<Opus>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "midds_traits::serde_helpers::ascii_opt")
+    )]
     pub catalog_number: Option<CatalogNumber>,
     pub number_of_voices: Option<u16>,
 }
@@ -202,7 +224,9 @@ impl ClassicalInfo {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MusicalWorkV1 {
+    #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub iswc: Iswc,
+    #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub title: Title,
     pub creation_year: u16,
     pub instrumental: bool,
@@ -212,6 +236,10 @@ pub struct MusicalWorkV1 {
     pub work_type: WorkType,
     pub creators: Creators,
     pub classical_info: Option<ClassicalInfo>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "midds_traits::serde_helpers::ascii_opt")
+    )]
     pub offchain_extension: Option<OffchainHash>,
 }
 

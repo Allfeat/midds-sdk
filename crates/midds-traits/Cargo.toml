@@ -27,5 +27,6 @@ std = [
 ]
 serde = [
     "dep:serde",
+    "bounded-collections/serde",
     "scale-info/serde",
 ]

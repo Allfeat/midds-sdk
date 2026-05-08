@@ -33,6 +33,7 @@ std = [
 ]
 serde = [
     "dep:serde",
+    "bounded-collections/serde",
     "midds-traits/serde",
     "scale-info/serde",
 ]

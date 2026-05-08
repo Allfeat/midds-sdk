@@ -1,4 +1,4 @@
-use frame_support::{BoundedVec, traits::ConstU32};
+use bounded_collections::{BoundedVec, ConstU32};
 
 use crate::error::MiddsFormatError;
 

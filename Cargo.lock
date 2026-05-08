@@ -3089,7 +3089,7 @@ dependencies = [
 name = "midds-traits"
 version = "0.1.0"
 dependencies = [
- "frame-support",
+ "bounded-collections",
  "parity-scale-codec",
  "scale-info",
  "serde",
@@ -3099,7 +3099,7 @@ dependencies = [
 name = "midds-types"
 version = "0.1.0"
 dependencies = [
- "frame-support",
+ "bounded-collections",
  "midds-fixtures",
  "midds-traits",
  "parity-scale-codec",

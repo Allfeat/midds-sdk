@@ -21,7 +21,7 @@
 
 use std::{fs, path::PathBuf};
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::Midds as _;
 use midds_types::{
     ClassicalInfo, Creator, CreatorId, CreatorRole, Language, Mode, MusicalKey, MusicalWork,

@@ -9,7 +9,10 @@ homepage.workspace = true
 description = "Core traits and identifier types for Allfeat MIDDS."
 
 [dependencies]
-frame-support = { workspace = true }
+# `bounded-collections` instead of `frame-support` — same `BoundedVec` /
+# `ConstU32` types (frame-support just re-exports them) but without the
+# `sp-io → secp256k1` chain that breaks browser WASM consumers.
+bounded-collections = { workspace = true }
 parity-scale-codec = { workspace = true }
 scale-info = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -17,7 +20,7 @@ serde = { workspace = true, optional = true }
 [features]
 default = ["std"]
 std = [
-    "frame-support/std",
+    "bounded-collections/std",
     "parity-scale-codec/std",
     "scale-info/std",
     "serde?/std",

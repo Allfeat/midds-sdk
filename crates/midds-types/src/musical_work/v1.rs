@@ -1,4 +1,4 @@
-use frame_support::{BoundedVec, traits::ConstU32};
+use bounded_collections::{BoundedVec, ConstU32};
 use midds_traits::{
     Ipi, Isni, Iswc, MiddsFormatError, MiddsString, OffchainHash, validate_ipi_format,
     validate_isni_format, validate_iswc_format, validate_offchain_hash,

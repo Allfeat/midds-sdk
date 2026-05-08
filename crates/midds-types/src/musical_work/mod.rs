@@ -48,7 +48,7 @@ impl Midds for MusicalWork {
 mod tests {
     use super::*;
     use crate::language::Language;
-    use frame_support::BoundedVec;
+    use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
         BoundedVec::try_from(s.to_vec()).expect("bounded vec build")
@@ -274,7 +274,7 @@ mod json_tests {
 
     use super::*;
     use crate::language::Language;
-    use frame_support::BoundedVec;
+    use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
         BoundedVec::try_from(s.to_vec()).expect("bounded vec build")

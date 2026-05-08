@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frame_support::Parameter;
-use parity_scale_codec::MaxEncodedLen;
+use parity_scale_codec::{Codec, EncodeLike, MaxEncodedLen};
+use scale_info::TypeInfo;
 
 pub mod error;
 pub mod identifier;
@@ -13,6 +13,19 @@ pub use identifier::*;
 
 /// Per-instance unique on-chain identifier of a MIDDS record.
 pub type MiddsId = u64;
+
+/// Local mirror of `frame_support::Parameter`. Defined here so this crate stays
+/// `frame-support`-free (and therefore `sp-io`-free) — that's what lets browser
+/// WASM consumers depend on `midds-traits` / `midds-types` without dragging in
+/// `secp256k1`'s unresolved `env` imports. The bounds match `frame_support`'s
+/// version exactly, and both definitions ship a blanket impl, so any concrete
+/// type satisfying one also satisfies the other — `pallet-midds` keeps working
+/// against `frame_support::Parameter` unchanged.
+pub trait Parameter: Codec + EncodeLike + Clone + Eq + core::fmt::Debug + TypeInfo + 'static {}
+impl<T> Parameter for T where
+    T: Codec + EncodeLike + Clone + Eq + core::fmt::Debug + TypeInfo + 'static
+{
+}
 
 /// Common interface implemented by every MIDDS payload type.
 ///

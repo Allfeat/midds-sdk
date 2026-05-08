@@ -46,8 +46,12 @@ sp-blockchain = { version = "44.0.0", default-features = false }
 pallet-balances = { version = "47.0.0", default-features = false }
 
 # Substrate codec / scale
-parity-scale-codec = { version = "3.7.4", default-features = false, features = ["derive"] }
+parity-scale-codec = { version = "3.7.4", default-features = false, features = ["derive", "max-encoded-len"] }
 scale-info = { version = "2.11.6", default-features = false, features = ["derive"] }
+# Bounded containers — pulled directly to keep `midds-traits` / `midds-types`
+# free of the `frame-support → sp-io → secp256k1` chain that breaks browser
+# WASM with unresolved `env` imports.
+bounded-collections = { version = "0.3.2", default-features = false, features = ["scale-codec"] }
 
 # Client (std)
 jsonrpsee = { version = "0.24.3", features = ["server", "macros"] }

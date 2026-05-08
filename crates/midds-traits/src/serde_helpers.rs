@@ -17,7 +17,7 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use frame_support::{BoundedVec, traits::ConstU32};
+use bounded_collections::{BoundedVec, ConstU32};
 use serde::{Deserialize, Deserializer, Serializer, ser::SerializeSeq};
 
 /// `MiddsString<N>` ↔ JSON string.

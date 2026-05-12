@@ -354,11 +354,18 @@ pub mod pallet {
         /// A MIDDS record was edited by `ForceOrigin`.
         ForceEdited { id: MiddsId },
         /// The owner cancelled within the commitment window. Each layer's
-        /// `base` returns to its payer (`sponsor_refund` to the original
-        /// sponsor, `owner_refund` to the depositor when an owner layer
-        /// existed) and `premium_to_treasury` is the aggregated multiplier
-        /// surplus permanently transferred to the Treasury (taken from each
-        /// layer's hold respectively).
+        /// net refund — `min(amount, base)` — returns to its payer
+        /// (`sponsor_refund` to the original sponsor, `owner_refund` to the
+        /// depositor when an owner layer existed). `premium_to_treasury` is
+        /// the aggregated multiplier surplus permanently transferred to the
+        /// Treasury (taken from each layer's hold respectively).
+        ///
+        /// The `min(amount, base)` framing — rather than raw `base` — matters
+        /// when a layer was banked under `M < 1` (multipliers at their floor):
+        /// the held `amount` was below `base`, no premium was ever paid, and
+        /// only `amount` returns to the payer. Off-chain consumers should read
+        /// `sponsor_refund` / `owner_refund` directly as the per-layer balance
+        /// movement, without re-clamping against locally-tracked state.
         Refunded {
             id: MiddsId,
             depositor: T::AccountId,

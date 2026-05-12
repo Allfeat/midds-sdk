@@ -631,13 +631,22 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     }
 
     /// Settle a within-window cancellation (shared by `remove_own` and
-    /// `remove_own_on_behalf`): refund each layer's base to its own payer,
-    /// transfer aggregated premium to the Treasury, wipe storage, emit
-    /// `Refunded`. Callers are responsible for the auth and pre-state
-    /// checks (depositor / signature / window / finalized).
+    /// `remove_own_on_behalf`): release each layer's hold, refund the net
+    /// `min(amount, base)` to its own payer, transfer aggregated premium to
+    /// the Treasury, wipe storage, emit `Refunded`. Callers are responsible
+    /// for the auth and pre-state checks (depositor / signature / window /
+    /// finalized).
+    ///
+    /// `sponsor_refund` / `owner_refund` in the emitted event report the
+    /// per-layer net released to each payer — `min(amount, base)` rather than
+    /// raw `base` — so consumers reading the event observe the same balance
+    /// movement as a chain `Balances` watcher. When deposit-time `M < 1` the
+    /// layer was banked below base (no premium) and the net equals `amount`;
+    /// otherwise base was paid in full and the net equals `base` (with the
+    /// premium routed to the Treasury via the field below).
     pub(crate) fn do_remove_own(id: MiddsId, info: DepositOf<T, I>) -> DispatchResult {
-        let sponsor_refund = info.sponsor_layer.base;
-        let owner_refund = Self::owner_base(&info);
+        let sponsor_refund = info.sponsor_layer.amount.min(info.sponsor_layer.base);
+        let owner_refund = Self::owner_amount(&info).min(Self::owner_base(&info));
         let premium_to_treasury = Self::total_premium(&info);
 
         Self::settle_bond(&info, SettlementKind::PremiumOnly)?;

@@ -437,6 +437,47 @@ fn remove_own_within_window_with_no_premium_is_full_refund() {
     });
 }
 
+/// Counterpart to [`remove_own_refunds_base_and_sends_premium_to_treasury`]:
+/// when the deposit-time multiplier sits *below* 1 the layer was banked at a
+/// discount (`amount < base`, no premium ever existed). `do_remove_own` must
+/// then emit `sponsor_refund = amount`, not raw `base` — otherwise the event
+/// overstates the on-chain balance movement by the `M < 1` discount and
+/// off-chain consumers crediting on the event value end up over-paying.
+#[test]
+fn remove_own_at_sub_unit_multiplier_refunds_amount_not_base() {
+    new_test_ext().execute_with(|| {
+        // Pin M_fast at the configured floor (mock = 0.1×).
+        let floor = <Test as pallet_midds::Config>::FastMultiplierMin::get();
+        pallet_midds::FastMultiplier::<Test, Instance>::put(floor);
+
+        let item = mock_midds(b"abc", 5);
+        let base = expected_base_bond_for(&item);
+        let total = expected_total_bond_for(&item);
+        assert!(total < base, "M < 1 should price the deposit under base");
+
+        let free_before = free(ALICE);
+        let treasury_before = treasury_balance();
+
+        assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item));
+        assert_ok!(Midds::remove_own(RuntimeOrigin::signed(ALICE), 0));
+
+        // ALICE paid `total`, got `total` back: net zero balance movement.
+        assert_eq!(held(ALICE), 0);
+        assert_eq!(free(ALICE), free_before);
+        // No premium ever existed → Treasury sees nothing.
+        assert_eq!(treasury_balance(), treasury_before);
+
+        System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
+            id: 0,
+            depositor: ALICE,
+            sponsor: ALICE,
+            sponsor_refund: total,
+            owner_refund: 0,
+            premium_to_treasury: 0,
+        }));
+    });
+}
+
 #[test]
 fn remove_own_only_by_depositor() {
     new_test_ext().execute_with(|| {

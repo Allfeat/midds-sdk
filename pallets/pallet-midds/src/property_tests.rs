@@ -14,9 +14,11 @@ use crate::mock::{test_helpers::*, *};
 use alloc::collections::BTreeMap;
 use frame_support::BoundedVec;
 use frame_support::assert_noop;
+use frame_support::traits::Get;
 use frame_support::traits::fungible::InspectHold;
 use midds_traits::{Midds as _, MiddsId};
 use proptest::prelude::*;
+use sp_runtime::FixedU128;
 
 extern crate alloc;
 
@@ -352,6 +354,56 @@ proptest! {
                     base_bond: info.sponsor_layer.base,
                 },
             ));
+            Ok(())
+        })?;
+    }
+
+    /// `Refunded.sponsor_refund` reports `min(amount, base)` and the per-event
+    /// accounting balances (`sponsor_refund + premium_to_treasury == amount
+    /// originally held`) across the full `M_fast` range — `M < 1`, `M = 1`,
+    /// `M > 1`. Pinned against the M < 1 regression where the event emitted
+    /// raw `base` and over-stated the on-chain balance movement.
+    #[test]
+    fn refunded_event_matches_net_movement_under_arbitrary_multiplier(
+        item in arb_mock_midds(),
+        m_num in 1u128..=20,
+        m_den in 1u128..=20,
+    ) {
+        new_test_ext().execute_with(|| -> Result<(), TestCaseError> {
+            let m_min = <Test as pallet_midds::Config>::FastMultiplierMin::get();
+            let m_max = <Test as pallet_midds::Config>::FastMultiplierMax::get();
+            let m = FixedU128::from_rational(m_num, m_den).max(m_min).min(m_max);
+            pallet_midds::FastMultiplier::<Test, Instance>::put(m);
+
+            Midds::deposit(RuntimeOrigin::signed(ALICE), item.clone())
+                .map_err(|e| TestCaseError::fail(format!("deposit failed: {e:?}")))?;
+
+            let info = pallet_midds::DepositInfo::<Test, Instance>::get(0)
+                .expect("deposit info present");
+            let amount = info.sponsor_layer.amount;
+            let base = info.sponsor_layer.base;
+
+            Midds::remove_own(RuntimeOrigin::signed(ALICE), 0)
+                .map_err(|e| TestCaseError::fail(format!("remove_own failed: {e:?}")))?;
+
+            let refunded = System::events().into_iter().rev().find_map(|er| {
+                if let RuntimeEvent::Midds(pallet_midds::Event::Refunded {
+                    sponsor_refund,
+                    premium_to_treasury,
+                    ..
+                }) = er.event
+                {
+                    Some((sponsor_refund, premium_to_treasury))
+                } else {
+                    None
+                }
+            });
+            let (refund, premium) = refunded
+                .ok_or_else(|| TestCaseError::fail("Refunded event not emitted"))?;
+
+            prop_assert_eq!(refund, amount.min(base));
+            prop_assert_eq!(premium, amount.saturating_sub(base));
+            prop_assert_eq!(refund.saturating_add(premium), amount);
             Ok(())
         })?;
     }

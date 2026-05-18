@@ -139,3 +139,4 @@ The cornerstone for all of the above is a planned `midds-fixtures` crate (propte
 - License: GPL-3.0.
 - The `serde` derive on MIDDS types is gated behind a feature, never unconditional.
 - Commits follow **Conventional Commits** (`feat:`, `fix:`, `chore:`, `BREAKING CHANGE:`, …) — required for release automation. See "Release & versioning".
+- **Never add a `Co-Authored-By: Claude …` trailer to commit messages.** Drop it from the heredoc commit template — the commit log should read as the maintainer's own work regardless of how much Claude assisted during authoring.

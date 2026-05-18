@@ -27,6 +27,7 @@
       in
       {
         devShells.default = pkgs.mkShell {
+          hardeningDisable = [ "zerocallusedregs" ];
           packages = with pkgs; [
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             clang
@@ -37,6 +38,7 @@
             subxt
             trunk
             binaryen
+            codex
           ];
         };
       }

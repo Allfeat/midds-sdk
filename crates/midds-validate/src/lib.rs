@@ -12,7 +12,7 @@ pub mod checksum;
 pub mod error;
 pub mod parse;
 
-pub use builder::MusicalWorkBuilder;
+pub use builder::{MusicalWorkBuilder, RecordingBuilder};
 pub use checksum::{
     CheckResult, verify_ipi_checksum, verify_isni_checksum, verify_isrc_checksum,
     verify_iswc_checksum,

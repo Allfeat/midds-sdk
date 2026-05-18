@@ -6,14 +6,18 @@
 //! tests should assert the matching `MiddsFormatError`.
 
 use frame_support::BoundedVec;
-use midds_traits::{Iswc, MiddsFormatError};
+use midds_traits::{Isni, Iswc, MiddsFormatError};
 use midds_types::{
-    CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorId, CreatorRole, Language,
-    Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, PitchClass, TITLE_MAX_LEN,
-    WORK_REFERENCES_MAX, WorkType,
+    CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Creator, CreatorId,
+    CreatorRole, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1,
+    OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PitchClass,
+    ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN,
+    WORK_REFERENCES_MAX, WorkRef, WorkType,
 };
 
-use crate::identifiers::{ipi_from_stem, isni_from_body, iswc_for_index, iswc_from_work_code};
+use crate::identifiers::{
+    ipi_from_stem, isni_from_body, isrc_for_index, iswc_for_index, iswc_from_work_code,
+};
 
 // -----------------------------------------------------------------------------
 // Size extremes
@@ -137,6 +141,124 @@ pub fn invalid_empty_medley_refs() -> (MusicalWork, MiddsFormatError) {
     (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
 }
 
+// -----------------------------------------------------------------------------
+// Recording — size extremes
+// -----------------------------------------------------------------------------
+
+/// Minimum-size valid `Recording`: smallest non-empty title, an IPI artist,
+/// the work referenced by the cheapest `WorkRef::Midds` variant, every
+/// collection empty and every optional field absent.
+pub fn min_size_recording() -> Recording {
+    let v1 = RecordingV1 {
+        isrc: isrc_for_index(0),
+        title: BoundedVec::try_from(b"x".to_vec()).expect("1 byte"),
+        title_aliases: BoundedVec::default(),
+        artist: PartyId::Ipi(ipi_from_stem(0, 9)),
+        work: WorkRef::Midds(0),
+        genres: BoundedVec::default(),
+        record_year: None,
+        version_type: None,
+        performers: BoundedVec::default(),
+        producers: BoundedVec::default(),
+        duration: None,
+        bpm: None,
+        key: None,
+        places: None,
+        contributors: BoundedVec::default(),
+        offchain_extension: None,
+    };
+    Recording::V1(v1)
+}
+
+/// Maximum-size valid `Recording`: every bounded field at capacity, every
+/// optional field present, `PartyId::Isni` everywhere (the larger identity
+/// variant) and `WorkRef::Iswc` (larger than the MIDDS id). Stable worst-case
+/// baseline for fee benchmarks and SCALE-encoding tests.
+pub fn max_size_recording() -> Recording {
+    let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
+    let aliases: Vec<_> = (0..TITLE_ALIASES_MAX)
+        .map(|_| BoundedVec::try_from(vec![b'a'; TITLE_MAX_LEN as usize]).expect("alias at bound"))
+        .collect();
+    let isni_at = |i: u32| {
+        let body: [u8; 15] = core::array::from_fn(|j| ((i + j as u32 + 1) % 10) as u8);
+        isni_from_body(body)
+    };
+    let performers: Vec<PartyId> = (0..PERFORMERS_MAX)
+        .map(|i| PartyId::Isni(isni_at(i)))
+        .collect();
+    let producers: Vec<Isni> = (0..PRODUCERS_MAX).map(isni_at).collect();
+    let contributors: Vec<PartyId> = (0..CONTRIBUTORS_MAX)
+        .map(|i| PartyId::Isni(isni_at(i)))
+        .collect();
+    let place = BoundedVec::try_from(vec![b'p'; PLACE_MAX_LEN as usize]).expect("place at bound");
+    let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
+    let v1 = RecordingV1 {
+        isrc: isrc_for_index(0),
+        title,
+        title_aliases: BoundedVec::try_from(aliases).expect("aliases at bound"),
+        artist: PartyId::Isni(isni_at(99)),
+        work: WorkRef::Iswc(iswc_from_work_code(1)),
+        genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
+            .expect("genres at bound"),
+        record_year: Some(u16::MAX),
+        version_type: Some(RecordingVersion::Original),
+        performers: BoundedVec::try_from(performers).expect("performers at bound"),
+        producers: BoundedVec::try_from(producers).expect("producers at bound"),
+        duration: Some(u32::MAX),
+        bpm: Some(u16::MAX),
+        key: Some(MusicalKey {
+            pitch: PitchClass::C,
+            mode: Mode::Major,
+        }),
+        places: Some(ProductionPlaces {
+            recording: Some(place.clone()),
+            mixing: Some(place.clone()),
+            mastering: Some(place),
+        }),
+        contributors: BoundedVec::try_from(contributors).expect("contributors at bound"),
+        offchain_extension: Some(offchain),
+    };
+    Recording::V1(v1)
+}
+
+// -----------------------------------------------------------------------------
+// Recording — invalid payloads paired with the expected error
+// -----------------------------------------------------------------------------
+
+/// ISRC with a lowercase country code. Triggers `InvalidCharset`.
+pub fn invalid_recording_isrc_bad_charset() -> (Recording, MiddsFormatError) {
+    let Recording::V1(mut v1) = min_size_recording();
+    let mut bytes = isrc_for_index(0).to_vec();
+    bytes[0] = b'f';
+    v1.isrc = BoundedVec::try_from(bytes).expect("12 bytes");
+    (Recording::V1(v1), MiddsFormatError::InvalidCharset)
+}
+
+/// ISRC shorter than 12 bytes. Triggers `OutOfBounds`.
+pub fn invalid_recording_isrc_wrong_length() -> (Recording, MiddsFormatError) {
+    let Recording::V1(mut v1) = min_size_recording();
+    v1.isrc = BoundedVec::try_from(b"USRC1760783".to_vec()).expect("11 bytes ≤ 12");
+    (Recording::V1(v1), MiddsFormatError::OutOfBounds)
+}
+
+/// `Recording` with an empty title. Triggers `EmptyMandatoryField`.
+pub fn invalid_recording_empty_title() -> (Recording, MiddsFormatError) {
+    let Recording::V1(mut v1) = min_size_recording();
+    v1.title = BoundedVec::default();
+    (Recording::V1(v1), MiddsFormatError::EmptyMandatoryField)
+}
+
+/// `Recording` whose `WorkRef::Iswc` is missing the `T` prefix. Triggers
+/// `InvalidIdentifierStructure`.
+pub fn invalid_recording_work_iswc_prefix() -> (Recording, MiddsFormatError) {
+    let Recording::V1(mut v1) = min_size_recording();
+    v1.work = WorkRef::Iswc(BoundedVec::try_from(b"X1234567890".to_vec()).expect("11 bytes"));
+    (
+        Recording::V1(v1),
+        MiddsFormatError::InvalidIdentifierStructure,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +299,47 @@ mod tests {
         ] {
             let (work, expected) = ctor();
             let err = work.validate_format().expect_err("payload must fail");
+            assert_eq!(err, expected);
+        }
+    }
+
+    #[test]
+    fn recording_min_size_validates() {
+        min_size_recording()
+            .validate_format()
+            .expect("min size validates");
+    }
+
+    #[test]
+    fn recording_max_size_validates_and_saturates_bound() {
+        let recording = max_size_recording();
+        recording.validate_format().expect("max size validates");
+        let max = <Recording as MaxEncodedLen>::max_encoded_len();
+        assert_eq!(
+            parity_scale_codec::Encode::encoded_size(&recording),
+            max,
+            "max-size Recording must hit MaxEncodedLen exactly"
+        );
+    }
+
+    #[test]
+    fn recording_min_smaller_than_max_in_encoded_bytes() {
+        use parity_scale_codec::Encode;
+        let min = min_size_recording().encoded_size();
+        let max = max_size_recording().encoded_size();
+        assert!(min < max);
+    }
+
+    #[test]
+    fn recording_invalid_constructors_match_expected_error() {
+        for ctor in [
+            invalid_recording_isrc_bad_charset as fn() -> _,
+            invalid_recording_isrc_wrong_length,
+            invalid_recording_empty_title,
+            invalid_recording_work_iswc_prefix,
+        ] {
+            let (recording, expected) = ctor();
+            let err = recording.validate_format().expect_err("payload must fail");
             assert_eq!(err, expected);
         }
     }

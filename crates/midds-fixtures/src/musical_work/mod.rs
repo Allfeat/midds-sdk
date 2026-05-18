@@ -40,6 +40,18 @@ impl MiddsFixtures for MusicalWorkFixtures {
         ]
     }
 
+    fn random_with_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Self::Item {
+        random_with_iswc_index(rng, index)
+    }
+
+    fn min_size_with_index(index: u32) -> Self::Item {
+        with_iswc(crate::pathological::min_size_musical_work(), index)
+    }
+
+    fn max_size_with_index(index: u32) -> Self::Item {
+        with_iswc(crate::pathological::max_size_musical_work(), index)
+    }
+
     #[cfg(feature = "corpus")]
     fn corpus() -> Vec<Self::Item> {
         // V1 ships per-identifier corpora (ISWC / IPI / ISNI in
@@ -102,6 +114,16 @@ pub fn random_with_iswc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Music
         .work_type(WorkType::Original)
         .creators_unchecked(creators)
         .build()
+}
+
+/// Swap the canonical ISWC of a precomputed work for one derived from
+/// `index`. Lets the size-extreme `pathological` payloads carry unique
+/// identifiers across a batch without rebuilding the rest of the payload —
+/// previously lived inline in `midds-cli`'s `bench fees`.
+fn with_iswc(work: MusicalWork, index: u32) -> MusicalWork {
+    let MusicalWork::V1(mut v1) = work;
+    v1.iswc = iswc_for_index(index);
+    MusicalWork::V1(v1)
 }
 
 fn pick_role<R: Rng + ?Sized>(rng: &mut R) -> CreatorRole {

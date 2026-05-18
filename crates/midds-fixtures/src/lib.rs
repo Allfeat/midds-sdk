@@ -34,13 +34,15 @@
 pub mod identifiers;
 pub mod musical_work;
 pub mod pathological;
+pub mod recording;
 pub mod rng;
 
 pub use musical_work::MusicalWorkBuilder;
+pub use recording::RecordingBuilder;
 pub use rng::seeded_rng;
 
 use midds_traits::Midds;
-use midds_types::MusicalWork;
+use midds_types::{MusicalWork, Recording};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -66,6 +68,20 @@ pub trait MiddsFixtures {
     /// surface — see e.g. `pathological::invalid_*` constructors.
     fn pathological() -> Vec<Self::Item>;
 
+    /// Realistic payload whose canonical identifier is derived from `index`,
+    /// so indices `0..N` yield N distinct identifiers (`IdentifierIndex` in
+    /// `pallet-midds` then accepts all N). The building block of [`gen_n`]
+    /// and the `Real` size class of `midds-cli`'s `bench fees`.
+    fn random_with_index<R: rand::Rng + ?Sized>(rng: &mut R, index: u32) -> Self::Item;
+
+    /// Minimum-size payload carrying an index-unique canonical identifier.
+    /// Backs the `Mixed` size class without colliding identifiers.
+    fn min_size_with_index(index: u32) -> Self::Item;
+
+    /// Maximum-size payload carrying an index-unique canonical identifier.
+    /// Backs the `Max` / `Mixed` size classes without colliding identifiers.
+    fn max_size_with_index(index: u32) -> Self::Item;
+
     /// Iterator over the committed corpus, when one ships for this MIDDS
     /// type. Returns an empty vector when no corpus is bundled.
     #[cfg(feature = "corpus")]
@@ -90,6 +106,19 @@ pub fn gen_n(seed: u64, count: u32) -> Vec<MusicalWork> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     (0..count)
         .map(|i| musical_work::random_with_iswc_index(&mut rng, i))
+        .collect()
+}
+
+/// Deterministically generate `count` distinct `Recording` records.
+///
+/// Same reproducibility contract as [`gen_n`]: identical `(seed, count)`
+/// always yields the same `Vec<Recording>` byte-for-byte, including across
+/// processes (`ChaCha20Rng`). Each record's ISRC is derived from its sequence
+/// number so the canonical identifiers are guaranteed unique within the batch.
+pub fn gen_n_recording(seed: u64, count: u32) -> Vec<Recording> {
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    (0..count)
+        .map(|i| recording::random_with_isrc_index(&mut rng, i))
         .collect()
 }
 
@@ -122,6 +151,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn gen_n_recording_is_deterministic_and_unique() {
+        use midds_traits::Midds as _;
+        let a = gen_n_recording(0xDEAD_BEEF, 64);
+        let b = gen_n_recording(0xDEAD_BEEF, 64);
+        assert_eq!(a, b);
+        let mut ids: Vec<_> = a.iter().map(|r| r.identifier()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), a.len(), "ISRCs must be unique");
+        for r in &a {
+            r.validate_format().expect("generated payload validates");
+        }
+    }
+
     /// Drives the `MiddsFixtures` impl through its four entry points to
     /// catch a regression where one diverges (e.g. `pathological()` returns
     /// invalid payloads, or `corpus()` panics under feature combinations).
@@ -148,6 +192,52 @@ mod tests {
             let corpus = <MusicalWorkFixtures as MiddsFixtures>::corpus();
             for w in &corpus {
                 w.validate_format().expect("corpus payload validates");
+            }
+        }
+    }
+
+    /// Same consistency sweep for `RecordingFixtures`, including the
+    /// index-keyed size-class constructors that back `bench fees`.
+    #[test]
+    fn recording_fixtures_trait_is_consistent() {
+        use crate::recording::RecordingFixtures;
+        use midds_traits::Midds as _;
+
+        let bulk = <RecordingFixtures as MiddsFixtures>::gen_n(0xCAFE, 8);
+        assert_eq!(bulk.len(), 8);
+        for r in &bulk {
+            r.validate_format().expect("gen_n payload validates");
+        }
+
+        let pathological = <RecordingFixtures as MiddsFixtures>::pathological();
+        assert!(!pathological.is_empty());
+        for r in &pathological {
+            r.validate_format()
+                .expect("pathological boundary payload validates");
+        }
+
+        // Index-keyed size classes must validate and carry distinct ISRCs.
+        let mut rng = seeded_rng(0x5EED);
+        let mut ids = Vec::new();
+        for i in 0..8u32 {
+            let real = <RecordingFixtures as MiddsFixtures>::random_with_index(&mut rng, i);
+            let min = <RecordingFixtures as MiddsFixtures>::min_size_with_index(i);
+            let max = <RecordingFixtures as MiddsFixtures>::max_size_with_index(i);
+            for r in [&real, &min, &max] {
+                r.validate_format().expect("index-keyed payload validates");
+            }
+            ids.push(min.identifier().clone());
+        }
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 8, "min_size_with_index ISRCs must be unique");
+
+        #[cfg(feature = "corpus")]
+        {
+            let corpus = <RecordingFixtures as MiddsFixtures>::corpus();
+            assert!(!corpus.is_empty());
+            for r in &corpus {
+                r.validate_format().expect("corpus payload validates");
             }
         }
     }

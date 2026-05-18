@@ -1,13 +1,16 @@
-//! JSON-RPC shape tests for the `MiddsRpcApi` trait — section 15.4 of
-//! `docs/testing.md`.
+//! JSON-RPC shape tests for the generated per-instance RPC traits —
+//! section 15.4 of `docs/testing.md`.
 //!
 //! Spinning up a real `ProvideRuntimeApi` + `HeaderBackend` test harness would
 //! drag in `substrate-test-runtime` and most of `sc-client`, none of which the
 //! SDK depends on. The pragmatic alternative — and what `docs/testing.md`
 //! §15.4 actually asks for — is a hand-written stub that implements the
-//! generated `MiddsRpcApiServer` trait directly. The shape of the JSON
+//! generated `MusicalWorkRpcApiServer` trait directly. The shape of the JSON
 //! response is determined by the `#[rpc(server)]` macro, so the stub
-//! exercises the same wire format the production handler emits.
+//! exercises the same wire format the production handler emits. Every MIDDS
+//! kind is stamped from the same `midds_rpc_instance!` body, so the
+//! `MusicalWork` surface validated here also pins `RecordingRpc` by
+//! construction — only the `midds_recordings_` namespace differs.
 //!
 //! The cardinal assertion: the lookup family returns JSON `null` (or an
 //! empty list, for the multi-claim case) when the queried entry is absent —
@@ -18,7 +21,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 
 use jsonrpsee::core::RpcResult;
 use midds_fixtures::musical_work::MusicalWorkBuilder;
-use midds_rpc::{BondLayerOf, DepositInfoOf, MiddsRpcApiServer};
+use midds_rpc::{BondLayerOf, DepositInfoOf, MusicalWorkRpcApiServer};
 use midds_traits::{Iswc, Midds as _, MiddsId};
 use midds_types::MusicalWork;
 use sp_runtime::FixedU128;
@@ -77,7 +80,7 @@ impl Stub {
     }
 }
 
-impl MiddsRpcApiServer<BlockHash, Iswc, MusicalWork, AccountId, Balance> for Stub {
+impl MusicalWorkRpcApiServer<BlockHash, Iswc, MusicalWork, AccountId, Balance> for Stub {
     fn lookup_by_identifier(
         &self,
         identifier: Iswc,
@@ -198,7 +201,7 @@ async fn lookup_missing_identifier_returns_empty_array() {
     let stub = Stub::default();
     let iswc = midds_fixtures::identifiers::iswc_for_index(99_999).to_vec();
     let request = format!(
-        r#"{{"jsonrpc":"2.0","method":"midds_lookupByIdentifier",
+        r#"{{"jsonrpc":"2.0","method":"midds_musicalWorks_lookupByIdentifier",
              "params":[{iswc:?}, null],"id":0}}"#
     );
 
@@ -223,7 +226,7 @@ async fn lookup_present_identifier_returns_ids() {
 
     let bytes = iswc.to_vec();
     let request = format!(
-        r#"{{"jsonrpc":"2.0","method":"midds_lookupByIdentifier",
+        r#"{{"jsonrpc":"2.0","method":"midds_musicalWorks_lookupByIdentifier",
              "params":[{bytes:?}, null],"id":0}}"#
     );
 
@@ -250,7 +253,7 @@ async fn lookup_returns_all_claims_for_an_identifier() {
 
     let bytes = work.identifier().to_vec();
     let request = format!(
-        r#"{{"jsonrpc":"2.0","method":"midds_lookupByIdentifier",
+        r#"{{"jsonrpc":"2.0","method":"midds_musicalWorks_lookupByIdentifier",
              "params":[{bytes:?}, null],"id":0}}"#
     );
     let resp = call(stub, &request).await;
@@ -271,7 +274,8 @@ async fn lookup_returns_all_claims_for_an_identifier() {
 #[tokio::test]
 async fn get_missing_id_returns_json_null() {
     let stub = Stub::default();
-    let request = r#"{"jsonrpc":"2.0","method":"midds_get","params":[42, null],"id":0}"#;
+    let request =
+        r#"{"jsonrpc":"2.0","method":"midds_musicalWorks_get","params":[42, null],"id":0}"#;
 
     let resp = call(stub, request).await;
     assert!(
@@ -287,7 +291,8 @@ async fn get_present_id_returns_serialized_work() {
     let work = sample_work();
     stub.insert(11, work.clone(), 2, 250, 250, false);
 
-    let request = r#"{"jsonrpc":"2.0","method":"midds_get","params":[11, null],"id":0}"#;
+    let request =
+        r#"{"jsonrpc":"2.0","method":"midds_musicalWorks_get","params":[11, null],"id":0}"#;
     let resp = call(stub, request).await;
     let result = resp.get("result").expect("result present");
     assert!(!result.is_null(), "present id must not return null: {resp}");
@@ -304,7 +309,8 @@ async fn get_present_id_returns_serialized_work() {
 #[tokio::test]
 async fn deposit_info_missing_id_returns_json_null() {
     let stub = Stub::default();
-    let request = r#"{"jsonrpc":"2.0","method":"midds_depositInfo","params":[5, null],"id":0}"#;
+    let request =
+        r#"{"jsonrpc":"2.0","method":"midds_musicalWorks_depositInfo","params":[5, null],"id":0}"#;
 
     let resp = call(stub, request).await;
     assert!(
@@ -319,7 +325,8 @@ async fn deposit_info_present_id_returns_full_view() {
     let work = sample_work();
     stub.insert(3, work, 99, 12_345, 10_000, false);
 
-    let request = r#"{"jsonrpc":"2.0","method":"midds_depositInfo","params":[3, null],"id":0}"#;
+    let request =
+        r#"{"jsonrpc":"2.0","method":"midds_musicalWorks_depositInfo","params":[3, null],"id":0}"#;
     let resp = call(stub, request).await;
     let result = resp.get("result").expect("result present");
     let obj = result
@@ -353,7 +360,7 @@ async fn deposit_info_present_id_returns_full_view() {
 #[tokio::test]
 async fn current_deposit_price_returns_balance() {
     let stub = Stub::default();
-    let request = r#"{"jsonrpc":"2.0","method":"midds_currentDepositPrice",
+    let request = r#"{"jsonrpc":"2.0","method":"midds_musicalWorks_currentDepositPrice",
                        "params":[150, null],"id":0}"#;
     let resp = call(stub, request).await;
     let result = resp.get("result").expect("result");
@@ -363,8 +370,8 @@ async fn current_deposit_price_returns_balance() {
 #[tokio::test]
 async fn weekly_gauge_endpoints_dispatch() {
     for (method, expected) in [
-        ("midds_weeklyTarget", 200_000u64),
-        ("midds_weeklyActual", 0),
+        ("midds_musicalWorks_weeklyTarget", 200_000u64),
+        ("midds_musicalWorks_weeklyActual", 0),
     ] {
         let stub = Stub::default();
         let request = format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":[null],"id":0}}"#);
@@ -386,7 +393,8 @@ async fn weekly_gauge_endpoints_dispatch() {
 #[tokio::test]
 async fn unknown_method_is_rejected() {
     let stub = Stub::default();
-    let request = r#"{"jsonrpc":"2.0","method":"midds_doesNotExist","params":[],"id":0}"#;
+    let request =
+        r#"{"jsonrpc":"2.0","method":"midds_musicalWorks_doesNotExist","params":[],"id":0}"#;
     let resp = call(stub, request).await;
     assert!(
         resp.get("error").is_some(),
@@ -397,13 +405,13 @@ async fn unknown_method_is_rejected() {
 #[tokio::test]
 async fn rpc_method_names_are_stable() {
     for method in [
-        ("midds_lookupByIdentifier", "[[0],null]"),
-        ("midds_get", "[0, null]"),
-        ("midds_depositInfo", "[0, null]"),
-        ("midds_currentDepositPrice", "[0, null]"),
-        ("midds_currentMultipliers", "[null]"),
-        ("midds_weeklyTarget", "[null]"),
-        ("midds_weeklyActual", "[null]"),
+        ("midds_musicalWorks_lookupByIdentifier", "[[0],null]"),
+        ("midds_musicalWorks_get", "[0, null]"),
+        ("midds_musicalWorks_depositInfo", "[0, null]"),
+        ("midds_musicalWorks_currentDepositPrice", "[0, null]"),
+        ("midds_musicalWorks_currentMultipliers", "[null]"),
+        ("midds_musicalWorks_weeklyTarget", "[null]"),
+        ("midds_musicalWorks_weeklyActual", "[null]"),
     ] {
         let (name, params) = method;
         let stub = Stub::default();

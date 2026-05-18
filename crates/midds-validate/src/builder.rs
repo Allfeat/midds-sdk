@@ -13,7 +13,7 @@
 
 use std::sync::LazyLock;
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Iswc, OffchainHash};
 use midds_types::{
     CREATORS_MAX, Creator, CreatorId, CreatorRole, Language, MusicalKey, MusicalWork,

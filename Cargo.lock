@@ -3113,7 +3113,7 @@ dependencies = [
 name = "midds-validate"
 version = "0.1.0"
 dependencies = [
- "frame-support",
+ "bounded-collections",
  "midds-fixtures",
  "midds-traits",
  "midds-types",

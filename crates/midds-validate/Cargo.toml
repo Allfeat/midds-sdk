@@ -9,7 +9,11 @@ homepage.workspace = true
 description = "Std-side rich validation (regex, normalization, checksums) for MIDDS data."
 
 [dependencies]
-frame-support = { workspace = true, features = ["std"] }
+# See `midds-traits/Cargo.toml` for why we depend on `bounded-collections`
+# directly instead of `frame-support`: it keeps this crate buildable for
+# `wasm32-unknown-unknown` (browser / Leptos CSR) by avoiding the
+# `frame-support → sp-io → secp256k1` chain.
+bounded-collections = { workspace = true, features = ["std"] }
 midds-traits = { workspace = true, features = ["std"] }
 midds-types = { workspace = true, features = ["std"] }
 regex = { workspace = true }

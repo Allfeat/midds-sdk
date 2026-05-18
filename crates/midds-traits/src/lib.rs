@@ -21,7 +21,10 @@ pub type MiddsId = u64;
 /// version exactly, and both definitions ship a blanket impl, so any concrete
 /// type satisfying one also satisfies the other — `pallet-midds` keeps working
 /// against `frame_support::Parameter` unchanged.
-pub trait Parameter: Codec + EncodeLike + Clone + Eq + core::fmt::Debug + TypeInfo + 'static {}
+pub trait Parameter:
+    Codec + EncodeLike + Clone + Eq + core::fmt::Debug + TypeInfo + 'static
+{
+}
 impl<T> Parameter for T where
     T: Codec + EncodeLike + Clone + Eq + core::fmt::Debug + TypeInfo + 'static
 {

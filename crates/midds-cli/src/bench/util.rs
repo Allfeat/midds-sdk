@@ -4,16 +4,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use midds_types::MusicalWork;
 use serde::Serialize;
 
 /// Round-robin a flat list of payloads into `partitions` buckets so each bucket
-/// gets either `floor(n/p)` or `ceil(n/p)` items.
-pub fn partition_round_robin(
-    payloads: Vec<MusicalWork>,
-    partitions: usize,
-) -> Vec<Vec<MusicalWork>> {
-    let mut batches: Vec<Vec<MusicalWork>> = (0..partitions).map(|_| Vec::new()).collect();
+/// gets either `floor(n/p)` or `ceil(n/p)` items. Generic over the MIDDS
+/// payload type — every bench mode partitions the same way regardless of kind.
+pub fn partition_round_robin<T>(payloads: Vec<T>, partitions: usize) -> Vec<Vec<T>> {
+    let mut batches: Vec<Vec<T>> = (0..partitions).map(|_| Vec::new()).collect();
     for (i, p) in payloads.into_iter().enumerate() {
         batches[i % partitions].push(p);
     }

@@ -18,8 +18,10 @@ use midds_client::{
     subxt_signer::sr25519::Keypair,
     wait_for_in_block,
 };
-use midds_types::MusicalWork;
-use parity_scale_codec::{Compact, Encode};
+use midds_traits::Midds;
+use parity_scale_codec::Compact;
+
+use crate::bench::worker::ApiOf;
 
 /// Worst-case multiplier ramp the seed/bench loop can ever produce, taken
 /// straight from `docs/economics.md` §5.1 / §5.2:
@@ -146,9 +148,12 @@ async fn submit_batch(
 /// Inputs for [`announce_and_fund`]. Bundled into a struct because the helper
 /// needs seven parameters and a positional list invites footguns at call
 /// sites — same shape as [`crate::bench::seed::Args`] / `fees::Args`.
-pub(crate) struct AnnounceAndFundArgs<'a> {
+pub(crate) struct AnnounceAndFundArgs<'a, M: Midds> {
     pub client: &'a MiddsClient,
-    pub partitions: &'a [Vec<MusicalWork>],
+    /// Per-kind pallet-instance accessor — selects which `pallet-midds`
+    /// instance's `DepositBase` / `DepositPerByte` constants to read.
+    pub api_of: ApiOf<M>,
+    pub partitions: &'a [Vec<M>],
     pub signers: &'a [Keypair],
     pub funder_uri: &'a str,
     pub fund_margin: f64,
@@ -165,10 +170,10 @@ pub(crate) struct AnnounceAndFundArgs<'a> {
 ///
 /// Reads the pallet's `DepositBase` / `DepositPerByte` constants from the
 /// chain itself — callers only need to pass the rest of the configuration.
-pub(crate) async fn announce_and_fund(args: AnnounceAndFundArgs<'_>) -> Result<Balance> {
-    let (deposit_base, deposit_per_byte) = args
-        .client
-        .musical_works()
+pub(crate) async fn announce_and_fund<M: Midds>(
+    args: AnnounceAndFundArgs<'_, M>,
+) -> Result<Balance> {
+    let (deposit_base, deposit_per_byte) = (args.api_of)(args.client)
         .deposit_constants()
         .await
         .context("read pallet-midds DepositBase / DepositPerByte from chain")?;
@@ -223,8 +228,8 @@ pub(crate) async fn announce_and_fund(args: AnnounceAndFundArgs<'_>) -> Result<B
 /// would still under-fund if a sustained burst spikes `M_fast` mid-run.
 /// Funding for the ceiling sidesteps the whole issue at the cost of moving
 /// more plancks than strictly needed — fine on dev nodes.
-pub(crate) fn compute_per_signer_funding(
-    partitions: &[Vec<MusicalWork>],
+pub(crate) fn compute_per_signer_funding<M: Midds>(
+    partitions: &[Vec<M>],
     deposit_base: Balance,
     deposit_per_byte: Balance,
     margin: f64,
@@ -262,6 +267,10 @@ mod tests {
     //!   time can never under-finance a signer mid-seed.
     use super::*;
     use midds_fixtures::pathological;
+    use midds_types::MusicalWork;
+    // `encoded_size` on the concrete `MusicalWork` needs the trait in scope;
+    // the generic lib code reaches it through the `M: Midds` bound instead.
+    use parity_scale_codec::Encode;
 
     #[test]
     fn compute_per_signer_funding_uses_heaviest_signer() {

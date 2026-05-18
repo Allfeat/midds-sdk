@@ -18,6 +18,7 @@ clap = { workspace = true }
 dialoguer = { workspace = true }
 midds-client = { workspace = true }
 midds-fixtures = { workspace = true }
+midds-traits = { workspace = true, features = ["std"] }
 midds-types = { workspace = true, features = ["std"] }
 parity-scale-codec = { workspace = true, features = ["std"] }
 rand = { workspace = true }

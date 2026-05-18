@@ -9,6 +9,8 @@ mod signers;
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
+use midds_client::MiddsClient;
+use midds_fixtures::{musical_work::MusicalWorkFixtures, recording::RecordingFixtures};
 
 use crate::cli::{BenchArgs, Cli, Command, MiddsKind};
 
@@ -39,8 +41,7 @@ async fn run(cli: Cli) -> Result<()> {
             report,
             yes,
         } => {
-            ensure_midds_type(midds_type)?;
-            bench::seed::run(bench::seed::Args {
+            let args = bench::seed::Args {
                 url: &cli.url,
                 count,
                 rng_seed,
@@ -54,8 +55,19 @@ async fn run(cli: Cli) -> Result<()> {
                 fund_batch_size,
                 report_path: report.as_deref(),
                 assume_yes: yes,
-            })
-            .await
+            };
+            // Bind the MIDDS-type-generic harness to the chosen kind: each
+            // arm picks the `MiddsFixtures` impl and the `midds-client`
+            // pallet-instance accessor. Adding `Release` later is one more
+            // arm here plus the `MiddsKind` variant.
+            match midds_type {
+                MiddsKind::MusicalWork => {
+                    bench::seed::run::<MusicalWorkFixtures>(args, MiddsClient::musical_works).await
+                }
+                MiddsKind::Recording => {
+                    bench::seed::run::<RecordingFixtures>(args, MiddsClient::recordings).await
+                }
+            }
         }
         Command::Bench { kind } => match kind {
             // `resolve_command` guarantees this arm always carries a concrete
@@ -76,8 +88,7 @@ async fn run(cli: Cli) -> Result<()> {
                 out,
                 yes,
             }) => {
-                ensure_midds_type(midds_type)?;
-                bench::fees::run(bench::fees::Args {
+                let args = bench::fees::Args {
                     url: &cli.url,
                     count,
                     distribution: size_distribution,
@@ -92,8 +103,16 @@ async fn run(cli: Cli) -> Result<()> {
                     rng_seed,
                     out: out.as_deref(),
                     assume_yes: yes,
-                })
-                .await
+                };
+                match midds_type {
+                    MiddsKind::MusicalWork => {
+                        bench::fees::run::<MusicalWorkFixtures>(args, MiddsClient::musical_works)
+                            .await
+                    }
+                    MiddsKind::Recording => {
+                        bench::fees::run::<RecordingFixtures>(args, MiddsClient::recordings).await
+                    }
+                }
             }
             Some(BenchArgs::Throughput {
                 midds_type,
@@ -111,8 +130,7 @@ async fn run(cli: Cli) -> Result<()> {
                 out,
                 yes,
             }) => {
-                ensure_midds_type(midds_type)?;
-                bench::throughput::run(bench::throughput::Args {
+                let args = bench::throughput::Args {
                     url: &cli.url,
                     count,
                     duration_secs,
@@ -127,23 +145,23 @@ async fn run(cli: Cli) -> Result<()> {
                     rng_seed,
                     out: out.as_deref(),
                     assume_yes: yes,
-                })
-                .await
+                };
+                match midds_type {
+                    MiddsKind::MusicalWork => {
+                        bench::throughput::run::<MusicalWorkFixtures>(
+                            args,
+                            MiddsClient::musical_works,
+                        )
+                        .await
+                    }
+                    MiddsKind::Recording => {
+                        bench::throughput::run::<RecordingFixtures>(args, MiddsClient::recordings)
+                            .await
+                    }
+                }
             }
             None => unreachable!("resolve_command always promotes Bench.kind to Some"),
         },
-    }
-}
-
-/// V1 only ships `MusicalWork`. The `MiddsKind` enum is the dispatch
-/// extension point for future MIDDS types — when `Recording` lands the
-/// match arm here grows a second branch routing to a recording-specific
-/// bench harness, leaving the existing flow untouched. Until then any
-/// non-default value is rejected loudly so a typo doesn't silently fall
-/// through to `MusicalWork` behaviour.
-fn ensure_midds_type(kind: MiddsKind) -> Result<()> {
-    match kind {
-        MiddsKind::MusicalWork => Ok(()),
     }
 }
 

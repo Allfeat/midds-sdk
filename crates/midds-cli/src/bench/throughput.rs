@@ -39,7 +39,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use midds_fixtures::gen_n;
+use midds_fixtures::MiddsFixtures;
 use serde::Serialize;
 use tokio::{sync::Semaphore, task::JoinSet};
 
@@ -47,7 +47,8 @@ use crate::{
     bench::{
         util::{mean, percentile, sanitize_signer_concurrency, write_json_report},
         worker::{
-            RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer, setup_runner,
+            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer,
+            setup_runner,
         },
     },
     interactive,
@@ -110,7 +111,16 @@ pub struct Args<'a> {
     pub assume_yes: bool,
 }
 
-pub async fn run(args: Args<'_>) -> Result<()> {
+/// Generic over the MIDDS payload via `F: MiddsFixtures`; `api_of` selects
+/// the `pallet-midds` instance façade, dispatched per `--midds-type` in
+/// `main.rs`.
+pub async fn run<F>(args: Args<'_>, api_of: ApiOf<F::Item>) -> Result<()>
+where
+    F: MiddsFixtures,
+    // `Sync` because each worker holds a `&[F::Item]` `chunks()` iterator
+    // across an `.await`, which `JoinSet::spawn` requires to be `Send`.
+    F::Item: Send + Sync + 'static,
+{
     let Args {
         url,
         count,
@@ -191,7 +201,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
         );
     }
 
-    let payloads = gen_n(rng_seed, count);
+    let payloads = F::gen_n(rng_seed, count);
 
     let confirm_prompt = if auto_fund {
         format!(
@@ -220,6 +230,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
         // Without auto-fund, even the solo run needs `<base>//1` pre-funded.
         solo_uses_base_uri: false,
         payloads,
+        api_of,
         auto_fund,
         funder: &funder,
         fund_margin,
@@ -263,7 +274,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
                 Ok(p) => p,
                 Err(_) => return,
             };
-            let api = client.musical_works();
+            let api = api_of(&client);
             // Fall back to subxt's auto-nonce path if the initial RPC fails:
             // the counter never wraps in practice (a signer would have to
             // send 2^64 extrinsics before this aliases) so `u64::MAX` is a

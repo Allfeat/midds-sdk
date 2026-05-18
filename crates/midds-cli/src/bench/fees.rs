@@ -50,8 +50,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use midds_client::{PricingSnapshot, fixed_u128_to_f64};
-use midds_fixtures::{identifiers::iswc_for_index, musical_work, pathological, rng::seeded_rng};
-use midds_types::MusicalWork;
+use midds_fixtures::{MiddsFixtures, rng::seeded_rng};
 use parity_scale_codec::Encode;
 use rand::Rng;
 use tokio::{sync::Semaphore, task::JoinSet};
@@ -60,7 +59,8 @@ use crate::{
     bench::{
         util::{mean, percentile, sanitize_signer_concurrency, write_report_to},
         worker::{
-            RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer, setup_runner,
+            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer,
+            setup_runner,
         },
     },
     cli::SizeDistribution,
@@ -127,7 +127,16 @@ pub struct Args<'a> {
     pub assume_yes: bool,
 }
 
-pub async fn run(args: Args<'_>) -> Result<()> {
+/// Generic over the MIDDS payload via `F: MiddsFixtures`; `api_of` selects
+/// the `pallet-midds` instance façade, dispatched per `--midds-type` in
+/// `main.rs`.
+pub async fn run<F>(args: Args<'_>, api_of: ApiOf<F::Item>) -> Result<()>
+where
+    F: MiddsFixtures,
+    // `Sync` because each worker holds a `&[F::Item]` `chunks()` iterator
+    // across an `.await`, which `JoinSet::spawn` requires to be `Send`.
+    F::Item: Send + Sync + 'static,
+{
     let Args {
         url,
         count,
@@ -210,10 +219,10 @@ pub async fn run(args: Args<'_>) -> Result<()> {
     // Pre-generate all payloads from a single RNG so multi-signer runs stay
     // bit-for-bit reproducible against the single-signer baseline: same
     // (rng_seed, count) ⇒ same `Vec<MusicalWork>` ⇒ same on-chain state.
-    let payloads: Vec<MusicalWork> = {
+    let payloads: Vec<F::Item> = {
         let mut rng = seeded_rng(rng_seed);
         (0..count)
-            .map(|i| payload_for_index(distribution, &mut rng, i))
+            .map(|i| payload_for_index::<F, _>(distribution, &mut rng, i))
             .collect()
     };
 
@@ -244,6 +253,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
         // flips back into the derivation scheme shared with seed/throughput.
         solo_uses_base_uri: true,
         payloads,
+        api_of,
         auto_fund,
         funder: &funder,
         fund_margin,
@@ -277,7 +287,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
                 Ok(p) => p,
                 Err(_) => return,
             };
-            let api = client.musical_works();
+            let api = api_of(&client);
             let mut nonce = match fetch_signer_nonce(&client, &signer).await {
                 Ok(n) => n,
                 Err(e) => {
@@ -392,7 +402,7 @@ pub async fn run(args: Args<'_>) -> Result<()> {
     // only fail the run if both this and the per-record events were
     // unavailable; a soft snapshot read failure is logged but otherwise
     // ignored — the rest of the report is still valuable.
-    let snapshot_end = match client.musical_works().pricing_snapshot().await {
+    let snapshot_end = match api_of(&client).pricing_snapshot().await {
         Ok(s) => Some(s),
         Err(e) => {
             eprintln!("  warning: failed to read end-of-run pricing snapshot: {e}");
@@ -469,29 +479,25 @@ impl FeesConsumerState {
     }
 }
 
-fn payload_for_index<R: Rng + ?Sized>(
+/// Pick a payload of the requested size class with an index-unique canonical
+/// identifier. The size-class constructors live in `midds-fixtures`
+/// (`MiddsFixtures::{random,min_size,max_size}_with_index`) so this stays
+/// generic over the MIDDS type — the per-type ISWC/ISRC rewrite that used to
+/// live here as `with_iswc` moved there.
+fn payload_for_index<F: MiddsFixtures, R: Rng + ?Sized>(
     distribution: SizeDistribution,
     rng: &mut R,
     index: u32,
-) -> MusicalWork {
+) -> F::Item {
     match distribution {
-        SizeDistribution::Real => musical_work::random_with_iswc_index(rng, index),
-        SizeDistribution::Max => with_iswc(pathological::max_size_musical_work(), index),
+        SizeDistribution::Real => F::random_with_index(rng, index),
+        SizeDistribution::Max => F::max_size_with_index(index),
         SizeDistribution::Mixed => match index % 3 {
-            0 => with_iswc(pathological::min_size_musical_work(), index),
-            1 => musical_work::random_with_iswc_index(rng, index),
-            _ => with_iswc(pathological::max_size_musical_work(), index),
+            0 => F::min_size_with_index(index),
+            1 => F::random_with_index(rng, index),
+            _ => F::max_size_with_index(index),
         },
     }
-}
-
-/// Swap the canonical ISWC of a precomputed work for one derived from `index`.
-/// Used to give the size-extreme `pathological` payloads unique identifiers
-/// across a batch without rebuilding the rest of the (large) payload.
-fn with_iswc(mut work: MusicalWork, index: u32) -> MusicalWork {
-    let MusicalWork::V1(v1) = &mut work;
-    v1.iswc = iswc_for_index(index);
-    work
 }
 
 struct ReportContext<'a> {

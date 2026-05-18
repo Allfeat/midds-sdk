@@ -251,16 +251,23 @@ pub enum BenchArgs {
     },
 }
 
-/// MIDDS payload type the operator commands target. V1 ships only
-/// `MusicalWork`; the enum is in place so adding `Recording` / `Release`
-/// is a one-variant change at every dispatch site rather than a parallel
-/// command tree.
+/// MIDDS payload type the operator commands target. Each variant maps to a
+/// `MiddsFixtures` impl and a `midds-client` pallet-instance accessor at the
+/// dispatch sites in `main.rs`; the whole bench harness is generic over the
+/// MIDDS type so adding `Release` later is a one-variant change here plus the
+/// two dispatch arms.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default)]
 pub enum MiddsKind {
-    /// `MusicalWork::V1` — the only payload type wired in V1.
+    /// `MusicalWork::V1`, deposited against the `MusicalWorks` instance.
     #[default]
     #[value(name = "musical-work")]
     MusicalWork,
+    /// `Recording::V1`, deposited against the `Recordings` instance. The
+    /// runtime-side `Recordings` instance lives in `../Allfeat` and is not
+    /// wired yet, so live-node runs need that in place first; payload
+    /// generation and reporting are fully functional offline.
+    #[value(name = "recording")]
+    Recording,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]

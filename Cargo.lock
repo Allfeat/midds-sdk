@@ -3007,6 +3007,7 @@ dependencies = [
  "dialoguer",
  "midds-client",
  "midds-fixtures",
+ "midds-traits",
  "midds-types",
  "parity-scale-codec",
  "rand 0.8.6",

@@ -18,14 +18,22 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use midds_client::{
-    Balance, ChainConfig, MiddsClient, PricingSnapshot, subxt::tx::Signer,
+    Balance, ChainConfig, MiddsClient, PalletApi, PricingSnapshot, subxt::tx::Signer,
     subxt_signer::sr25519::Keypair,
 };
-use midds_types::MusicalWork;
+use midds_traits::Midds;
 use tokio::{
     sync::mpsc,
     time::{MissedTickBehavior, interval},
 };
+
+/// Selects the right `pallet-midds` instance façade off a `MiddsClient` for
+/// the MIDDS type the run targets. The two implementations are the plain
+/// `fn` items `MiddsClient::musical_works` / `MiddsClient::recordings`,
+/// passed in by `main.rs`'s per-kind dispatch — both coerce to this
+/// higher-ranked pointer, which is `Copy + Send + 'static` so it moves
+/// freely into the per-signer worker tasks.
+pub(crate) type ApiOf<M> = for<'a> fn(&'a MiddsClient) -> PalletApi<'a, M>;
 
 use crate::{
     admin,
@@ -52,7 +60,7 @@ pub async fn fetch_signer_nonce(client: &MiddsClient, signer: &Keypair) -> Resul
 
 /// Inputs for [`setup_runner`]. Bundled so each per-mode caller passes a
 /// labelled struct instead of a 10-positional argument list.
-pub(crate) struct RunnerInputs<'a> {
+pub(crate) struct RunnerInputs<'a, M: Midds> {
     pub url: &'a str,
     pub base_signer: &'a str,
     pub signer_count: u32,
@@ -62,7 +70,9 @@ pub(crate) struct RunnerInputs<'a> {
     /// `//Alice` solo flow on a fresh chain that has no pre-funded
     /// `//Alice//1` derivative; `seed` and `throughput` always derive.
     pub solo_uses_base_uri: bool,
-    pub payloads: Vec<MusicalWork>,
+    pub payloads: Vec<M>,
+    /// Per-kind pallet-instance accessor (`musical_works` / `recordings`).
+    pub api_of: ApiOf<M>,
     pub auto_fund: bool,
     pub funder: &'a str,
     pub fund_margin: f64,
@@ -76,10 +86,10 @@ pub(crate) struct RunnerInputs<'a> {
 
 /// Resources produced by [`setup_runner`] and consumed by per-mode worker
 /// loops.
-pub(crate) struct RunnerHandles {
+pub(crate) struct RunnerHandles<M: Midds> {
     pub client: MiddsClient,
     pub signers: Vec<Keypair>,
-    pub partitions: Vec<Vec<MusicalWork>>,
+    pub partitions: Vec<Vec<M>>,
     /// `Some` iff `auto_fund` was enabled — the per-signer funded amount.
     /// `seed` reports it in the JSON payload; other modes ignore it.
     pub fund_amount_per_signer: Option<Balance>,
@@ -97,11 +107,14 @@ pub(crate) struct RunnerHandles {
 /// Encapsulating this here keeps `seed`, `bench fees`, and `bench throughput`
 /// end-to-end consistent — the modes diverge only at the per-deposit submit
 /// step, never at setup.
-pub(crate) async fn setup_runner(inputs: RunnerInputs<'_>) -> Result<RunnerHandles> {
+pub(crate) async fn setup_runner<M: Midds>(
+    inputs: RunnerInputs<'_, M>,
+) -> Result<RunnerHandles<M>> {
     if !inputs.assume_yes {
         interactive::confirm_or_abort(&inputs.confirm_prompt, true)?;
     }
 
+    let api_of = inputs.api_of;
     let signers = if inputs.signer_count == 1 && inputs.solo_uses_base_uri {
         vec![build_signer(inputs.base_signer).context("build signer")?]
     } else {
@@ -110,8 +123,7 @@ pub(crate) async fn setup_runner(inputs: RunnerInputs<'_>) -> Result<RunnerHandl
     let partitions = partition_round_robin(inputs.payloads, inputs.signer_count as usize);
 
     let client = MiddsClient::connect(inputs.url).await?;
-    let pricing_at_start = client
-        .musical_works()
+    let pricing_at_start = api_of(&client)
         .pricing_snapshot()
         .await
         .context("read pricing snapshot at run start")?;
@@ -119,6 +131,7 @@ pub(crate) async fn setup_runner(inputs: RunnerInputs<'_>) -> Result<RunnerHandl
     let fund_amount_per_signer = if inputs.auto_fund {
         let amount = admin::announce_and_fund(admin::AnnounceAndFundArgs {
             client: &client,
+            api_of,
             partitions: &partitions,
             signers: &signers,
             funder_uri: inputs.funder,

@@ -43,10 +43,11 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     /// Build a handle for a specific instance of `pallet-midds`.
     ///
     /// `pallet_name` matches the runtime's `construct_runtime!` entry (e.g.
-    /// `"MusicalWorks"`); `runtime_api_name` is the runtime API trait name
-    /// implemented per-instance (e.g. `"MiddsApi"`). Subxt addresses runtime
-    /// APIs as `<Trait>_<method>` so the latter stays in lock-step with the
-    /// runtime impl.
+    /// `"MusicalWorks"`); `runtime_api_name` is the per-kind runtime API
+    /// trait name (e.g. `"MusicalWorkApi"`, `"RecordingApi"` — distinct
+    /// because Substrate keys runtime-API dispatch on the trait name). Subxt
+    /// addresses runtime APIs as `<Trait>_<method>` so the latter stays in
+    /// lock-step with the runtime impl.
     pub(crate) fn new(
         client: &'a MiddsClient,
         pallet_name: &'static str,

@@ -14,10 +14,11 @@ use crate::pallet::PalletApi;
 pub const PALLET_NAME: &str = "MusicalWorks";
 
 /// Runtime API trait name implemented for this instance in `melodie-runtime`
-/// (`impl midds_runtime_api::MiddsApi<...> for Runtime`). Subxt addresses
-/// runtime APIs as `<Trait>_<method>` so this stays in lock-step with the
-/// runtime impl.
-pub const RUNTIME_API_NAME: &str = "MiddsApi";
+/// (`impl midds_runtime_api::MusicalWorkApi<...> for Runtime`). Each MIDDS
+/// kind has its own runtime-API trait — Substrate keys dispatch on the
+/// trait name — and subxt addresses runtime APIs as `<Trait>_<method>`, so
+/// this stays in lock-step with the runtime impl.
+pub const RUNTIME_API_NAME: &str = "MusicalWorkApi";
 
 /// High-level handle for the MusicalWorks pallet instance — alias of
 /// [`PalletApi<'_, MusicalWork>`][PalletApi]. Kept as a distinct public

@@ -10,7 +10,9 @@ mod signers;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use midds_client::MiddsClient;
-use midds_fixtures::{musical_work::MusicalWorkFixtures, recording::RecordingFixtures};
+use midds_fixtures::{
+    musical_work::MusicalWorkFixtures, recording::RecordingFixtures, release::ReleaseFixtures,
+};
 
 use crate::cli::{BenchArgs, Cli, Command, MiddsKind};
 
@@ -67,6 +69,9 @@ async fn run(cli: Cli) -> Result<()> {
                 MiddsKind::Recording => {
                     bench::seed::run::<RecordingFixtures>(args, MiddsClient::recordings).await
                 }
+                MiddsKind::Release => {
+                    bench::seed::run::<ReleaseFixtures>(args, MiddsClient::releases).await
+                }
             }
         }
         Command::Bench { kind } => match kind {
@@ -111,6 +116,9 @@ async fn run(cli: Cli) -> Result<()> {
                     }
                     MiddsKind::Recording => {
                         bench::fees::run::<RecordingFixtures>(args, MiddsClient::recordings).await
+                    }
+                    MiddsKind::Release => {
+                        bench::fees::run::<ReleaseFixtures>(args, MiddsClient::releases).await
                     }
                 }
             }
@@ -157,6 +165,9 @@ async fn run(cli: Cli) -> Result<()> {
                     MiddsKind::Recording => {
                         bench::throughput::run::<RecordingFixtures>(args, MiddsClient::recordings)
                             .await
+                    }
+                    MiddsKind::Release => {
+                        bench::throughput::run::<ReleaseFixtures>(args, MiddsClient::releases).await
                     }
                 }
             }

@@ -171,4 +171,7 @@ decl_midds_api! {
     /// Runtime API for the `Recording` `pallet-midds` instance
     /// (`Instance2` in the Allfeat melodie runtime, ISRC-keyed).
     RecordingApi,
+    /// Runtime API for the `Release` `pallet-midds` instance
+    /// (`Instance3` in the Allfeat melodie runtime, UPC/EAN-keyed).
+    ReleaseApi,
 }

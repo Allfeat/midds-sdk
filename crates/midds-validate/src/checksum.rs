@@ -5,7 +5,7 @@
 //! on these checks — they live here for tooling (CLI `validate`, client-side
 //! lint) and always return `CheckResult` rather than `Result`.
 
-use midds_traits::{Ipi, Isni, Isrc, Iswc, validate_isrc_format};
+use midds_traits::{Ipi, Isni, Isrc, Iswc, Upc, validate_isrc_format};
 
 /// Outcome of a checksum verification. Always advisory — the pallet never
 /// reads this, and `Fail` does not block a deposit.
@@ -121,10 +121,38 @@ pub fn verify_ipi_checksum(ipi: &Ipi) -> CheckResult {
     }
 }
 
+/// Verify the UPC / EAN check digit using the standard GS1 mod-10
+/// algorithm: starting from the rightmost data digit, weights alternate
+/// `3, 1, 3, 1, …`; the expected check digit is `(10 − sum mod 10) mod 10`.
+///
+/// Works for both UPC-A (12 digits) and EAN-13 / GTIN-13 (13 digits) — the
+/// right-aligned weighting is length-agnostic. Returns `NotApplicable` for
+/// shapes that aren't 12/13 all-digit.
+pub fn verify_upc_checksum(upc: &Upc) -> CheckResult {
+    let bytes = upc.as_slice();
+    if (bytes.len() != 12 && bytes.len() != 13) || !bytes.iter().all(u8::is_ascii_digit) {
+        return CheckResult::NotApplicable;
+    }
+    let (data, check) = bytes.split_at(bytes.len() - 1);
+    let sum: u32 = data
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, b)| ((b - b'0') as u32) * if i % 2 == 0 { 3 } else { 1 })
+        .sum();
+    let expected = (10 - sum % 10) % 10;
+    let actual = (check[0] - b'0') as u32;
+    if expected == actual {
+        CheckResult::Pass
+    } else {
+        CheckResult::Fail
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use midds_traits::{Ipi, Isni, Isrc, Iswc};
+    use midds_traits::{Ipi, Isni, Isrc, Iswc, Upc};
 
     fn iswc(raw: &[u8]) -> Iswc {
         Iswc::try_from(raw.to_vec()).expect("iswc bound")
@@ -295,6 +323,47 @@ mod tests {
         // Registrant must be uppercase A-Z or digit; lowercase is rejected.
         assert_eq!(
             verify_isrc_checksum(&isrc(b"USrC17607839")),
+            CheckResult::NotApplicable
+        );
+    }
+
+    fn upc(raw: &[u8]) -> Upc {
+        Upc::try_from(raw.to_vec()).expect("upc bound")
+    }
+
+    #[test]
+    fn upc_pass_upc_a_and_ean_13() {
+        // Classic GS1 worked examples: UPC-A 036000291452, EAN-13 4006381333931.
+        assert_eq!(
+            verify_upc_checksum(&upc(b"036000291452")),
+            CheckResult::Pass
+        );
+        assert_eq!(
+            verify_upc_checksum(&upc(b"4006381333931")),
+            CheckResult::Pass
+        );
+    }
+
+    #[test]
+    fn upc_fail_wrong_check_digit() {
+        assert_eq!(
+            verify_upc_checksum(&upc(b"036000291453")),
+            CheckResult::Fail
+        );
+        assert_eq!(
+            verify_upc_checksum(&upc(b"4006381333930")),
+            CheckResult::Fail
+        );
+    }
+
+    #[test]
+    fn upc_not_applicable_bad_shape() {
+        assert_eq!(
+            verify_upc_checksum(&upc(b"03600029145")),
+            CheckResult::NotApplicable
+        );
+        assert_eq!(
+            verify_upc_checksum(&upc(b"03600029145X")),
             CheckResult::NotApplicable
         );
     }

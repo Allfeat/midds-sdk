@@ -12,7 +12,7 @@
 //! is injective over the relevant ranges, so a `Vec<MusicalWork>` of size
 //! `N` produced by indices `0..N` is guaranteed to have unique ISWCs.
 
-use midds_traits::{Ipi, Isni, Isrc, Iswc};
+use midds_traits::{Ipi, Isni, Isrc, Iswc, Upc};
 use rand::Rng;
 
 /// Build an ISWC from a 9-digit work code with the correct CISAC mod-10
@@ -155,11 +155,59 @@ pub fn isrc_random<R: Rng + ?Sized>(rng: &mut R) -> Isrc {
     Isrc::try_from(bytes).expect("12-byte ISRC fits the bound")
 }
 
+/// Compute the GTIN mod-10 check digit over `data` (12 digits for EAN-13).
+///
+/// Standard GS1 weighting: from the leftmost data digit, weights alternate
+/// `1, 3, 1, 3, …`. Shared by [`upc_for_index`] / [`upc_random`] so the
+/// generated barcodes pass `midds_validate::verify_upc_checksum`.
+fn gtin_check_digit(data: &[u8]) -> u8 {
+    let sum: u32 = data
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (*d as u32) * if i % 2 == 0 { 1 } else { 3 })
+        .sum();
+    ((10 - sum % 10) % 10) as u8
+}
+
+/// Build a 13-digit EAN-13 / GTIN-13 from an `index`, with the correct GS1
+/// check digit appended. Injective over `index < 10^12`, so a batch built
+/// from indices `0..N` always has unique canonical identifiers — the
+/// `Release` analogue of [`isrc_for_index`]. EAN-13 (the longer of the two
+/// accepted lengths) is generated so corpora exercise the wider bound.
+pub fn upc_for_index(index: u32) -> Upc {
+    let body = (index as u64) % 1_000_000_000_000; // 12 decimal digits
+    let mut digits = [0u8; 12];
+    let mut n = body;
+    for slot in digits.iter_mut().rev() {
+        *slot = (n % 10) as u8;
+        n /= 10;
+    }
+    let check = gtin_check_digit(&digits);
+    let mut bytes = Vec::with_capacity(13);
+    bytes.extend(digits.iter().map(|d| b'0' + d));
+    bytes.push(b'0' + check);
+    Upc::try_from(bytes).expect("13-byte EAN-13 fits the bound")
+}
+
+/// Random 13-digit EAN-13 with a correct GS1 check digit.
+pub fn upc_random<R: Rng + ?Sized>(rng: &mut R) -> Upc {
+    let mut digits = [0u8; 12];
+    for d in &mut digits {
+        *d = rng.gen_range(0..10);
+    }
+    let check = gtin_check_digit(&digits);
+    let mut bytes = Vec::with_capacity(13);
+    bytes.extend(digits.iter().map(|d| b'0' + d));
+    bytes.push(b'0' + check);
+    Upc::try_from(bytes).expect("13-byte EAN-13 fits the bound")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use midds_traits::{
         validate_ipi_format, validate_isni_format, validate_isrc_format, validate_iswc_format,
+        validate_upc_format,
     };
 
     #[test]
@@ -225,7 +273,36 @@ mod tests {
             assert!(validate_ipi_format(ipi_random(&mut rng).as_slice()).is_ok());
             assert!(validate_isni_format(isni_random(&mut rng).as_slice()).is_ok());
             assert!(validate_isrc_format(isrc_random(&mut rng).as_slice()).is_ok());
+            assert!(validate_upc_format(upc_random(&mut rng).as_slice()).is_ok());
         }
+    }
+
+    #[test]
+    fn upc_for_index_is_structurally_valid() {
+        for i in [0u32, 1, 99_999, 1_234_567, u32::MAX] {
+            let upc = upc_for_index(i);
+            assert_eq!(upc.len(), 13);
+            assert!(validate_upc_format(upc.as_slice()).is_ok());
+        }
+    }
+
+    #[test]
+    fn upc_for_index_is_unique_in_range() {
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..2048u32 {
+            assert!(seen.insert(upc_for_index(i)));
+        }
+    }
+
+    #[test]
+    fn upc_known_check_digit() {
+        // Classic GS1 worked example: EAN-13 4006381333931 — the 12 data
+        // digits 400638133393 yield check digit 1.
+        assert_eq!(gtin_check_digit(&[4, 0, 0, 6, 3, 8, 1, 3, 3, 3, 9, 3]), 1,);
+        // And a known index round-trips through structural validation.
+        let upc = upc_for_index(12_345);
+        assert_eq!(&upc[..12], b"000000012345");
+        assert!(validate_upc_format(upc.as_slice()).is_ok());
     }
 
     #[test]

@@ -19,6 +19,7 @@
 //!
 //! - `MusicalWorkRpc` → `midds_musicalWorks_lookupByIdentifier`, `_get`, …
 //! - `RecordingRpc`   → `midds_recordings_lookupByIdentifier`, `_get`, …
+//! - `ReleaseRpc`     → `midds_releases_lookupByIdentifier`, `_get`, …
 //!
 //! This is a deliberate break from the pre-multi-instance `midds_*` names:
 //! consumers (the explorer, wallets) move to the prefixed names in lockstep.
@@ -36,7 +37,7 @@ use jsonrpsee::{
     types::{ErrorObject, ErrorObjectOwned},
 };
 pub use midds_runtime_api::{BondLayerOf, DepositInfoOf};
-use midds_runtime_api::{MusicalWorkApi, RecordingApi};
+use midds_runtime_api::{MusicalWorkApi, RecordingApi, ReleaseApi};
 use midds_traits::MiddsId;
 use parity_scale_codec::Codec;
 use sp_api::ProvideRuntimeApi;
@@ -393,4 +394,14 @@ midds_rpc_instance! {
     server_trait: RecordingRpcApiServer,
     runtime_api: RecordingApi,
     namespace: "midds_recordings",
+}
+
+midds_rpc_instance! {
+    /// JSON-RPC handler for the `Release` `pallet-midds` instance.
+    /// Methods are published under the `midds_releases_` namespace.
+    handler: ReleaseRpc,
+    server: ReleaseRpcApi,
+    server_trait: ReleaseRpcApiServer,
+    runtime_api: ReleaseApi,
+    namespace: "midds_releases",
 }

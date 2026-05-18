@@ -68,8 +68,8 @@ pub trait Midds: Parameter + MaxEncodedLen {
 
 | Crate | std/no_std | Role |
 |---|---|---|
-| `midds-traits` | no_std | `trait Midds`, identifier byte-string aliases (`Iswc`, `Isni`, `Ipi`, `Isrc`, `OffchainHash`), pure `validate_*_format` functions, `MiddsFormatError`. |
-| `midds-types` | no_std | Canonical MIDDS payloads. V1 ships `MusicalWork` only, as a top-level versioned `enum MusicalWork { V1(MusicalWorkV1) }`. |
+| `midds-traits` | no_std | `trait Midds`, identifier byte-string aliases (`Iswc`, `Isni`, `Ipi`, `Isrc`, `Upc`, `OffchainHash`), pure `validate_*_format` functions, `MiddsFormatError`. |
+| `midds-types` | no_std | Canonical MIDDS payloads. V1 ships all three types — `MusicalWork`, `Recording`, `Release` — each a top-level versioned `enum X { V1(XV1) }`. Cross-type pieces (`Title`, `PartyId`, `WorkRef`, `RecordingRef`, `MusicalKey`) live in `shared`; `Country` (ISO 3166-1) and `Language` (ISO 639-1) are closed tag-byte enums. |
 | `pallet-midds` | no_std | The generic multi-instance FRAME pallet. 4 extrinsics (`deposit`, `update`, `force_edit`, `force_remove`), bond via `fungible::MutateHold`, mock runtime in `src/mock.rs`. |
 | `midds-runtime-api` | no_std | `decl_runtime_apis!` for `lookup_by_identifier` / `get` / `deposit_info`. Implemented once per instance in the runtime. |
 | `midds-rpc` | std | Generic JSON-RPC handler bridging the runtime API to clients. |

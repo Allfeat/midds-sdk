@@ -1010,3 +1010,585 @@ mod recording_tests {
             .expect("builder output validates on-chain");
     }
 }
+
+// -----------------------------------------------------------------------------
+// ReleaseBuilder — parser-tolerant builder for `Release::V1`
+// -----------------------------------------------------------------------------
+
+use midds_types::release::{
+    CATALOG_NUMBER_MAX_LEN, COVER_CONTRIBUTOR_NAME_MAX_LEN, COVER_CONTRIBUTORS_MAX,
+    DISTRIBUTOR_NAME_MAX_LEN, PRODUCERS_MAX as RELEASE_PRODUCERS_MAX,
+    TITLE_ALIASES_MAX as RELEASE_TITLE_ALIASES_MAX, TRACKS_MAX,
+};
+use midds_types::{
+    Country, Producer, RecordingRef, Release, ReleaseDate, ReleaseFormat, ReleasePackaging,
+    ReleaseStatus, ReleaseType, ReleaseV1,
+};
+
+use crate::parse::parse_upc;
+
+/// How a track was referenced by the user: by on-chain MIDDS id (no parsing)
+/// or by a free-form ISRC string (tolerant-parsed at build).
+#[derive(Debug, Clone)]
+enum TrackInput {
+    Midds(u64),
+    Isrc(String),
+}
+
+/// A producer entry the user typed: an ISNI string plus its catalog number,
+/// both parsed / bound-checked at build time.
+#[derive(Debug, Clone)]
+struct ProducerInput {
+    isni_raw: String,
+    catalog_raw: String,
+}
+
+/// Parser-tolerant builder for `Release::V1`.
+///
+/// Same ergonomic contract as [`RecordingBuilder`]: free-form `&str` inputs
+/// are stored verbatim and only parsed/validated on [`build`](Self::build),
+/// where every failing field surfaces as a [`FieldError`] inside
+/// `BuildError::Fields`. Mandatory fields: `upc`, `title`, `artist`, at least
+/// one track, `status`, `release_date`, `country`, `distributor_name`,
+/// `release_type`, `format`, `packaging` (the typed enum / date / country
+/// fields are set through dedicated methods and reported as
+/// [`BuildError::Missing`] when absent).
+#[derive(Debug, Clone, Default)]
+pub struct ReleaseBuilder {
+    upc_raw: Option<String>,
+    title_raw: Option<String>,
+    title_aliases_raw: Vec<String>,
+    artist: Option<PartyInput>,
+    tracks: Vec<TrackInput>,
+    producers_raw: Vec<ProducerInput>,
+    status: Option<ReleaseStatus>,
+    release_date: Option<ReleaseDate>,
+    country: Option<Country>,
+    distributor_raw: Option<String>,
+    release_type: Option<ReleaseType>,
+    format: Option<ReleaseFormat>,
+    packaging: Option<ReleasePackaging>,
+    cover_contributors_raw: Vec<String>,
+    offchain_extension_raw: Option<String>,
+}
+
+impl ReleaseBuilder {
+    /// Empty builder. All mandatory fields must be set before
+    /// [`build`](Self::build).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Free-form UPC / EAN input. Anything [`parse_upc`] accepts works:
+    /// `036000291452`, `0-36000-29145-2`, space-grouped, etc.
+    pub fn upc(mut self, s: &str) -> Self {
+        self.upc_raw = Some(s.to_string());
+        self
+    }
+
+    /// Title. Trimmed of leading/trailing whitespace at build time.
+    pub fn title(mut self, s: &str) -> Self {
+        self.title_raw = Some(s.to_string());
+        self
+    }
+
+    /// Append an alternative / localized title.
+    pub fn add_title_alias(mut self, s: &str) -> Self {
+        self.title_aliases_raw.push(s.to_string());
+        self
+    }
+
+    /// Artist identified by an IPI (any [`parse_ipi`]-accepted format).
+    pub fn artist_ipi(mut self, ipi: &str) -> Self {
+        self.artist = Some(PartyInput {
+            raw: ipi.to_string(),
+            kind: PartyKind::Ipi,
+        });
+        self
+    }
+
+    /// Artist identified by an ISNI (any [`parse_isni`]-accepted format).
+    pub fn artist_isni(mut self, isni: &str) -> Self {
+        self.artist = Some(PartyInput {
+            raw: isni.to_string(),
+            kind: PartyKind::Isni,
+        });
+        self
+    }
+
+    /// Append a track referenced by its on-chain MIDDS id.
+    pub fn add_track_midds(mut self, id: u64) -> Self {
+        self.tracks.push(TrackInput::Midds(id));
+        self
+    }
+
+    /// Append a track referenced by a free-form ISRC string.
+    pub fn add_track_isrc(mut self, isrc: &str) -> Self {
+        self.tracks.push(TrackInput::Isrc(isrc.to_string()));
+        self
+    }
+
+    /// Append a producer (ISNI + its catalog number).
+    pub fn add_producer(mut self, isni: &str, catalog_number: &str) -> Self {
+        self.producers_raw.push(ProducerInput {
+            isni_raw: isni.to_string(),
+            catalog_raw: catalog_number.to_string(),
+        });
+        self
+    }
+
+    pub fn status(mut self, status: ReleaseStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    pub fn release_date(mut self, year: u16, month: u8, day: u8) -> Self {
+        self.release_date = Some(ReleaseDate { year, month, day });
+        self
+    }
+
+    pub fn country(mut self, country: Country) -> Self {
+        self.country = Some(country);
+        self
+    }
+
+    /// Distributor name. Trimmed; must be non-empty within the bound.
+    pub fn distributor_name(mut self, s: &str) -> Self {
+        self.distributor_raw = Some(s.to_string());
+        self
+    }
+
+    pub fn release_type(mut self, release_type: ReleaseType) -> Self {
+        self.release_type = Some(release_type);
+        self
+    }
+
+    pub fn format(mut self, format: ReleaseFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    pub fn packaging(mut self, packaging: ReleasePackaging) -> Self {
+        self.packaging = Some(packaging);
+        self
+    }
+
+    /// Append a cover-artwork contributor name.
+    pub fn add_cover_contributor(mut self, s: &str) -> Self {
+        self.cover_contributors_raw.push(s.to_string());
+        self
+    }
+
+    /// Off-chain extension hash (CIDv1 by client convention). Stored
+    /// verbatim and bound-checked at build time.
+    pub fn offchain_extension(mut self, bytes: &str) -> Self {
+        self.offchain_extension_raw = Some(bytes.to_string());
+        self
+    }
+
+    /// Validate and finalise into a `Release::V1`.
+    ///
+    /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
+    /// [`BuildError::Fields`] with one [`FieldError`] per failing input.
+    pub fn build(self) -> Result<Release, BuildError> {
+        // Mandatory presence checks short-circuit the per-field aggregation
+        // (mirrors `RecordingBuilder::build`).
+        let upc_raw = self.upc_raw.as_deref().ok_or(BuildError::Missing("upc"))?;
+        let title_raw = self
+            .title_raw
+            .as_deref()
+            .ok_or(BuildError::Missing("title"))?;
+        let artist_in = self.artist.as_ref().ok_or(BuildError::Missing("artist"))?;
+        let status = self.status.ok_or(BuildError::Missing("status"))?;
+        let release_date = self
+            .release_date
+            .ok_or(BuildError::Missing("release_date"))?;
+        let country = self.country.ok_or(BuildError::Missing("country"))?;
+        let distributor_raw = self
+            .distributor_raw
+            .as_deref()
+            .ok_or(BuildError::Missing("distributor_name"))?;
+        let release_type = self
+            .release_type
+            .ok_or(BuildError::Missing("release_type"))?;
+        let format = self.format.ok_or(BuildError::Missing("format"))?;
+        let packaging = self.packaging.ok_or(BuildError::Missing("packaging"))?;
+        if self.tracks.is_empty() {
+            return Err(BuildError::Missing("tracks"));
+        }
+
+        let mut errors: Vec<FieldError> = Vec::new();
+
+        let upc = match parse_upc(upc_raw) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                errors.push(FieldError {
+                    field: "upc",
+                    message: format!("`{upc_raw}`: {e}"),
+                });
+                None
+            }
+        };
+
+        let title_trimmed = title_raw.trim();
+        let title = if title_trimmed.is_empty() {
+            errors.push(FieldError {
+                field: "title",
+                message: "title is empty after trimming".into(),
+            });
+            None
+        } else {
+            match BoundedVec::try_from(title_trimmed.as_bytes().to_vec()) {
+                Ok(t) => Some(t),
+                Err(_) => {
+                    errors.push(FieldError {
+                        field: "title",
+                        message: format!(
+                            "title is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
+                            title_trimmed.len()
+                        ),
+                    });
+                    None
+                }
+            }
+        };
+
+        let title_aliases = self.build_title_aliases(&mut errors);
+        let artist = parse_party(artist_in, "artist", &mut errors);
+        let tracks = self.build_tracks(&mut errors);
+        let producers = self.build_producers(&mut errors);
+
+        let distributor_trimmed = distributor_raw.trim();
+        let distributor_name = if distributor_trimmed.is_empty() {
+            errors.push(FieldError {
+                field: "distributor_name",
+                message: "distributor name is empty after trimming".into(),
+            });
+            None
+        } else {
+            match BoundedVec::try_from(distributor_trimmed.as_bytes().to_vec()) {
+                Ok(d) => Some(d),
+                Err(_) => {
+                    errors.push(FieldError {
+                        field: "distributor_name",
+                        message: format!(
+                            "distributor name is {} bytes, exceeds \
+                             {DISTRIBUTOR_NAME_MAX_LEN}-byte bound",
+                            distributor_trimmed.len()
+                        ),
+                    });
+                    None
+                }
+            }
+        };
+
+        let cover_contributors = self.build_cover_contributors(&mut errors);
+
+        let offchain_extension = match &self.offchain_extension_raw {
+            Some(raw) => match OffchainHash::try_from(raw.clone().into_bytes()) {
+                Ok(h) if !h.is_empty() => Some(Some(h)),
+                _ => {
+                    errors.push(FieldError {
+                        field: "offchain_extension",
+                        message: "empty or larger than 64-byte bound".into(),
+                    });
+                    None
+                }
+            },
+            None => Some(None),
+        };
+
+        if !errors.is_empty() {
+            return Err(BuildError::Fields(errors));
+        }
+
+        // Every Option above carries `Some` here because `errors` is empty.
+        let v1 = ReleaseV1 {
+            upc: upc.expect("no errors → upc parsed"),
+            title: title.expect("no errors → title parsed"),
+            title_aliases: title_aliases.expect("no errors → aliases bounded"),
+            artist: artist.expect("no errors → artist parsed"),
+            tracks: tracks.expect("no errors → tracks resolved"),
+            producers: producers.expect("no errors → producers bounded"),
+            status,
+            release_date,
+            country,
+            distributor_name: distributor_name.expect("no errors → distributor parsed"),
+            release_type,
+            format,
+            packaging,
+            cover_contributors: cover_contributors.expect("no errors → cover contributors bounded"),
+            offchain_extension: offchain_extension.expect("no errors → offchain resolved"),
+        };
+        Ok(Release::V1(v1))
+    }
+
+    fn build_title_aliases(
+        &self,
+        errors: &mut Vec<FieldError>,
+    ) -> Option<midds_types::release::TitleAliases> {
+        let mut aliases = Vec::with_capacity(self.title_aliases_raw.len());
+        for (i, raw) in self.title_aliases_raw.iter().enumerate() {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                errors.push(FieldError {
+                    field: "title_aliases",
+                    message: format!("alias #{i} is empty after trimming"),
+                });
+                continue;
+            }
+            match BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
+                Ok(a) => aliases.push(a),
+                Err(_) => errors.push(FieldError {
+                    field: "title_aliases",
+                    message: format!(
+                        "alias #{i} is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
+                        trimmed.len()
+                    ),
+                }),
+            }
+        }
+        if aliases.len() > RELEASE_TITLE_ALIASES_MAX as usize {
+            errors.push(FieldError {
+                field: "title_aliases",
+                message: format!(
+                    "{} aliases provided, exceeds {RELEASE_TITLE_ALIASES_MAX} max",
+                    aliases.len()
+                ),
+            });
+            return None;
+        }
+        BoundedVec::try_from(aliases).ok()
+    }
+
+    fn build_tracks(&self, errors: &mut Vec<FieldError>) -> Option<midds_types::release::Tracks> {
+        let mut tracks: Vec<RecordingRef> = Vec::with_capacity(self.tracks.len());
+        for (i, t) in self.tracks.iter().enumerate() {
+            match t {
+                TrackInput::Midds(id) => tracks.push(RecordingRef::Midds(*id)),
+                TrackInput::Isrc(raw) => match parse_isrc(raw) {
+                    Ok(isrc) => tracks.push(RecordingRef::Isrc(isrc)),
+                    Err(e) => errors.push(FieldError {
+                        field: "tracks",
+                        message: format!("#{i} `{raw}`: {e}"),
+                    }),
+                },
+            }
+        }
+        if tracks.len() > TRACKS_MAX as usize {
+            errors.push(FieldError {
+                field: "tracks",
+                message: format!("{} tracks provided, exceeds {TRACKS_MAX} max", tracks.len()),
+            });
+            return None;
+        }
+        BoundedVec::try_from(tracks).ok()
+    }
+
+    fn build_producers(
+        &self,
+        errors: &mut Vec<FieldError>,
+    ) -> Option<midds_types::release::Producers> {
+        let mut producers: Vec<Producer> = Vec::with_capacity(self.producers_raw.len());
+        for (i, p) in self.producers_raw.iter().enumerate() {
+            let isni = match parse_isni(&p.isni_raw) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    errors.push(FieldError {
+                        field: "producers",
+                        message: format!("#{i} isni `{}`: {e}", p.isni_raw),
+                    });
+                    None
+                }
+            };
+            let catalog_trimmed = p.catalog_raw.trim();
+            let catalog_number = if catalog_trimmed.is_empty() {
+                errors.push(FieldError {
+                    field: "producers",
+                    message: format!("#{i} catalog number is empty after trimming"),
+                });
+                None
+            } else {
+                match BoundedVec::try_from(catalog_trimmed.as_bytes().to_vec()) {
+                    Ok(c) => Some(c),
+                    Err(_) => {
+                        errors.push(FieldError {
+                            field: "producers",
+                            message: format!(
+                                "#{i} catalog number is {} bytes, exceeds \
+                                 {CATALOG_NUMBER_MAX_LEN}-byte bound",
+                                catalog_trimmed.len()
+                            ),
+                        });
+                        None
+                    }
+                }
+            };
+            if let (Some(isni), Some(catalog_number)) = (isni, catalog_number) {
+                producers.push(Producer {
+                    isni,
+                    catalog_number,
+                });
+            }
+        }
+        if producers.len() > RELEASE_PRODUCERS_MAX as usize {
+            errors.push(FieldError {
+                field: "producers",
+                message: format!(
+                    "{} producers provided, exceeds {RELEASE_PRODUCERS_MAX} max",
+                    producers.len()
+                ),
+            });
+            return None;
+        }
+        BoundedVec::try_from(producers).ok()
+    }
+
+    fn build_cover_contributors(
+        &self,
+        errors: &mut Vec<FieldError>,
+    ) -> Option<midds_types::CoverContributors> {
+        let mut names = Vec::with_capacity(self.cover_contributors_raw.len());
+        for (i, raw) in self.cover_contributors_raw.iter().enumerate() {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                errors.push(FieldError {
+                    field: "cover_contributors",
+                    message: format!("#{i} is empty after trimming"),
+                });
+                continue;
+            }
+            match BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
+                Ok(n) => names.push(n),
+                Err(_) => errors.push(FieldError {
+                    field: "cover_contributors",
+                    message: format!(
+                        "#{i} is {} bytes, exceeds {COVER_CONTRIBUTOR_NAME_MAX_LEN}-byte bound",
+                        trimmed.len()
+                    ),
+                }),
+            }
+        }
+        if names.len() > COVER_CONTRIBUTORS_MAX as usize {
+            errors.push(FieldError {
+                field: "cover_contributors",
+                message: format!(
+                    "{} cover contributors provided, exceeds {COVER_CONTRIBUTORS_MAX} max",
+                    names.len()
+                ),
+            });
+            return None;
+        }
+        BoundedVec::try_from(names).ok()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "tests legitimately unwrap")]
+mod release_tests {
+    use super::*;
+    use midds_traits::Midds as _;
+
+    #[test]
+    fn happy_path_builds_and_validates() {
+        let release = ReleaseBuilder::new()
+            .upc("0-36000-29145-2")
+            .title("  Transformer  ")
+            .add_title_alias("Transformeur")
+            .artist_isni("0000 0001 2103 2683")
+            .add_track_isrc("US-RC1-72-00312")
+            .add_track_midds(7)
+            .add_producer("000000012103268X", "RCA LSP-4807")
+            .status(ReleaseStatus::Official)
+            .release_date(1972, 11, 8)
+            .country(Country::Us)
+            .distributor_name("RCA Records")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Vinyl)
+            .packaging(ReleasePackaging::Gatefold)
+            .add_cover_contributor("Mick Rock")
+            .offchain_extension("bafkreigh2akiscaildc")
+            .build()
+            .expect("builds");
+        release
+            .validate_format()
+            .expect("builder output validates on-chain");
+        let Release::V1(v) = release;
+        assert_eq!(v.upc.as_slice(), b"036000291452");
+        assert_eq!(v.title.as_slice(), b"Transformer");
+        assert_eq!(v.tracks.len(), 2);
+        assert_eq!(v.producers.len(), 1);
+    }
+
+    #[test]
+    fn missing_mandatory_field_reported() {
+        let res = ReleaseBuilder::new().title("X").build();
+        assert!(matches!(res, Err(BuildError::Missing("upc"))));
+    }
+
+    #[test]
+    fn missing_tracklist_reported() {
+        let res = ReleaseBuilder::new()
+            .upc("036000291452")
+            .title("X")
+            .artist_ipi("123456789")
+            .status(ReleaseStatus::Official)
+            .release_date(2024, 1, 1)
+            .country(Country::Us)
+            .distributor_name("D")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Cd)
+            .packaging(ReleasePackaging::None)
+            .build();
+        assert!(matches!(res, Err(BuildError::Missing("tracks"))));
+    }
+
+    #[test]
+    fn aggregates_multiple_field_errors() {
+        let res = ReleaseBuilder::new()
+            .upc("not-a-upc")
+            .title("   ")
+            .artist_ipi("12345")
+            .add_track_isrc("bad-isrc")
+            .status(ReleaseStatus::Official)
+            .release_date(2024, 1, 1)
+            .country(Country::Us)
+            .distributor_name("D")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Cd)
+            .packaging(ReleasePackaging::None)
+            .build();
+        let errors = match res {
+            Err(BuildError::Fields(v)) => v,
+            other => panic!("expected Fields(_), got {other:?}"),
+        };
+        let fields: Vec<_> = errors.iter().map(|e| e.field).collect();
+        assert!(fields.contains(&"upc"));
+        assert!(fields.contains(&"title"));
+        assert!(fields.contains(&"artist"));
+        assert!(fields.contains(&"tracks"));
+    }
+
+    #[test]
+    fn empty_producer_catalog_is_rejected() {
+        let res = ReleaseBuilder::new()
+            .upc("036000291452")
+            .title("X")
+            .artist_ipi("123456789")
+            .add_track_midds(1)
+            .add_producer("0000000121032683", "  ")
+            .status(ReleaseStatus::Official)
+            .release_date(2024, 1, 1)
+            .country(Country::Us)
+            .distributor_name("D")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Cd)
+            .packaging(ReleasePackaging::None)
+            .build();
+        let errors = match res {
+            Err(BuildError::Fields(v)) => v,
+            other => panic!("expected Fields(_), got {other:?}"),
+        };
+        assert_eq!(errors[0].field, "producers");
+    }
+}

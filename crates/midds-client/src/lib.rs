@@ -33,6 +33,7 @@ pub mod error;
 pub mod musical_works;
 pub mod pallet;
 pub mod recordings;
+pub mod releases;
 pub mod tx;
 
 pub use error::Error;
@@ -41,6 +42,7 @@ pub use pallet::{
     DepositInfo, DepositReceipt, FixedU128Raw, PalletApi, PricingSnapshot, fixed_u128_to_f64,
 };
 pub use recordings::RecordingsApi;
+pub use releases::ReleasesApi;
 pub use tx::wait_for_in_block;
 
 pub use subxt;
@@ -91,6 +93,15 @@ impl MiddsClient {
     /// node that lacks it. See [`crate::recordings`] for the rationale.
     pub fn recordings(&self) -> RecordingsApi<'_> {
         PalletApi::new(self, recordings::PALLET_NAME, recordings::RUNTIME_API_NAME)
+    }
+
+    /// Façade for the `Releases` pallet instance.
+    ///
+    /// Type-checked and ready, but the `Releases` instance is not yet wired
+    /// in the `../Allfeat` runtime — calls will fail at runtime against a
+    /// node that lacks it. See [`crate::releases`] for the rationale.
+    pub fn releases(&self) -> ReleasesApi<'_> {
+        PalletApi::new(self, releases::PALLET_NAME, releases::RUNTIME_API_NAME)
     }
 
     /// Read the current nonce for `account_id` at the latest finalised block.

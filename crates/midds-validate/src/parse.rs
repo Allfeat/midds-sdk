@@ -8,7 +8,7 @@
 
 use std::sync::LazyLock;
 
-use midds_traits::{Ipi, Isni, Isrc, Iswc};
+use midds_traits::{Ipi, Isni, Isrc, Iswc, Upc};
 use regex::Regex;
 
 use crate::error::ParseError;
@@ -87,6 +87,28 @@ pub fn parse_isrc(s: &str) -> Result<Isrc, ParseError> {
         out.push_str(&caps[i]);
     }
     Isrc::try_from(out.into_bytes()).map_err(|_| ParseError::OutOfBounds)
+}
+
+/// Parse a tolerant UPC / EAN string into the canonical digits-only form
+/// (12 digits for UPC-A, 13 for EAN-13 / GTIN-13).
+///
+/// Accepted shapes: barcodes are quoted with all kinds of spacing and
+/// hyphenation (`4 006381 333931`, `0-36000-29145-2`, `978-3-16-148410-0`),
+/// so every ASCII space and `-` is stripped before the digit/length check.
+/// The check digit is **not** verified here — that is the warning-only
+/// `verify_upc_checksum` in `crate::checksum`.
+pub fn parse_upc(s: &str) -> Result<Upc, ParseError> {
+    let cleaned: Vec<u8> = s
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b'-')
+        .collect();
+    if cleaned.len() != 12 && cleaned.len() != 13 {
+        return Err(ParseError::PatternMismatch);
+    }
+    if !cleaned.iter().all(u8::is_ascii_digit) {
+        return Err(ParseError::PatternMismatch);
+    }
+    Upc::try_from(cleaned).map_err(|_| ParseError::OutOfBounds)
 }
 
 #[cfg(test)]
@@ -247,5 +269,42 @@ mod tests {
     #[test]
     fn isrc_pattern_mismatch_empty() {
         assert_eq!(parse_isrc(""), Err(ParseError::PatternMismatch));
+    }
+
+    // ---- UPC / EAN --------------------------------------------------------
+
+    #[test]
+    fn upc_canonical_round_trips() {
+        assert_eq!(
+            parse_upc("036000291452").unwrap().as_slice(),
+            b"036000291452"
+        );
+        assert_eq!(
+            parse_upc("4006381333931").unwrap().as_slice(),
+            b"4006381333931"
+        );
+    }
+
+    #[test]
+    fn upc_strips_separators_and_whitespace() {
+        assert_eq!(
+            parse_upc("0-36000-29145-2").unwrap().as_slice(),
+            b"036000291452"
+        );
+        assert_eq!(
+            parse_upc(" 4 006381 333931 ").unwrap().as_slice(),
+            b"4006381333931"
+        );
+    }
+
+    #[test]
+    fn upc_pattern_mismatch() {
+        assert_eq!(parse_upc("03600029145"), Err(ParseError::PatternMismatch));
+        assert_eq!(
+            parse_upc("40063813339311"),
+            Err(ParseError::PatternMismatch)
+        );
+        assert_eq!(parse_upc("03600029145X"), Err(ParseError::PatternMismatch));
+        assert_eq!(parse_upc(""), Err(ParseError::PatternMismatch));
     }
 }

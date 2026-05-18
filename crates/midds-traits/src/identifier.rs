@@ -13,6 +13,9 @@ pub type Isni = MiddsString<16>;
 pub type Ipi = MiddsString<11>;
 /// ISRC: 2 alpha country + 3 alphanumeric registrant + 2-digit year + 5 digits.
 pub type Isrc = MiddsString<12>;
+/// UPC / EAN barcode keying a `Release`: a GTIN-12 (UPC-A, 12 digits) or
+/// GTIN-13 (EAN-13, 13 digits). Bound is 13 — the wider of the two.
+pub type Upc = MiddsString<13>;
 /// Off-chain extension hash. Opaque on-chain; CIDv1 by client convention.
 pub type OffchainHash = MiddsString<64>;
 
@@ -72,6 +75,20 @@ pub fn validate_isrc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
+/// UPC-A (12 digits) or EAN-13 / GTIN-13 (13 digits), all decimal. The
+/// trailing check digit is **not** verified on-chain — like every other
+/// identifier, structure only; the warning-only GTIN mod-10 verifier lives
+/// in `midds-validate`.
+pub fn validate_upc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.len() != 12 && b.len() != 13 {
+        return Err(MiddsFormatError::OutOfBounds);
+    }
+    if !b.iter().all(u8::is_ascii_digit) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    Ok(())
+}
+
 pub fn validate_offchain_hash(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.is_empty() {
         return Err(MiddsFormatError::EmptyMandatoryField);
@@ -96,6 +113,7 @@ mod tests {
         assert_eq!(<Isni as MaxEncodedLen>::max_encoded_len(), 1 + 16);
         assert_eq!(<Ipi as MaxEncodedLen>::max_encoded_len(), 1 + 11);
         assert_eq!(<Isrc as MaxEncodedLen>::max_encoded_len(), 1 + 12);
+        assert_eq!(<Upc as MaxEncodedLen>::max_encoded_len(), 1 + 13);
         // 64 bytes ⇒ 2-byte Compact prefix + 64 bytes.
         assert_eq!(<OffchainHash as MaxEncodedLen>::max_encoded_len(), 2 + 64);
     }
@@ -226,6 +244,39 @@ mod tests {
     fn isrc_invalid_year_or_designation() {
         assert_eq!(
             validate_isrc_format(b"USRC1760A839"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn upc_pass() {
+        // UPC-A (12 digits) and EAN-13 / GTIN-13 (13 digits).
+        assert!(validate_upc_format(b"036000291452").is_ok());
+        assert!(validate_upc_format(b"4006381333931").is_ok());
+        assert!(validate_upc_format(b"000000000000").is_ok());
+    }
+
+    #[test]
+    fn upc_wrong_length() {
+        assert_eq!(
+            validate_upc_format(b"03600029145"),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+        assert_eq!(
+            validate_upc_format(b"40063813339311"),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+        assert_eq!(validate_upc_format(b""), Err(MiddsFormatError::OutOfBounds));
+    }
+
+    #[test]
+    fn upc_invalid_charset() {
+        assert_eq!(
+            validate_upc_format(b"03600029145X"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+        assert_eq!(
+            validate_upc_format(b"40063813339A"),
             Err(MiddsFormatError::InvalidCharset),
         );
     }

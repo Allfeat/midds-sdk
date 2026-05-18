@@ -268,6 +268,12 @@ pub enum MiddsKind {
     /// generation and reporting are fully functional offline.
     #[value(name = "recording")]
     Recording,
+    /// `Release::V1`, deposited against the `Releases` instance. Like
+    /// `Recording`, the runtime-side `Releases` instance lives in
+    /// `../Allfeat` and is not wired yet; payload generation and reporting
+    /// are fully functional offline.
+    #[value(name = "release")]
+    Release,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]

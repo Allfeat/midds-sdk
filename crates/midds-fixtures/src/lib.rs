@@ -35,14 +35,16 @@ pub mod identifiers;
 pub mod musical_work;
 pub mod pathological;
 pub mod recording;
+pub mod release;
 pub mod rng;
 
 pub use musical_work::MusicalWorkBuilder;
 pub use recording::RecordingBuilder;
+pub use release::ReleaseBuilder;
 pub use rng::seeded_rng;
 
 use midds_traits::Midds;
-use midds_types::{MusicalWork, Recording};
+use midds_types::{MusicalWork, Recording, Release};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -122,6 +124,19 @@ pub fn gen_n_recording(seed: u64, count: u32) -> Vec<Recording> {
         .collect()
 }
 
+/// Deterministically generate `count` distinct `Release` records.
+///
+/// Same reproducibility contract as [`gen_n`]: identical `(seed, count)`
+/// always yields the same `Vec<Release>` byte-for-byte, including across
+/// processes (`ChaCha20Rng`). Each record's UPC is derived from its sequence
+/// number so the canonical identifiers are guaranteed unique within the batch.
+pub fn gen_n_release(seed: u64, count: u32) -> Vec<Release> {
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    (0..count)
+        .map(|i| release::random_with_upc_index(&mut rng, i))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +207,66 @@ mod tests {
             let corpus = <MusicalWorkFixtures as MiddsFixtures>::corpus();
             for w in &corpus {
                 w.validate_format().expect("corpus payload validates");
+            }
+        }
+    }
+
+    #[test]
+    fn gen_n_release_is_deterministic_and_unique() {
+        use midds_traits::Midds as _;
+        let a = gen_n_release(0xDEAD_BEEF, 64);
+        let b = gen_n_release(0xDEAD_BEEF, 64);
+        assert_eq!(a, b);
+        let mut ids: Vec<_> = a.iter().map(|r| r.identifier()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), a.len(), "UPCs must be unique");
+        for r in &a {
+            r.validate_format().expect("generated payload validates");
+        }
+    }
+
+    /// Same consistency sweep for `ReleaseFixtures`, including the
+    /// index-keyed size-class constructors that back `bench fees`.
+    #[test]
+    fn release_fixtures_trait_is_consistent() {
+        use crate::release::ReleaseFixtures;
+        use midds_traits::Midds as _;
+
+        let bulk = <ReleaseFixtures as MiddsFixtures>::gen_n(0xCAFE, 8);
+        assert_eq!(bulk.len(), 8);
+        for r in &bulk {
+            r.validate_format().expect("gen_n payload validates");
+        }
+
+        let pathological = <ReleaseFixtures as MiddsFixtures>::pathological();
+        assert!(!pathological.is_empty());
+        for r in &pathological {
+            r.validate_format()
+                .expect("pathological boundary payload validates");
+        }
+
+        let mut rng = seeded_rng(0x5EED);
+        let mut ids = Vec::new();
+        for i in 0..8u32 {
+            let real = <ReleaseFixtures as MiddsFixtures>::random_with_index(&mut rng, i);
+            let min = <ReleaseFixtures as MiddsFixtures>::min_size_with_index(i);
+            let max = <ReleaseFixtures as MiddsFixtures>::max_size_with_index(i);
+            for r in [&real, &min, &max] {
+                r.validate_format().expect("index-keyed payload validates");
+            }
+            ids.push(min.identifier().clone());
+        }
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 8, "min_size_with_index UPCs must be unique");
+
+        #[cfg(feature = "corpus")]
+        {
+            let corpus = <ReleaseFixtures as MiddsFixtures>::corpus();
+            assert!(!corpus.is_empty());
+            for r in &corpus {
+                r.validate_format().expect("corpus payload validates");
             }
         }
     }

@@ -7,16 +7,19 @@
 
 use frame_support::BoundedVec;
 use midds_traits::{Isni, Iswc, MiddsFormatError};
+use midds_types::release as rel;
 use midds_types::{
-    CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Creator, CreatorId,
-    CreatorRole, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1,
-    OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PitchClass,
-    ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN,
-    WORK_REFERENCES_MAX, WorkRef, WorkType,
+    CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Country, Creator,
+    CreatorId, CreatorRole, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
+    MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PitchClass,
+    Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion, Release,
+    ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
+    TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef, WorkType,
 };
 
 use crate::identifiers::{
     ipi_from_stem, isni_from_body, isrc_for_index, iswc_for_index, iswc_from_work_code,
+    upc_for_index,
 };
 
 // -----------------------------------------------------------------------------
@@ -259,6 +262,137 @@ pub fn invalid_recording_work_iswc_prefix() -> (Recording, MiddsFormatError) {
     )
 }
 
+// -----------------------------------------------------------------------------
+// Release — size extremes
+// -----------------------------------------------------------------------------
+
+/// Minimum-size valid `Release`: a 12-digit UPC-A, smallest non-empty title,
+/// an IPI artist, a single cheapest `RecordingRef::Midds` track, every
+/// collection empty and every optional field absent.
+pub fn min_size_release() -> Release {
+    let v1 = ReleaseV1 {
+        upc: BoundedVec::try_from(b"000000000000".to_vec()).expect("12-byte UPC-A"),
+        title: BoundedVec::try_from(b"x".to_vec()).expect("1 byte"),
+        title_aliases: BoundedVec::default(),
+        artist: PartyId::Ipi(ipi_from_stem(0, 9)),
+        tracks: BoundedVec::try_from(vec![RecordingRef::Midds(0)]).expect("one track"),
+        producers: BoundedVec::default(),
+        status: ReleaseStatus::Official,
+        release_date: ReleaseDate {
+            year: 0,
+            month: 1,
+            day: 1,
+        },
+        country: Country::Us,
+        distributor_name: BoundedVec::try_from(b"x".to_vec()).expect("1 byte"),
+        release_type: ReleaseType::Album,
+        format: ReleaseFormat::Cd,
+        packaging: ReleasePackaging::None,
+        cover_contributors: BoundedVec::default(),
+        offchain_extension: None,
+    };
+    Release::V1(v1)
+}
+
+/// Maximum-size valid `Release`: every bounded field at capacity, every
+/// optional field present, `PartyId::Isni` and `RecordingRef::Isrc`
+/// everywhere (the larger variants). Stable worst-case baseline for fee
+/// benchmarks and SCALE-encoding tests.
+pub fn max_size_release() -> Release {
+    let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
+    let aliases: Vec<_> = (0..rel::TITLE_ALIASES_MAX)
+        .map(|_| BoundedVec::try_from(vec![b'a'; TITLE_MAX_LEN as usize]).expect("alias at bound"))
+        .collect();
+    let isni_at = |i: u32| {
+        let body: [u8; 15] = core::array::from_fn(|j| ((i + j as u32 + 1) % 10) as u8);
+        isni_from_body(body)
+    };
+    let tracks: Vec<RecordingRef> = (0..rel::TRACKS_MAX)
+        .map(|i| RecordingRef::Isrc(isrc_for_index(i)))
+        .collect();
+    let producers: Vec<Producer> = (0..rel::PRODUCERS_MAX)
+        .map(|i| Producer {
+            isni: isni_at(i),
+            catalog_number: BoundedVec::try_from(vec![b'c'; rel::CATALOG_NUMBER_MAX_LEN as usize])
+                .expect("catalog at bound"),
+        })
+        .collect();
+    let cover_contributors: Vec<_> = (0..rel::COVER_CONTRIBUTORS_MAX)
+        .map(|_| {
+            BoundedVec::try_from(vec![b'n'; rel::COVER_CONTRIBUTOR_NAME_MAX_LEN as usize])
+                .expect("cover name at bound")
+        })
+        .collect();
+    let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
+    let v1 = ReleaseV1 {
+        upc: upc_for_index(0), // 13-byte EAN-13 saturates the 13-byte bound
+        title,
+        title_aliases: BoundedVec::try_from(aliases).expect("aliases at bound"),
+        artist: PartyId::Isni(isni_at(99)),
+        tracks: BoundedVec::try_from(tracks).expect("tracks at bound"),
+        producers: BoundedVec::try_from(producers).expect("producers at bound"),
+        status: ReleaseStatus::Official,
+        release_date: ReleaseDate {
+            year: u16::MAX,
+            month: 12,
+            day: 31,
+        },
+        country: Country::Us,
+        distributor_name: BoundedVec::try_from(vec![b'd'; rel::DISTRIBUTOR_NAME_MAX_LEN as usize])
+            .expect("distributor at bound"),
+        release_type: ReleaseType::Album,
+        format: ReleaseFormat::Cd,
+        packaging: ReleasePackaging::None,
+        cover_contributors: BoundedVec::try_from(cover_contributors)
+            .expect("cover contributors at bound"),
+        offchain_extension: Some(offchain),
+    };
+    Release::V1(v1)
+}
+
+// -----------------------------------------------------------------------------
+// Release — invalid payloads paired with the expected error
+// -----------------------------------------------------------------------------
+
+/// UPC with a non-digit byte. Triggers `InvalidCharset`.
+pub fn invalid_release_upc_bad_charset() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.upc = BoundedVec::try_from(b"00000000000X".to_vec()).expect("12 bytes");
+    (Release::V1(v1), MiddsFormatError::InvalidCharset)
+}
+
+/// UPC of an unsupported length. Triggers `OutOfBounds`.
+pub fn invalid_release_upc_wrong_length() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.upc = BoundedVec::try_from(b"0000000".to_vec()).expect("7 bytes ≤ 13");
+    (Release::V1(v1), MiddsFormatError::OutOfBounds)
+}
+
+/// `Release` with an empty title. Triggers `EmptyMandatoryField`.
+pub fn invalid_release_empty_title() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.title = BoundedVec::default();
+    (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
+}
+
+/// `Release` with an empty mandatory tracklist. Triggers `EmptyMandatoryField`.
+pub fn invalid_release_empty_tracklist() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.tracks = BoundedVec::default();
+    (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
+}
+
+/// `Release` with an out-of-range release-date month. Triggers `OutOfBounds`.
+pub fn invalid_release_bad_date() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.release_date = ReleaseDate {
+        year: 2024,
+        month: 13,
+        day: 1,
+    };
+    (Release::V1(v1), MiddsFormatError::OutOfBounds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +474,48 @@ mod tests {
         ] {
             let (recording, expected) = ctor();
             let err = recording.validate_format().expect_err("payload must fail");
+            assert_eq!(err, expected);
+        }
+    }
+
+    #[test]
+    fn release_min_size_validates() {
+        min_size_release()
+            .validate_format()
+            .expect("min size validates");
+    }
+
+    #[test]
+    fn release_max_size_validates_and_saturates_bound() {
+        let release = max_size_release();
+        release.validate_format().expect("max size validates");
+        let max = <Release as MaxEncodedLen>::max_encoded_len();
+        assert_eq!(
+            parity_scale_codec::Encode::encoded_size(&release),
+            max,
+            "max-size Release must hit MaxEncodedLen exactly"
+        );
+    }
+
+    #[test]
+    fn release_min_smaller_than_max_in_encoded_bytes() {
+        use parity_scale_codec::Encode;
+        let min = min_size_release().encoded_size();
+        let max = max_size_release().encoded_size();
+        assert!(min < max);
+    }
+
+    #[test]
+    fn release_invalid_constructors_match_expected_error() {
+        for ctor in [
+            invalid_release_upc_bad_charset as fn() -> _,
+            invalid_release_upc_wrong_length,
+            invalid_release_empty_title,
+            invalid_release_empty_tracklist,
+            invalid_release_bad_date,
+        ] {
+            let (release, expected) = ctor();
+            let err = release.validate_format().expect_err("payload must fail");
             assert_eq!(err, expected);
         }
     }

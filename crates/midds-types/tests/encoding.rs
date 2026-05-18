@@ -18,7 +18,8 @@
 
 use midds_fixtures::musical_work::strategy::{arb_musical_work, arb_musical_work_max_size};
 use midds_fixtures::recording::strategy::{arb_recording, arb_recording_max_size};
-use midds_types::{MusicalWork, Recording};
+use midds_fixtures::release::strategy::{arb_release, arb_release_max_size};
+use midds_types::{MusicalWork, Recording, Release};
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use proptest::prelude::*;
 
@@ -131,5 +132,54 @@ proptest! {
         let decoded = Recording::decode(&mut &encoded[..])
             .expect("SCALE-decode must succeed at MaxEncodedLen");
         prop_assert_eq!(decoded, recording);
+    }
+}
+
+proptest! {
+    #![proptest_config(proptest_config())]
+
+    /// SCALE codec roundtrip for `Release` — same backstop as the
+    /// `MusicalWork` / `Recording` cases: any change to the type tree that
+    /// breaks encoding fails here before it reaches the chain.
+    #[test]
+    fn release_scale_roundtrip(release in arb_release()) {
+        let encoded = release.encode();
+        let decoded = Release::decode(&mut &encoded[..])
+            .expect("SCALE-decode must succeed on freshly-encoded payload");
+        prop_assert_eq!(decoded, release);
+    }
+
+    /// Encoded size must never exceed `MaxEncodedLen` — the bound the pallet
+    /// uses to calibrate `DepositPerByte` and to size benchmarks for the
+    /// `Releases` instance.
+    #[test]
+    fn release_encoded_size_within_max_encoded_len(release in arb_release()) {
+        let max = <Release as MaxEncodedLen>::max_encoded_len();
+        prop_assert!(release.encoded_size() <= max);
+    }
+
+    /// JSON roundtrip via serde: guards the off-chain wire (CLI, RPC,
+    /// fixtures) which depends on lossless `Release` JSON.
+    #[test]
+    fn release_serde_json_roundtrip(release in arb_release()) {
+        let json = serde_json::to_string(&release)
+            .expect("serde-serialize must succeed on a valid payload");
+        let decoded: Release = serde_json::from_str(&json)
+            .expect("serde-deserialize must succeed on freshly-serialized payload");
+        prop_assert_eq!(decoded, release);
+    }
+
+    /// Worst-case `Release` payloads (every bounded field saturated) must
+    /// still roundtrip and hit `MaxEncodedLen` exactly. Pins the bound to the
+    /// encoding crate where the pallet consumes it.
+    #[test]
+    fn release_max_size_payload_roundtrips_at_bound(release in arb_release_max_size()) {
+        let max = <Release as MaxEncodedLen>::max_encoded_len();
+        prop_assert_eq!(release.encoded_size(), max);
+
+        let encoded = release.encode();
+        let decoded = Release::decode(&mut &encoded[..])
+            .expect("SCALE-decode must succeed at MaxEncodedLen");
+        prop_assert_eq!(decoded, release);
     }
 }

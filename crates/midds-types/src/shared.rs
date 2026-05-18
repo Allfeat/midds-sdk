@@ -9,8 +9,8 @@
 //! `midds_types` re-exports keep the public names stable.
 
 use midds_traits::{
-    Ipi, Isni, Iswc, MiddsFormatError, MiddsId, MiddsString, validate_ipi_format,
-    validate_isni_format, validate_iswc_format,
+    Ipi, Isni, Isrc, Iswc, MiddsFormatError, MiddsId, MiddsString, validate_ipi_format,
+    validate_isni_format, validate_isrc_format, validate_iswc_format,
 };
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -133,6 +133,32 @@ impl WorkRef {
         match self {
             Self::Midds(_) => Ok(()),
             Self::Iswc(i) => validate_iswc_format(i),
+        }
+    }
+}
+
+/// Reference to a recording, either by its on-chain MIDDS id (once the
+/// recording itself is registered) or by its external ISRC (for recordings
+/// not — or not yet — on-chain). The exact `Recording`-side analogue of
+/// [`WorkRef`]: the `Midds` variant is the cheapest on-chain reference
+/// (8 bytes, no string), the ISRC variant keeps a `Release` tracklist usable
+/// before each referenced recording is registered.
+#[derive(
+    Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum RecordingRef {
+    /// On-chain `Recording` MIDDS id.
+    Midds(MiddsId),
+    /// External ISRC of the recording.
+    Isrc(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Isrc),
+}
+
+impl RecordingRef {
+    pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
+        match self {
+            Self::Midds(_) => Ok(()),
+            Self::Isrc(i) => validate_isrc_format(i),
         }
     }
 }

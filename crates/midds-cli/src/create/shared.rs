@@ -1,0 +1,148 @@
+//! Cross-type domain composites for the `create` wizard.
+//!
+//! These mirror the shapes in `midds_types::shared` (and the two ISO
+//! tag-byte enums) that more than one builder needs: party identifiers,
+//! work/recording references, a diatonic key, a country / language code and
+//! a release date. Kept apart from the generic widgets in
+//! [`super::prompts`] — these know the MIDDS domain, those don't.
+
+use anyhow::{Context, Result};
+use dialoguer::Input;
+// The structural validators live in `midds_traits`; the per-field prompt
+// loops call them so a malformed code is rejected before the payload is ever
+// assembled.
+use midds_traits::{
+    validate_ipi_format, validate_isni_format, validate_isrc_format, validate_iswc_format,
+};
+use midds_types::{
+    Country, Language, Mode, MusicalKey, PartyId, PitchClass, RecordingRef, ReleaseDate, WorkRef,
+};
+
+use crate::create::prompts;
+use crate::ui;
+
+/// A party identifier (IPI or ISNI). Backs `artist`, every `creator`,
+/// `performers`, `contributors`.
+pub fn party_id(label: &str) -> Result<PartyId> {
+    match prompts::select(
+        label,
+        &[("IPI — 9–11 digits", 0u8), ("ISNI — 16 chars", 1u8)],
+        0,
+    )? {
+        0 => Ok(PartyId::Ipi(prompts::identifier::<11>(
+            "IPI",
+            validate_ipi_format,
+            "00052210040",
+        )?)),
+        _ => Ok(PartyId::Isni(prompts::identifier::<16>(
+            "ISNI",
+            validate_isni_format,
+            "0000000121032683",
+        )?)),
+    }
+}
+
+/// A reference to a musical work: cheapest on-chain `MiddsId`, or an external
+/// ISWC for a work not (yet) registered.
+pub fn work_ref(label: &str) -> Result<WorkRef> {
+    match prompts::select(
+        label,
+        &[("External ISWC", 0u8), ("On-chain MusicalWork id", 1u8)],
+        0,
+    )? {
+        0 => Ok(WorkRef::Iswc(prompts::identifier::<11>(
+            "ISWC",
+            validate_iswc_format,
+            "T0345246801",
+        )?)),
+        _ => Ok(WorkRef::Midds(prompts::midds_id("MusicalWork MIDDS id")?)),
+    }
+}
+
+/// A reference to a recording: on-chain `MiddsId`, or an external ISRC.
+pub fn recording_ref(label: &str) -> Result<RecordingRef> {
+    match prompts::select(
+        label,
+        &[("External ISRC", 0u8), ("On-chain Recording id", 1u8)],
+        0,
+    )? {
+        0 => Ok(RecordingRef::Isrc(prompts::identifier::<12>(
+            "ISRC",
+            validate_isrc_format,
+            "USRC17607839",
+        )?)),
+        _ => Ok(RecordingRef::Midds(prompts::midds_id(
+            "Recording MIDDS id",
+        )?)),
+    }
+}
+
+/// A diatonic key (pitch class + major/minor).
+pub fn musical_key(label: &str) -> Result<MusicalKey> {
+    ui::hint(label);
+    let pitch = prompts::select(
+        "Pitch class",
+        &[
+            ("C", PitchClass::C),
+            ("C♯ / D♭", PitchClass::CSharp),
+            ("D", PitchClass::D),
+            ("D♯ / E♭", PitchClass::DSharp),
+            ("E", PitchClass::E),
+            ("F", PitchClass::F),
+            ("F♯ / G♭", PitchClass::FSharp),
+            ("G", PitchClass::G),
+            ("G♯ / A♭", PitchClass::GSharp),
+            ("A", PitchClass::A),
+            ("A♯ / B♭", PitchClass::ASharp),
+            ("B", PitchClass::B),
+        ],
+        0,
+    )?;
+    let mode = prompts::select("Mode", &[("Major", Mode::Major), ("Minor", Mode::Minor)], 0)?;
+    Ok(MusicalKey { pitch, mode })
+}
+
+/// An ISO 3166-1 alpha-2 country code, resolved case-insensitively to the
+/// closed `Country` enum (the field is a single SCALE tag byte on-chain).
+pub fn country(label: &str) -> Result<Country> {
+    let raw = Input::<String>::with_theme(&ui::theme())
+        .with_prompt(format!(
+            "{label} (ISO 3166-1 alpha-2 — e.g. US, FR, GB, JP)"
+        ))
+        .validate_with(|s: &String| -> Result<(), String> {
+            Country::from_code_ignore_ascii_case(s.trim().as_bytes())
+                .map(|_| ())
+                .ok_or_else(|| "unknown ISO 3166-1 alpha-2 code".to_string())
+        })
+        .interact_text()
+        .context("read country")?;
+    Ok(Country::from_code_ignore_ascii_case(raw.trim().as_bytes())
+        .expect("validated by the prompt loop"))
+}
+
+/// An ISO 639-1 alpha-2 language code, resolved case-insensitively to the
+/// closed `Language` enum.
+pub fn language(label: &str) -> Result<Language> {
+    let raw = Input::<String>::with_theme(&ui::theme())
+        .with_prompt(format!("{label} (ISO 639-1 alpha-2 — e.g. en, fr, es, ja)"))
+        .validate_with(|s: &String| -> Result<(), String> {
+            Language::from_code_ignore_ascii_case(s.trim().as_bytes())
+                .map(|_| ())
+                .ok_or_else(|| "unknown ISO 639-1 alpha-2 code".to_string())
+        })
+        .interact_text()
+        .context("read language")?;
+    Ok(Language::from_code_ignore_ascii_case(raw.trim().as_bytes())
+        .expect("validated by the prompt loop"))
+}
+
+/// A strict calendar date. `year` is intentionally uncapped (announced /
+/// future-dated releases stay representable — `docs/validation.md` §7);
+/// `month`/`day` are structurally range-checked, matching the on-chain rule.
+pub fn release_date(label: &str) -> Result<ReleaseDate> {
+    ui::hint(label);
+    let year = prompts::number::<u16>("Year", None)?;
+    let month = prompts::int_in_range::<u8>("Month", 1, 12, None)?;
+    let day = prompts::int_in_range::<u8>("Day", 1, 31, None)?;
+    Ok(ReleaseDate { year, month, day })
+}

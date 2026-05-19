@@ -43,9 +43,11 @@ cargo clippy --all-targets --all-features
 # Format
 cargo fmt --all
 
-# CLI binary
-cargo run -p midds-cli -- <args>          # bin name is `midds`
-cargo run -p midds-cli -- validate T1234567890 --type iswc
+# CLI binary (bin name is `midds`)
+cargo run -p midds-cli                     # no args → interactive launcher (banner + menu)
+cargo run -p midds-cli -- create --type musical-work   # offline payload builder → SCALE hex + JSON
+cargo run -p midds-cli -- create --type release --format json --out r.json
+cargo run -p midds-cli -- seed --midds-type recording --count 1000 --auto-fund
 
 # Codegen tool (subxt bindings from a running node's metadata)
 cargo run -p midds-codegen -- --metadata ws://localhost:9944
@@ -77,7 +79,7 @@ pub trait Midds: Parameter + MaxEncodedLen {
 | `midds-validate` | std | Tolerant parsers (`parse_iswc`, …), warning-only checksum verifiers, `MusicalWorkBuilder`. **Never** runs on-chain. |
 | `midds-client` | std | Subxt façade. Uses `subxt::dynamic` (not generated bindings) — see "Client choices" below. |
 | `midds-codegen` | std (bin) | CLI wrapping `subxt-codegen` for **external consumers** (TS via polkadot-api, etc.). `midds-client` itself does not consume its output. |
-| `midds-cli` | std (bin: `midds`) | Operator CLI: deposit, update, query, bulk-deposit (JSONL), validate offline. |
+| `midds-cli` | std (bin: `midds`) | Interactive operator CLI. `create`: offline guided MIDDS builder → validated SCALE hex + JSON (no node). `seed` / `bench`: live-node mass-seed + fee/throughput. No-arg launch = banner + menu. `console`/`indicatif`/`dialoguer` UX; chrome→stderr, payload→stdout. No admin/sudo commands. |
 
 ### Pallet (`pallet-midds`) mechanics
 

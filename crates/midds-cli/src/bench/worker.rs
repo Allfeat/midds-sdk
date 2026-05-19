@@ -14,7 +14,7 @@
 //! (e.g. throughput shipped without funding or nonce caching for months —
 //! see the rationale on [`fetch_signer_nonce`]).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use midds_client::{
@@ -36,9 +36,8 @@ use tokio::{
 pub(crate) type ApiOf<M> = for<'a> fn(&'a MiddsClient) -> PalletApi<'a, M>;
 
 use crate::{
-    admin,
     bench::{progress::ProgressPrinter, util::partition_round_robin},
-    interactive,
+    funding, interactive,
     signers::{build_signer, derive_signers},
 };
 
@@ -122,14 +121,17 @@ pub(crate) async fn setup_runner<M: Midds>(
     };
     let partitions = partition_round_robin(inputs.payloads, inputs.signer_count as usize);
 
+    let connecting = crate::ui::spinner(&format!("connecting to {}", inputs.url));
     let client = MiddsClient::connect(inputs.url).await?;
     let pricing_at_start = api_of(&client)
         .pricing_snapshot()
         .await
         .context("read pricing snapshot at run start")?;
+    connecting.finish_and_clear();
+    crate::ui::success(&format!("connected to {}", inputs.url));
 
     let fund_amount_per_signer = if inputs.auto_fund {
-        let amount = admin::announce_and_fund(admin::AnnounceAndFundArgs {
+        let amount = funding::announce_and_fund(funding::AnnounceAndFundArgs {
             client: &client,
             api_of,
             partitions: &partitions,
@@ -159,8 +161,8 @@ pub(crate) async fn setup_runner<M: Midds>(
 /// advancing even when no events have arrived.
 ///
 /// `handler` mutates `state` for each incoming event and may render
-/// out-of-band lines via the borrowed printer (call `progress.clear()`
-/// first so the next print lands on a fresh row).
+/// out-of-band lines via [`ProgressPrinter::log`], which prints above the
+/// live bar without corrupting it.
 ///
 /// `progress_of` projects the current `state` into the
 /// `(processed, ok, failed)` counters that the printer renders.
@@ -172,15 +174,14 @@ pub(crate) async fn setup_runner<M: Midds>(
 pub async fn run_progress_consumer<E, S>(
     mut rx: mpsc::UnboundedReceiver<E>,
     total: u32,
-    started: Instant,
     mut state: S,
     mut handler: impl FnMut(E, &mut S, &mut ProgressPrinter),
     progress_of: impl Fn(&S) -> (u32, u32, u32),
 ) -> S {
     let mut progress = ProgressPrinter::new(total);
-    // Render once immediately so the user sees `0/N elapsed=0s` instead of
-    // a blank terminal during the ~6s it takes the first block to finalise.
-    progress.tick(0, 0, 0, started);
+    // Render once immediately so the user sees `0/N` instead of a blank
+    // terminal during the ~6 s it takes the first block to finalise.
+    progress.tick(0, 0, 0);
     let mut heartbeat = interval(Duration::from_millis(500));
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
     // Tokio intervals fire immediately on first poll; consume that so the
@@ -200,7 +201,7 @@ pub async fn run_progress_consumer<E, S>(
             _ = heartbeat.tick() => {}
         }
         let (processed, ok, failed) = progress_of(&state);
-        progress.tick(processed, ok, failed, started);
+        progress.tick(processed, ok, failed);
     }
     progress.finish();
     state

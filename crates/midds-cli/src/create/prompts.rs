@@ -1,0 +1,223 @@
+//! Reusable, typed input widgets for the offline `create` wizard.
+//!
+//! Every MIDDS field shape the three builders need is reduced to one helper
+//! here so the per-type forms stay declarative and the validation feedback is
+//! identical everywhere. All prompts go through the shared [`ui::theme`] and
+//! write to stderr; nothing here touches a node.
+//!
+//! The on-chain `validate_format` is still the source of truth — these helpers
+//! reject the obvious (empty mandatory text, out-of-range numbers, malformed
+//! identifiers) *as you type* so the final validation pass almost never fails,
+//! but the builders re-run `validate_format` regardless.
+
+use std::fmt::Display;
+use std::str::FromStr;
+
+use anyhow::{Context, Result};
+use dialoguer::{Confirm, FuzzySelect, Input, Select};
+use midds_traits::{MiddsFormatError, MiddsString};
+
+use crate::ui;
+
+/// Free-text field backed by a `MiddsString<N>` (byte-length-bounded).
+///
+/// `required` rejects an empty value (mirrors the `EmptyMandatoryField`
+/// `validate_format` rule for mandatory text). The length cap is enforced on
+/// the raw UTF-8 byte count, exactly like the on-chain `BoundedVec` bound.
+pub fn bounded_string<const N: u32>(label: &str, required: bool) -> Result<MiddsString<N>> {
+    let max = N as usize;
+    let input = Input::<String>::with_theme(&ui::theme())
+        .with_prompt(label)
+        .allow_empty(!required)
+        .validate_with(move |s: &String| -> Result<(), String> {
+            if required && s.trim().is_empty() {
+                return Err("required — cannot be empty".into());
+            }
+            if s.len() > max {
+                return Err(format!("{} bytes, exceeds the {max}-byte bound", s.len()));
+            }
+            Ok(())
+        })
+        .interact_text()
+        .with_context(|| format!("read `{label}`"))?;
+    MiddsString::<N>::try_from(input.into_bytes())
+        .map_err(|_| anyhow::anyhow!("`{label}` exceeds its {max}-byte bound"))
+}
+
+/// Optional free-text field: a `set this?` gate, then [`bounded_string`].
+pub fn optional_string<const N: u32>(label: &str) -> Result<Option<MiddsString<N>>> {
+    if !confirm(&format!("Set {label}?"), false)? {
+        return Ok(None);
+    }
+    Ok(Some(bounded_string::<N>(label, true)?))
+}
+
+/// An industry identifier (ISWC / ISNI / IPI / ISRC / UPC / off-chain hash).
+///
+/// `validate` is the matching `midds_traits::validate_*_format`; the prompt
+/// loops until it accepts the input, so a built MIDDS never carries a
+/// structurally invalid identifier. `example` is shown as a hint.
+pub fn identifier<const N: u32>(
+    label: &str,
+    validate: fn(&[u8]) -> Result<(), MiddsFormatError>,
+    example: &str,
+) -> Result<MiddsString<N>> {
+    let raw = Input::<String>::with_theme(&ui::theme())
+        .with_prompt(format!("{label} (e.g. {example})"))
+        .validate_with(move |s: &String| -> Result<(), String> {
+            validate(s.trim().as_bytes()).map_err(|e| format!("{e:?}"))
+        })
+        .interact_text()
+        .with_context(|| format!("read `{label}`"))?;
+    MiddsString::<N>::try_from(raw.trim().as_bytes().to_vec())
+        .map_err(|_| anyhow::anyhow!("`{label}` exceeds its {N}-byte bound"))
+}
+
+/// A number constrained to an inclusive `[min, max]` range. Used for every
+/// year / bpm / month / day / duration / voice-count field; the range is the
+/// one `validate_format` enforces for that field.
+pub fn int_in_range<T>(label: &str, min: T, max: T, default: Option<T>) -> Result<T>
+where
+    T: Copy + PartialOrd + Display + FromStr + Clone + 'static,
+    <T as FromStr>::Err: Display,
+{
+    // Bind the theme: `Input::with_theme(&ui::theme())` would borrow a
+    // temporary that drops before `interact_text` runs.
+    // dialoguer's builders consume `self` and return `Self`, so the chain is
+    // move-based; the optional default is folded in by reassignment.
+    let theme = ui::theme();
+    let mut builder = Input::<T>::with_theme(&theme)
+        .with_prompt(format!("{label} [{min}..={max}]"))
+        .validate_with(move |n: &T| -> Result<(), String> {
+            if *n < min || *n > max {
+                Err(format!("must be within {min}..={max}"))
+            } else {
+                Ok(())
+            }
+        });
+    if let Some(d) = default {
+        builder = builder.default(d);
+    }
+    builder
+        .interact_text()
+        .with_context(|| format!("read `{label}`"))
+}
+
+/// An unconstrained number (no range bracket in the prompt). For fields the
+/// spec deliberately leaves uncapped — `Release.release_date.year`, on-chain
+/// MIDDS ids — where an `[lo..=hi]` hint would be noise.
+pub fn number<T>(label: &str, default: Option<T>) -> Result<T>
+where
+    T: Clone + ToString + FromStr,
+    <T as FromStr>::Err: ToString,
+{
+    let theme = ui::theme();
+    let mut builder = Input::<T>::with_theme(&theme).with_prompt(label);
+    if let Some(d) = default {
+        builder = builder.default(d);
+    }
+    builder
+        .interact_text()
+        .with_context(|| format!("read `{label}`"))
+}
+
+/// A `u64` on-chain MIDDS id (`WorkRef::Midds` / `RecordingRef::Midds`).
+pub fn midds_id(label: &str) -> Result<u64> {
+    number::<u64>(label, None)
+}
+
+/// Optional ranged number: a `set this?` gate, then [`int_in_range`].
+pub fn optional_int_in_range<T>(label: &str, min: T, max: T) -> Result<Option<T>>
+where
+    T: Copy + PartialOrd + Display + FromStr + Clone + 'static,
+    <T as FromStr>::Err: Display,
+{
+    if !confirm(&format!("Set {label}?"), false)? {
+        return Ok(None);
+    }
+    Ok(Some(int_in_range(label, min, max, None)?))
+}
+
+/// Yes/No prompt with an explicit default.
+pub fn confirm(label: &str, default: bool) -> Result<bool> {
+    Confirm::with_theme(&ui::theme())
+        .with_prompt(label)
+        .default(default)
+        .interact()
+        .with_context(|| format!("read `{label}`"))
+}
+
+/// Single-choice picker over labelled variants (short lists: enum tags,
+/// IPI-vs-ISNI, …). Returns the chosen `T` by value.
+pub fn select<T: Clone>(label: &str, choices: &[(&str, T)], default: usize) -> Result<T> {
+    let labels: Vec<&str> = choices.iter().map(|(l, _)| *l).collect();
+    let idx = Select::with_theme(&ui::theme())
+        .with_prompt(label)
+        .items(&labels)
+        .default(default.min(choices.len().saturating_sub(1)))
+        .interact()
+        .with_context(|| format!("pick `{label}`"))?;
+    Ok(choices[idx].1.clone())
+}
+
+/// Type-to-filter picker for the longer closed enums (Genre, …). Same
+/// contract as [`select`] but backed by `dialoguer`'s fuzzy matcher.
+pub fn fuzzy_select<T: Clone>(label: &str, choices: &[(&str, T)]) -> Result<T> {
+    let labels: Vec<&str> = choices.iter().map(|(l, _)| *l).collect();
+    let idx = FuzzySelect::with_theme(&ui::theme())
+        .with_prompt(label)
+        .items(&labels)
+        .default(0)
+        .interact()
+        .with_context(|| format!("pick `{label}`"))?;
+    Ok(choices[idx].1.clone())
+}
+
+/// Build a homogeneous, cardinality-bounded collection.
+///
+/// Returns a plain `Vec<T>`; the caller wraps it in the concrete
+/// `BoundedVec` alias (`Creators`, `Tracks`, …) so the on-chain `MAX` is
+/// enforced once, by the type, with the canonical error. `min` is enforced
+/// here (a non-empty mandatory collection refuses to finish empty); `max`
+/// stops offering "add another" at the cap so the wrap can never fail.
+pub fn collect_bounded<T>(
+    noun: &str,
+    min: usize,
+    max: usize,
+    mut build: impl FnMut(usize) -> Result<T>,
+) -> Result<Vec<T>> {
+    let mut items = Vec::new();
+    loop {
+        let idx = items.len();
+        if idx >= max {
+            ui::info(&format!("reached the {max}-{noun} cap"));
+            break;
+        }
+        // Below `min` the question is "add the next mandatory one?" (default
+        // yes); at/above `min` it's "add another?" (default no) so the happy
+        // path for an optional collection is a single keypress.
+        let need_more = idx < min;
+        let prompt = if idx == 0 {
+            format!("Add a {noun}?")
+        } else {
+            format!("Add another {noun}? ({idx} added)")
+        };
+        let proceed = if need_more {
+            if idx == 0 && min == 1 {
+                // Exactly-one-required collection: don't even ask, just build.
+                true
+            } else {
+                ui::info(&format!("at least {min} {noun}(s) required"));
+                true
+            }
+        } else {
+            confirm(&prompt, false)?
+        };
+        if !proceed {
+            break;
+        }
+        ui::hint(&format!("{noun} #{}", idx + 1));
+        items.push(build(idx).with_context(|| format!("build {noun} #{}", idx + 1))?);
+    }
+    Ok(items)
+}

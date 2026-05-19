@@ -1,38 +1,33 @@
 //! Clap definitions for the `midds` debug CLI.
 //!
-//! V1 ships only the operator debug tooling: `seed` (deterministic mass-seed
-//! of a development node) and `bench` (per-deposit fees + aggregate
-//! throughput). User-facing commands (deposit/update/query/...) are
-//! intentionally absent — those will land once the SDK has a stable client
-//! shape worth exposing.
+//! Three commands: `create` (offline, interactive MIDDS builder that emits a
+//! validated SCALE / JSON payload — no node), and the operator debug tooling
+//! `seed` (deterministic mass-seed of a development node) and `bench`
+//! (per-deposit fees + aggregate throughput). Run `midds` with no argument
+//! for the interactive launcher. On-chain user commands (deposit/update/
+//! query/...) stay the job of `midds-client`, not this CLI.
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
 const DEFAULT_URL: &str = "ws://localhost:9944";
-const DEFAULT_SEED_BASE_SIGNER: &str = "//Alice";
-const DEFAULT_SIGNER_COUNT: u32 = 1;
-const DEFAULT_CONCURRENCY: u32 = 1;
-const DEFAULT_SEED_BATCH_SIZE: u32 = 100;
-const DEFAULT_SEED_FUNDER: &str = "//Alice";
-const DEFAULT_SEED_FUND_MARGIN: f64 = 1.3;
-const DEFAULT_SEED_FUND_BATCH_SIZE: u32 = 100;
-const DEFAULT_FEES_BASE_SIGNER: &str = "//Alice";
+/// Shared default for `--base-signer` and `--funder`. The pre-funded `//Alice`
+/// dev account is always present on a freshly-booted Substrate dev chain.
+const DEFAULT_SIGNER_URI: &str = "//Alice";
+/// Records per inner `Utility::batch_all` call. 100 keeps inclusion latency
+/// reasonable without driving the per-block weight to the cap on realistic
+/// payloads. Applies to deposits *and* funding transfers (`--fund-batch-size`).
+const DEFAULT_BATCH_SIZE: u32 = 100;
+/// Safety multiplier on the computed auto-fund amount: 1.3 covers worst-case
+/// multiplier drift over the run plus per-tx fees.
+const DEFAULT_FUND_MARGIN: f64 = 1.3;
 const DEFAULT_FEES_DISTRIBUTION: SizeDistribution = SizeDistribution::Real;
-const DEFAULT_FEES_SIGNER_COUNT: u32 = 1;
-const DEFAULT_FEES_CONCURRENCY: u32 = 1;
-const DEFAULT_FEES_BATCH_SIZE: u32 = 100;
-const DEFAULT_FEES_FUNDER: &str = "//Alice";
-const DEFAULT_FEES_FUND_MARGIN: f64 = 1.3;
-const DEFAULT_FEES_FUND_BATCH_SIZE: u32 = 100;
-const DEFAULT_THROUGHPUT_BASE_SIGNER: &str = "//Alice";
-const DEFAULT_THROUGHPUT_SIGNER_COUNT: u32 = 4;
+/// `throughput` defaults to 4 derived signers (and 4-wide concurrency) — what
+/// roughly saturates a dev node's block pipeline. `seed` and `bench fees` stay
+/// at a single signer so the simple flow remains snappy and reproducible.
+const DEFAULT_THROUGHPUT_SIGNERS: u32 = 4;
 const DEFAULT_THROUGHPUT_CONCURRENCY: u32 = 4;
-const DEFAULT_THROUGHPUT_BATCH_SIZE: u32 = 100;
-const DEFAULT_THROUGHPUT_FUNDER: &str = "//Alice";
-const DEFAULT_THROUGHPUT_FUND_MARGIN: f64 = 1.3;
-const DEFAULT_THROUGHPUT_FUND_BATCH_SIZE: u32 = 100;
 
 /// MIDDS debug CLI: mass-seed a dev node and benchmark deposits.
 #[derive(Parser, Debug)]
@@ -49,6 +44,26 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Build a MIDDS payload interactively and emit it as validated SCALE
+    /// hex / JSON. Fully offline — never connects to a node.
+    ///
+    /// Every field is prompted with inline validation; the assembled payload
+    /// is then run through the on-chain `validate_format` before it is
+    /// emitted, so what you get is wire-ready. Omit `--type` to pick the
+    /// MIDDS kind interactively.
+    Create {
+        /// MIDDS payload type to build. Omit to be prompted.
+        #[arg(long = "type", value_enum)]
+        midds_type: Option<MiddsKind>,
+        /// Write the payload to this file instead of stdout (JSON, unless
+        /// `--format hex`). The complementary form is still echoed to stderr.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Representation emitted to stdout when `--out` is not given.
+        #[arg(long, value_enum, default_value_t = CreateFormat::Both)]
+        format: CreateFormat,
+    },
+
     /// Mass-seed the node with deterministically-generated MIDDS records.
     ///
     /// `(rng-seed, count)` is the reproducibility key — same pair produces
@@ -73,33 +88,33 @@ pub enum Command {
         #[arg(long = "rng-seed", value_parser = parse_u64_seed)]
         rng_seed: Option<u64>,
         /// Base signer URI; signers are derived as `<base>//1`, `<base>//2`, …
-        #[arg(long = "base-signer", default_value = DEFAULT_SEED_BASE_SIGNER)]
+        #[arg(long = "base-signer", default_value = DEFAULT_SIGNER_URI)]
         base_signer: String,
         /// Number of derived signers used to spread deposits.
-        #[arg(long = "signer-count", default_value_t = DEFAULT_SIGNER_COUNT)]
+        #[arg(long = "signer-count", default_value_t = 1)]
         signer_count: u32,
         /// Maximum signers active at once. Capped at `signer-count`.
-        #[arg(long, default_value_t = DEFAULT_CONCURRENCY)]
+        #[arg(long, default_value_t = 1)]
         concurrency: u32,
         /// Inner deposits per `batch_all` call. Lower if you hit a
         /// per-block weight limit on large payloads; higher to amortise
         /// the per-batch fee. `1` falls back to one extrinsic per record.
-        #[arg(long = "batch-size", default_value_t = DEFAULT_SEED_BATCH_SIZE)]
+        #[arg(long = "batch-size", default_value_t = DEFAULT_BATCH_SIZE)]
         batch_size: u32,
         /// Pre-fund the derived signers before seeding. Funding amount is
         /// computed exactly from the generated payloads + chain constants.
         #[arg(long = "auto-fund")]
         auto_fund: bool,
         /// Funder URI used by `--auto-fund` (defaults to `//Alice`).
-        #[arg(long = "funder", default_value = DEFAULT_SEED_FUNDER)]
+        #[arg(long = "funder", default_value = DEFAULT_SIGNER_URI)]
         funder: String,
         /// Safety multiplier on the computed funding amount. `1.0` = exact
         /// bond cost, no headroom for tx fees / variance.
-        #[arg(long = "fund-margin", default_value_t = DEFAULT_SEED_FUND_MARGIN)]
+        #[arg(long = "fund-margin", default_value_t = DEFAULT_FUND_MARGIN)]
         fund_margin: f64,
         /// Inner transfers per funding `batch_all` call. Independent of
         /// `--batch-size`, which controls deposit batching.
-        #[arg(long = "fund-batch-size", default_value_t = DEFAULT_SEED_FUND_BATCH_SIZE)]
+        #[arg(long = "fund-batch-size", default_value_t = DEFAULT_BATCH_SIZE)]
         fund_batch_size: u32,
         /// Optional path for the JSON seed report.
         #[arg(long)]
@@ -142,22 +157,22 @@ pub enum BenchArgs {
         size_distribution: SizeDistribution,
         /// Base signer URI; with `--signer-count` > 1, signers are derived
         /// as `<base>//1`, `<base>//2`, … (same scheme as `seed`).
-        #[arg(long = "base-signer", default_value = DEFAULT_FEES_BASE_SIGNER)]
+        #[arg(long = "base-signer", default_value = DEFAULT_SIGNER_URI)]
         base_signer: String,
         /// Number of derived signers used to spread deposits. `1` keeps the
         /// classic single-signer behaviour and submits with `--base-signer`
         /// directly.
-        #[arg(long = "signer-count", default_value_t = DEFAULT_FEES_SIGNER_COUNT)]
+        #[arg(long = "signer-count", default_value_t = 1)]
         signer_count: u32,
         /// Maximum signers active at once. Capped at `signer-count`.
-        #[arg(long, default_value_t = DEFAULT_FEES_CONCURRENCY)]
+        #[arg(long, default_value_t = 1)]
         concurrency: u32,
         /// Inner deposits per `batch_all` call. Lower for tighter per-record
         /// `tx_fee` attribution (the runtime emits one `TransactionFeePaid`
         /// per outer extrinsic, so the report amortises the fee across the
         /// batch); higher to amortise the per-batch cost across more records.
         /// `1` falls back to one `batch_all` per record.
-        #[arg(long = "batch-size", default_value_t = DEFAULT_FEES_BATCH_SIZE)]
+        #[arg(long = "batch-size", default_value_t = DEFAULT_BATCH_SIZE)]
         batch_size: u32,
         /// Pre-fund the derived signers from `--funder` before measuring.
         /// Only meaningful with `--signer-count` > 1; the funding amount is
@@ -166,14 +181,14 @@ pub enum BenchArgs {
         #[arg(long = "auto-fund")]
         auto_fund: bool,
         /// Funder URI used by `--auto-fund` (defaults to `//Alice`).
-        #[arg(long = "funder", default_value = DEFAULT_FEES_FUNDER)]
+        #[arg(long = "funder", default_value = DEFAULT_SIGNER_URI)]
         funder: String,
         /// Safety multiplier on the computed funding amount. `1.0` = exact
         /// bond cost, no headroom for tx fees / variance.
-        #[arg(long = "fund-margin", default_value_t = DEFAULT_FEES_FUND_MARGIN)]
+        #[arg(long = "fund-margin", default_value_t = DEFAULT_FUND_MARGIN)]
         fund_margin: f64,
         /// Inner transfers per funding `batch_all` call.
-        #[arg(long = "fund-batch-size", default_value_t = DEFAULT_FEES_FUND_BATCH_SIZE)]
+        #[arg(long = "fund-batch-size", default_value_t = DEFAULT_BATCH_SIZE)]
         fund_batch_size: u32,
         /// 64-bit RNG seed (decimal or `0x`-prefixed hex). Default fixed for
         /// reproducibility across runs.
@@ -210,10 +225,10 @@ pub enum BenchArgs {
         #[arg(long = "duration-secs")]
         duration_secs: Option<u64>,
         /// Base signer URI; signers are derived as `<base>//1`, `<base>//2`, …
-        #[arg(long = "base-signer", default_value = DEFAULT_THROUGHPUT_BASE_SIGNER)]
+        #[arg(long = "base-signer", default_value = DEFAULT_SIGNER_URI)]
         base_signer: String,
         /// Number of derived signers used to spread submissions.
-        #[arg(long = "signer-count", default_value_t = DEFAULT_THROUGHPUT_SIGNER_COUNT)]
+        #[arg(long = "signer-count", default_value_t = DEFAULT_THROUGHPUT_SIGNERS)]
         signer_count: u32,
         /// Maximum signers active at once. Capped at `signer-count`.
         #[arg(long, default_value_t = DEFAULT_THROUGHPUT_CONCURRENCY)]
@@ -221,7 +236,7 @@ pub enum BenchArgs {
         /// Inner deposits per `batch_all` call. Lower if you hit a
         /// per-block weight limit on large payloads; higher to amortise
         /// the per-batch fee. `1` falls back to one extrinsic per record.
-        #[arg(long = "batch-size", default_value_t = DEFAULT_THROUGHPUT_BATCH_SIZE)]
+        #[arg(long = "batch-size", default_value_t = DEFAULT_BATCH_SIZE)]
         batch_size: u32,
         /// Pre-fund the derived signers from `--funder` before measuring.
         /// Funding amount is computed from the chain's `DepositBase` /
@@ -230,14 +245,14 @@ pub enum BenchArgs {
         #[arg(long = "auto-fund")]
         auto_fund: bool,
         /// Funder URI used by `--auto-fund` (defaults to `//Alice`).
-        #[arg(long = "funder", default_value = DEFAULT_THROUGHPUT_FUNDER)]
+        #[arg(long = "funder", default_value = DEFAULT_SIGNER_URI)]
         funder: String,
         /// Safety multiplier on the computed funding amount. `1.0` = exact
         /// bond cost, no headroom for tx fees / variance.
-        #[arg(long = "fund-margin", default_value_t = DEFAULT_THROUGHPUT_FUND_MARGIN)]
+        #[arg(long = "fund-margin", default_value_t = DEFAULT_FUND_MARGIN)]
         fund_margin: f64,
         /// Inner transfers per funding `batch_all` call.
-        #[arg(long = "fund-batch-size", default_value_t = DEFAULT_THROUGHPUT_FUND_BATCH_SIZE)]
+        #[arg(long = "fund-batch-size", default_value_t = DEFAULT_BATCH_SIZE)]
         fund_batch_size: u32,
         /// 64-bit RNG seed for the deterministic payload generator.
         #[arg(long = "rng-seed", value_parser = parse_u64_seed)]
@@ -287,6 +302,23 @@ pub enum SizeDistribution {
     /// Round-robin between `min`, `real`, and `max` payload shapes.
     #[value(name = "mixed")]
     Mixed,
+}
+
+/// Representation `create` emits. `both` prints the SCALE hex *and* the JSON
+/// (the default for a human run); `hex` / `json` isolate one — handy for
+/// piping (`midds create --type release --format hex | …`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum CreateFormat {
+    /// SCALE hex (no `0x` prefix) followed by pretty JSON.
+    #[default]
+    #[value(name = "both")]
+    Both,
+    /// SCALE hex only, no `0x` prefix.
+    #[value(name = "hex")]
+    Hex,
+    /// Canonical pretty JSON only.
+    #[value(name = "json")]
+    Json,
 }
 
 /// Parse a 64-bit seed in decimal or `0x`-prefixed hex form.

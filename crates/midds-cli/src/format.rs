@@ -32,6 +32,19 @@ pub fn plancks(amount: u128) -> String {
     format!("{whole}.{trimmed}")
 }
 
+/// Lowercase hex of a SCALE-encoded payload, no `0x` prefix. The `create`
+/// wizard emits this as the wire-ready blob; a tiny hand-rolled encoder keeps
+/// the CLI free of a `hex` dependency for what is two lines of formatting.
+pub fn hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        // `write!` to a String is infallible.
+        use std::fmt::Write as _;
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,5 +72,15 @@ mod tests {
     #[test]
     fn very_small() {
         assert_eq!(plancks(1), "0.000000000001");
+    }
+
+    #[test]
+    fn hex_empty() {
+        assert_eq!(hex(&[]), "");
+    }
+
+    #[test]
+    fn hex_pads_each_byte_to_two_nibbles() {
+        assert_eq!(hex(&[0x00, 0x0a, 0xff, 0x10]), "000aff10");
     }
 }

@@ -6,7 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Debug CLI for seeding and benchmarking MIDDS deposits against a live node."
+description = "Interactive operator CLI for Allfeat MIDDS: build payloads offline (SCALE/JSON), mass-seed and benchmark a node."
 
 [[bin]]
 name = "midds"
@@ -15,11 +15,18 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
-dialoguer = { workspace = true }
+# `fuzzy-select` gives the type-to-filter picker the `create` wizard uses for
+# the large closed enums (Genre, work/recording references, …); plain `Select`
+# stays fine for short lists.
+dialoguer = { workspace = true, features = ["fuzzy-select"] }
+console = { workspace = true }
+indicatif = { workspace = true }
 midds-client = { workspace = true }
 midds-fixtures = { workspace = true }
 midds-traits = { workspace = true, features = ["std"] }
-midds-types = { workspace = true, features = ["std"] }
+# `serde` is required (on top of `std`) so the offline `create` wizard can emit
+# the built payload as canonical JSON alongside the SCALE hex.
+midds-types = { workspace = true, features = ["std", "serde"] }
 parity-scale-codec = { workspace = true, features = ["std"] }
 rand = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }

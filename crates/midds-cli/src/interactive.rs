@@ -16,6 +16,7 @@ use crate::cli::{SizeDistribution, parse_u64_seed};
 /// subcommand. Mirrors the visible `Command` variants exposed by clap.
 #[derive(Copy, Clone, Debug)]
 pub enum CommandChoice {
+    Create,
     Seed,
     BenchFees,
     BenchThroughput,
@@ -31,8 +32,9 @@ pub enum BenchKindChoice {
 
 /// Ask the user which top-level command they want to run.
 pub fn pick_command() -> Result<CommandChoice> {
-    let theme = ColorfulTheme::default();
+    let theme = crate::ui::theme();
     let labels = [
+        "Create — build a MIDDS payload offline (SCALE / JSON)",
         "Seed — mass-seed a dev node with deterministic MIDDS records",
         "Bench fees — measure bond + tx fee per deposit",
         "Bench throughput — measure aggregate TPS and latency",
@@ -44,16 +46,17 @@ pub fn pick_command() -> Result<CommandChoice> {
         .interact()
         .context("pick command")?;
     Ok(match idx {
-        0 => CommandChoice::Seed,
-        1 => CommandChoice::BenchFees,
-        2 => CommandChoice::BenchThroughput,
+        0 => CommandChoice::Create,
+        1 => CommandChoice::Seed,
+        2 => CommandChoice::BenchFees,
+        3 => CommandChoice::BenchThroughput,
         _ => unreachable!("Select clamped to items.len()"),
     })
 }
 
 /// Ask the user which bench scenario they want to run.
 pub fn pick_bench_kind() -> Result<BenchKindChoice> {
-    let theme = ColorfulTheme::default();
+    let theme = crate::ui::theme();
     let labels = [
         "Fees — bond + tx fee per deposit (sequential per signer; single-signer by default)",
         "Throughput — aggregate TPS and finalisation latency",
@@ -74,7 +77,7 @@ pub fn pick_bench_kind() -> Result<BenchKindChoice> {
 /// Interactive y/N confirmation that bails with an `aborted` error on `false`.
 /// Use for irreversible or expensive ops.
 pub fn confirm_or_abort(prompt: &str, default: bool) -> Result<()> {
-    let answer = Confirm::with_theme(&ColorfulTheme::default())
+    let answer = Confirm::with_theme(&crate::ui::theme())
         .with_prompt(prompt)
         .default(default)
         .interact()
@@ -145,7 +148,7 @@ pub struct ThroughputConfig {
 /// only asked when `auto_fund` is set, otherwise their `defaults` values are
 /// returned untouched.
 pub fn seed_wizard(defaults: SeedConfig) -> Result<SeedConfig> {
-    let theme = ColorfulTheme::default();
+    let theme = crate::ui::theme();
     println!("Interactive seed config. Press Enter to accept the [default].\n");
 
     let count = prompt_u32("Number of records to deposit")?;
@@ -220,7 +223,7 @@ pub fn seed_wizard(defaults: SeedConfig) -> Result<SeedConfig> {
 
 /// Walk the user through every `bench fees` parameter.
 pub fn fees_wizard(defaults: FeesConfig) -> Result<FeesConfig> {
-    let theme = ColorfulTheme::default();
+    let theme = crate::ui::theme();
     println!("Interactive bench fees config. Press Enter to accept the [default].\n");
 
     let count = prompt_u32("Number of records to deposit and measure")?;
@@ -313,7 +316,7 @@ pub fn fees_wizard(defaults: FeesConfig) -> Result<FeesConfig> {
 
 /// Walk the user through every `bench throughput` parameter.
 pub fn throughput_wizard(defaults: ThroughputConfig) -> Result<ThroughputConfig> {
-    let theme = ColorfulTheme::default();
+    let theme = crate::ui::theme();
     println!("Interactive bench throughput config. Press Enter to accept the [default].\n");
 
     let count = prompt_u32("Target number of records to deposit")?;
@@ -433,7 +436,7 @@ fn prompt_fund_details(
 }
 
 fn prompt_u32(prompt: &str) -> Result<u32> {
-    Input::with_theme(&ColorfulTheme::default())
+    Input::with_theme(&crate::ui::theme())
         .with_prompt(prompt)
         .validate_with(|n: &u32| -> Result<(), &'static str> {
             if *n == 0 { Err("must be > 0") } else { Ok(()) }

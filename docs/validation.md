@@ -1,0 +1,258 @@
+# MIDDS SDK — Spécification des règles de validation V1
+
+> Document de référence **canonique** pour la validation champ par champ de
+> chaque type MIDDS. Les règles ci-dessous sont **figées pour V1** : un
+> changement ici implique un bump de version payload (`V2`) ou, pour les
+> bornes encodées dans le type, un changement de format wire / `MaxEncodedLen`.
+>
+> Origine : règles métier conçues dans l'ancien frontend `../midds`
+> (schémas Zod + validations impératives), **réconciliées** avec les types du
+> SDK actuel. Décision de réconciliation : **le SDK actuel fait foi** — ses
+> bornes serrées et ses choix de modèle V1 (enums slimmés, `MusicalKey`
+> structuré, `duration` en `u32`, `PartyId` sans `Both`, pas de
+> `manufacturer_name`) sont délibérés et conservés. L'ancien front sert de
+> source pour les **règles numériques / de cardinalité** (BPM, années,
+> nombre de voix, cardinalité Medley/Mashup) qui manquaient à la validation
+> on-chain et sont ajoutées ici.
+
+---
+
+## 1. Principes
+
+1. **On-chain = format uniquement.** `Midds::validate_format` vérifie
+   charset / longueur / structure / bornes numériques / cardinalité. Il **ne
+   vérifie jamais les checksums** (chiffre de contrôle ISWC/IPI/ISNI/GTIN) :
+   les registres réels publient des codes au check digit faux. Les checksums
+   sont *warning-only* et vivent dans `midds-validate`, jamais bloquants
+   on-chain.
+2. **Les longueurs max sont structurelles.** Tout champ borné est un
+   `BoundedVec` / `MiddsString<N>` : dépasser la borne est impossible à
+   construire/décoder. `validate_format` ne re-teste donc pas la longueur
+   max ; il teste le **non-vide** des champs obligatoires et les **bornes
+   numériques / cardinalité minimale**.
+3. **Les enums sont fermés.** `Country`, `Language`, `Genre`,
+   `RecordingVersion`, `ReleaseType/Format/Packaging/Status`, `CreatorRole`,
+   `PitchClass`, `Mode` sont des enums SCALE à tag-byte : l'appartenance est
+   garantie par le type, pas par `validate_format`.
+4. **Identifiants ASCII only.** Charset imposé par les `validate_*_format`
+   de `midds-traits`.
+5. **Erreurs sans `String`.** Diagnostic via `MiddsFormatError`
+   (`InvalidIdentifierStructure`, `InvalidCharset`, `OutOfBounds`,
+   `EmptyMandatoryField`, `CrossFieldInconsistency` — utilisée pour l'unicité
+   de la tracklist `Release` — + réservé `DateInconsistency`). **Aucune
+   nouvelle variante** n'est introduite
+   (ajouter une variante est *breaking* SCALE) : toute violation de borne
+   numérique ou de cardinalité minimale réutilise `OutOfBounds` (« longueur
+   sous le minimum ou au-dessus du maximum »).
+
+Notation des tableaux : **N** = règle ajoutée à cette stabilisation (absente
+de la validation on-chain auparavant) ; **S** = garanti structurellement par
+le type (pas de code dans `validate_format`) ; **=** = déjà appliqué.
+
+---
+
+## 2. Identifiants (`midds-traits`)
+
+| Id | Type / borne | Structure imposée on-chain | Origine ancien front |
+|---|---|---|---|
+| `Iswc` | `MiddsString<11>` | 11 octets : `T` + 10 chiffres ASCII | `^T\d{9}[0-9A-Z]$` — le SDK est **plus strict** (10ᵉ position = chiffre, pas alpha) ; conservé |
+| `Isni` | `MiddsString<16>` | 15 chiffres + (chiffre \| `X`) | `^[0-9]{15}[0-9X]$` — identique |
+| `Ipi` | `MiddsString<11>` | 9 à 11 chiffres ASCII | ancien : `1..=11` chiffres — le SDK impose **min 9** ; conservé |
+| `Isrc` | `MiddsString<12>` | 2 alpha-maj + 3 alphanum-maj + 2 chiffres + 5 chiffres | `^[A-Z]{2}[A-Z0-9]{3}[0-9]{2}[0-9]{5}$` — identique (sans tirets) |
+| `Upc` | `MiddsString<13>` | exactement 12 (UPC-A) **ou** 13 (EAN-13) chiffres | ancien : `1..=13` chiffres — le SDK impose **12 ou 13 exactement** ; conservé |
+| `OffchainHash` | `MiddsString<64>` | non-vide (≥ 1 octet) ; opaque, CIDv1 par convention client | pas d'équivalent ancien |
+
+Le chiffre de contrôle (ISWC/IPI mod-10 CISAC, ISNI ISO 7064, GTIN mod-10)
+n'est **pas** vérifié on-chain. Vérificateurs warning-only :
+`midds-validate::checksum`.
+
+---
+
+## 3. Types partagés (`midds-types::shared`)
+
+| Type | Définition canonique | Validation |
+|---|---|---|
+| `Title` | `MiddsString<256>` (`TITLE_MAX_LEN = 256`) | non-vide quand obligatoire ; longueur **S** |
+| `PartyId` | `enum { Ipi(Ipi) \| Isni(Isni) }` — **exactement un** des deux | structure de l'identifiant choisi. Le variant `Both{ipi,isni}` de l'ancien modèle est **supprimé** (décision V1) |
+| `MusicalKey` | `{ pitch: PitchClass(12), mode: Mode(2) }` = 24 combinaisons | appartenance **S**. Remplace la liste plate de 42 clés enharmoniques de l'ancien front (`Asm`,`Cb`,`Es`,`Fb`…) — décision V1 |
+| `WorkRef` | `enum { Midds(u64) \| Iswc(Iswc) }` | si `Iswc` ⇒ structure ISWC |
+| `RecordingRef` | `enum { Midds(u64) \| Isrc(Isrc) }` | si `Isrc` ⇒ structure ISRC |
+| `Country` | enum fermé ISO 3166-1 alpha-2 (complet, JSON majuscule) | appartenance **S** — superset des 249 codes de l'ancien front |
+| `Language` | enum fermé ISO 639-1 alpha-2 (complet, JSON minuscule) | appartenance **S** — superset des 22 langues de l'ancien front |
+
+`CreatorRole` : `Author | Composer | Arranger | Adapter | Publisher` (5,
+identique à l'ancien front).
+
+---
+
+## 4. `MusicalWork` V1
+
+| Champ | Type | Req. | Borne canonique | Règle on-chain | |
+|---|---|---|---|---|---|
+| `iswc` | `Iswc` | oui | 11 | structure ISWC | = |
+| `title` | `Title` | oui | ≤ 256 | non-vide | = |
+| `creation_year` | `u16` | oui | — | **`1..=2999`** | **N** |
+| `instrumental` | `bool` | oui | — | aucune (défaut `false`) | = |
+| `language` | `Option<Language>` | non | — | appartenance | S |
+| `bpm` | `Option<u16>` | non | — | si `Some` ⇒ **`20..=300`** | **N** |
+| `key` | `Option<MusicalKey>` | non | — | appartenance | S |
+| `work_type` | `WorkType` | oui | — | voir ci-dessous | |
+| `creators` | `Creators` | oui | ≤ 32 (`CREATORS_MAX`) | **non-vide** ; chaque `id` : structure | = |
+| `classical_info` | `Option<ClassicalInfo>` | non | — | voir ci-dessous | |
+| `offchain_extension` | `Option<OffchainHash>` | non | ≤ 64 | si `Some` ⇒ non-vide | = |
+
+**`WorkType`** (`Original | Medley(refs) | Mashup(refs) | Adaptation(iswc)`) :
+
+| Variant | Règle on-chain | |
+|---|---|---|
+| `Original` | aucune | = |
+| `Medley(refs)` / `Mashup(refs)` | `refs.len() >= 2` (`OutOfBounds` si < 2) ; chaque réf : structure ISWC ; max 32 (`WORK_REFERENCES_MAX`) | **N** (était : non-vide ≥ 1) |
+| `Adaptation(iswc)` | exactement 1 ISWC (**S**) ; structure ISWC | = |
+
+**`ClassicalInfo`** (bloc optionnel) :
+
+| Sous-champ | Type | Borne | Règle on-chain | |
+|---|---|---|---|---|
+| `opus` | `Option<MiddsString<32>>` (`OPUS_MAX_LEN = 32`) | ≤ 32 | si `Some` ⇒ non-vide | = |
+| `catalog_number` | `Option<MiddsString<32>>` (`CATALOG_NUMBER_MAX_LEN = 32`) | ≤ 32 | si `Some` ⇒ non-vide | = |
+| `number_of_voices` | `Option<u16>` | — | si `Some` ⇒ **`>= 1`** | **N** |
+
+`CreatorRole` : 5 valeurs (cf. §3). Plusieurs rôles pour une même partie =
+plusieurs entrées `Creator` partageant le même `PartyId` (l'ancien front
+fusionnait par `PartyId` ; côté on-chain c'est une liste plate).
+
+> Convention *builder-side uniquement* (non bloquante on-chain, à surfacer en
+> warning dans `midds-validate`) : `instrumental == true` ⇒ `language` devrait
+> être `None`.
+
+---
+
+## 5. `Recording` V1
+
+| Champ | Type | Req. | Borne canonique | Règle on-chain | |
+|---|---|---|---|---|---|
+| `isrc` | `Isrc` | oui | 12 | structure ISRC | = |
+| `title` | `Title` | oui | ≤ 256 | non-vide | = |
+| `title_aliases` | `BoundedVec<Title, 8>` (`TITLE_ALIASES_MAX = 8`) | non | ≤ 8 × 256 | chaque alias non-vide | = |
+| `artist` | `PartyId` | oui | — | structure de l'id | = |
+| `work` | `WorkRef` | oui | — | si `Iswc` ⇒ structure | = |
+| `genres` | `BoundedVec<Genre, 8>` (`GENRES_MAX = 8`) | non | ≤ 8 | appartenance | S |
+| `record_year` | `Option<u16>` | non | — | si `Some` ⇒ **`1..=2999`** | **N** |
+| `version_type` | `Option<RecordingVersion>` | non | — | appartenance | S |
+| `performers` | `BoundedVec<PartyId, 64>` (`PERFORMERS_MAX = 64`) | non | ≤ 64 | chaque id : structure | = |
+| `producers` | `BoundedVec<Isni, 8>` (`PRODUCERS_MAX = 8`) | non | ≤ 8 | chaque : structure ISNI (ISNI-only par design) | = |
+| `duration` | `Option<u32>` | non | — | **aucun plafond** (secondes ; `u32` ≈ 136 ans, choix V1 délibéré) | (cf. §7) |
+| `bpm` | `Option<u16>` | non | — | si `Some` ⇒ **`20..=300`** | **N** |
+| `key` | `Option<MusicalKey>` | non | — | appartenance | S |
+| `places` | `Option<ProductionPlaces>` | non | — | voir ci-dessous | |
+| `contributors` | `BoundedVec<PartyId, 32>` (`CONTRIBUTORS_MAX = 32`) | non | ≤ 32 | chaque id : structure | = |
+| `offchain_extension` | `Option<OffchainHash>` | non | ≤ 64 | si `Some` ⇒ non-vide | = |
+
+**`ProductionPlaces`** (bloc optionnel) : `recording`, `mixing`, `mastering`
+chacun `Option<MiddsString<128>>` (`PLACE_MAX_LEN = 128`) ; si `Some` ⇒
+non-vide.
+
+Enums fermés :
+
+- **`Genre`** (25) : `Pop, Rock, HipHop, RnB, Electronic, Dance, Jazz, Blues,
+  Classical, Country, Folk, Metal, Punk, Reggae, Latin, World, Soul, Funk,
+  Gospel, Soundtrack, Ambient, Experimental, Children, SpokenWord, Other`.
+  Taxonomie aplatie volontairement (l'ancien front en exposait ≈160
+  hiérarchiques) — granularité fine reportée à une version payload future.
+- **`RecordingVersion`** (13) : `Original, RadioEdit, Extended, Remix, Live,
+  Acoustic, Instrumental, ACapella, Karaoke, Demo, ReRecorded, Edited, Cover`.
+
+---
+
+## 6. `Release` V1
+
+| Champ | Type | Req. | Borne canonique | Règle on-chain | |
+|---|---|---|---|---|---|
+| `upc` | `Upc` | oui | 12 ou 13 | structure UPC/EAN | = |
+| `title` | `Title` | oui | ≤ 256 | non-vide | = |
+| `title_aliases` | `BoundedVec<Title, 8>` (`TITLE_ALIASES_MAX = 8`) | non | ≤ 8 × 256 | chaque alias non-vide | = |
+| `artist` | `PartyId` | oui | — | structure de l'id | = |
+| `tracks` | `BoundedVec<RecordingRef, 256>` (`TRACKS_MAX = 256`) | oui | ≤ 256 | **non-vide (≥ 1)** ; chaque réf : structure ; **unicité — pas de doublon de `RecordingRef`** (`CrossFieldInconsistency`) | **N** |
+| `producers` | `BoundedVec<Producer, 16>` (`PRODUCERS_MAX = 16`) | non | ≤ 16 | voir ci-dessous | |
+| `status` | `ReleaseStatus` | oui | — | appartenance | S |
+| `release_date` | `ReleaseDate` | oui | — | `month 1..=12`, `day 1..=31` ; **`year` non contraint** (cf. §7) | = |
+| `country` | `Country` | oui | — | appartenance | S |
+| `distributor_name` | `MiddsString<128>` (`DISTRIBUTOR_NAME_MAX_LEN = 128`) | oui | ≤ 128 | non-vide | = |
+| `release_type` | `ReleaseType` | oui | — | appartenance | S |
+| `format` | `ReleaseFormat` | oui | — | appartenance | S |
+| `packaging` | `ReleasePackaging` | oui | — | appartenance | S |
+| `cover_contributors` | `BoundedVec<MiddsString<128>, 16>` (`COVER_CONTRIBUTORS_MAX = 16`, `…_NAME_MAX_LEN = 128`) | non | ≤ 16 × 128 | chaque nom non-vide | = |
+| `offchain_extension` | `Option<OffchainHash>` | non | ≤ 64 | si `Some` ⇒ non-vide | = |
+
+> Pas de champ `manufacturer_name` (présent dans l'ancien front, **supprimé**
+> en V1 — décision conservée).
+
+**`Producer`** : `{ isni: Isni, catalog_number: MiddsString<32> }`
+(`CATALOG_NUMBER_MAX_LEN = 32`). `isni` : structure ISNI ; `catalog_number` :
+**non-vide** (chaque label co-éditeur garde son propre numéro).
+
+Enums fermés :
+
+- **`ReleaseStatus`** (7) : `Official, Promotional, Bootleg, PseudoRelease,
+  Withdrawn, Cancelled, Other`.
+- **`ReleaseType`** (11) : `Album, Single, Ep, Broadcast, Compilation,
+  Soundtrack, Live, Remix, Mixtape, Demo, Other`.
+- **`ReleaseFormat`** (11) : `Cd, Vinyl, Cassette, DigitalDownload, Streaming,
+  Dvd, BluRay, Sacd, MiniDisc, ReelToReel, Other`.
+- **`ReleasePackaging`** (9) : `None, JewelCase, SlimJewelCase, Digipak,
+  CardboardSleeve, Gatefold, KeepCase, Box, Other`.
+
+---
+
+## 7. Asymétries et choix V1 assumés
+
+Décisions explicites, figées, à ne pas « corriger » sans bump de version :
+
+1. **`Release.release_date.year` non contraint** (`1..=u16::MAX`), alors que
+   `MusicalWork.creation_year` et `Recording.record_year` sont bornés
+   `1..=2999`. Justification : une sortie peut être *annoncée pour le futur*
+   (date prévisionnelle) ; l'ancien front n'imposait d'ailleurs aucune borne
+   d'année sur la date de sortie (`z.date()` libre). Seuls `month`/`day` sont
+   contrôlés (contrôle structurel, pas calendaire : 30 février est accepté
+   on-chain ; le contrôle calendaire strict est du ressort de
+   `midds-validate`).
+2. **`Recording.duration` sans plafond** : `Option<u32>` en secondes
+   (≈ 136 ans). L'ancien front plafonnait à 65535 s (18:12:15). Le SDK
+   conserve `u32` délibérément — pas de plafond on-chain.
+3. **`PartyId` sans variant `Both`** : l'ancien modèle permettait
+   `Both{ipi,isni}`. V1 = `Ipi | Isni` strictement. Une partie identifiée à
+   la fois par IPI et ISNI n'expose qu'un identifiant on-chain.
+4. **`MusicalKey` structuré** (`PitchClass × Mode`, 24) au lieu des 42 clés
+   plates avec enharmonies de l'ancien front (`Asm`, `Cb`, `Es`, `Fb`…).
+5. **Enums slimmés** : `Genre` 25 (vs ≈160), `RecordingVersion` 13 (vs 21),
+   `ReleaseFormat` 11 (vs 63), `ReleasePackaging` 9 (vs 17), `ReleaseStatus`
+   7 (vs 10), `ReleaseType` 11 (vs 6, redéfini). Granularité fine =
+   version payload future, pas un arbre de sous-types.
+6. **Bornes de cardinalité/longueur serrées** : l'ancien front était très
+   permissif (souvent 512 pour les listes de parties, 128–256 pour les
+   chaînes libres). Le SDK retient des bornes optimisées pour le coût
+   on-chain (`CREATORS_MAX = 32`, `PERFORMERS_MAX = 64`,
+   `PRODUCERS_MAX = 8/16`, `CONTRIBUTORS_MAX = 32`, `OPUS/CATALOG = 32`,
+   `PLACE = 128`, `DISTRIBUTOR/COVER_NAME = 128`, `TITLE_ALIASES = 8`,
+   `GENRES = 8`, `TRACKS = 256`, `COVER_CONTRIBUTORS = 16`). Ces valeurs
+   sont la référence ; les chiffres de l'ancien front (UI-only) sont obsolètes.
+7. **Convention `instrumental ⇒ language = None`** : non bloquante on-chain
+   (le validateur ne la teste pas), à exposer en warning côté
+   `midds-validate`.
+
+---
+
+## 8. Où chaque règle s'applique
+
+| Couche | Rôle |
+|---|---|
+| Type (`BoundedVec` / `MiddsString` / enum) | Longueurs max, cardinalités max, appartenance enum — **impossible à violer** par construction/décodage. |
+| `Midds::validate_format` (on-chain, bloquant) | Structure des identifiants, non-vide des champs obligatoires, **bornes numériques (`creation_year`, `record_year`, `bpm`, `number_of_voices`)**, **cardinalité minimale (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, `release_date` mois/jour. Format uniquement, jamais de checksum. |
+| `midds-validate` (std, warning-only, jamais on-chain) | Parsing tolérant, vérification checksums (warnings), conventions non bloquantes (`instrumental⇒language`, contrôle calendaire strict, plafond `duration` métier). |
+
+Invariant inter-champs **appliqué** on-chain : `CrossFieldInconsistency` —
+unicité de la tracklist `Release` (aucun `RecordingRef` en double).
+
+Invariant réservé non encore utilisé : `MiddsFormatError::DateInconsistency`
+(ex. `recording_year > work_year`) — prévu pour un durcissement inter-champs
+ultérieur sans nouvelle variante SCALE.

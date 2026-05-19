@@ -371,13 +371,11 @@ where
     let consumer = tokio::spawn(run_progress_consumer(
         rx,
         count,
-        started,
         FeesConsumerState::new(count),
         |event, st, progress| match event {
             WorkerEvent::Sample(s) => st.samples.push(s),
             WorkerEvent::Failed { signer_idx, error } => {
-                progress.clear();
-                eprintln!("  signer #{signer_idx}: deposit failed: {error}");
+                progress.log(&format!("signer #{signer_idx}: deposit failed: {error}"))
             }
             WorkerEvent::SkippedRecords { count } => {
                 st.failed += count;

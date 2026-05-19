@@ -312,17 +312,13 @@ where
     let consumer = tokio::spawn(run_progress_consumer(
         rx,
         count,
-        started,
         SignerOutcome::default(),
         |event, total, progress| match event {
             WorkerEvent::Chunk { ok, failed } => {
                 total.ok += ok as u64;
                 total.failed += failed as u64;
             }
-            WorkerEvent::Notice(msg) => {
-                progress.clear();
-                eprintln!("  {msg}");
-            }
+            WorkerEvent::Notice(msg) => progress.log(&msg),
         },
         |total| {
             let processed = (total.ok + total.failed) as u32;

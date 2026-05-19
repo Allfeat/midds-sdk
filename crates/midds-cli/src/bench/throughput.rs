@@ -350,7 +350,6 @@ where
     let consumer = tokio::spawn(run_progress_consumer(
         rx,
         count,
-        started,
         ThroughputConsumerState::default(),
         |event, st, progress| match event {
             WorkerEvent::BatchOk { records, latency } => {
@@ -361,10 +360,7 @@ where
             WorkerEvent::BatchFailed { records } => {
                 st.failures += records;
             }
-            WorkerEvent::Notice(msg) => {
-                progress.clear();
-                eprintln!("  {msg}");
-            }
+            WorkerEvent::Notice(msg) => progress.log(&msg),
         },
         |st| (st.successes + st.failures, st.successes, st.failures),
     ));

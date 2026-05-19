@@ -1,11 +1,13 @@
 //! `midds` debug CLI entry point.
 
-mod admin;
 mod bench;
 mod cli;
+mod create;
 mod format;
+mod funding;
 mod interactive;
 mod signers;
+mod ui;
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
@@ -25,9 +27,41 @@ fn main() -> Result<()> {
     runtime.block_on(run(cli))
 }
 
+/// Bind `bench::$module::run::<F>(args, accessor)` to the chosen
+/// [`MiddsKind`]. Each arm pairs the `MiddsFixtures` impl with the
+/// `midds-client` pallet-instance accessor. Adding a new MIDDS kind later is
+/// one variant on [`MiddsKind`] and one arm here — the rest of the harness
+/// stays generic.
+macro_rules! dispatch_kind {
+    ($module:ident, $kind:expr, $args:expr) => {
+        match $kind {
+            MiddsKind::MusicalWork => {
+                bench::$module::run::<MusicalWorkFixtures>($args, MiddsClient::musical_works).await
+            }
+            MiddsKind::Recording => {
+                bench::$module::run::<RecordingFixtures>($args, MiddsClient::recordings).await
+            }
+            MiddsKind::Release => {
+                bench::$module::run::<ReleaseFixtures>($args, MiddsClient::releases).await
+            }
+        }
+    };
+}
+
 async fn run(cli: Cli) -> Result<()> {
+    // The no-argument launcher is the "installer" entry point — greet with
+    // the banner. Explicit subcommands stay banner-free so scripted / piped
+    // invocations keep clean output.
+    if cli.command.is_none() {
+        ui::banner();
+    }
     let command = resolve_command(cli.command)?;
     match command {
+        Command::Create {
+            midds_type,
+            out,
+            format,
+        } => create::run(midds_type, out, format),
         Command::Seed {
             midds_type,
             count,
@@ -58,21 +92,7 @@ async fn run(cli: Cli) -> Result<()> {
                 report_path: report.as_deref(),
                 assume_yes: yes,
             };
-            // Bind the MIDDS-type-generic harness to the chosen kind: each
-            // arm picks the `MiddsFixtures` impl and the `midds-client`
-            // pallet-instance accessor. Adding `Release` later is one more
-            // arm here plus the `MiddsKind` variant.
-            match midds_type {
-                MiddsKind::MusicalWork => {
-                    bench::seed::run::<MusicalWorkFixtures>(args, MiddsClient::musical_works).await
-                }
-                MiddsKind::Recording => {
-                    bench::seed::run::<RecordingFixtures>(args, MiddsClient::recordings).await
-                }
-                MiddsKind::Release => {
-                    bench::seed::run::<ReleaseFixtures>(args, MiddsClient::releases).await
-                }
-            }
+            dispatch_kind!(seed, midds_type, args)
         }
         Command::Bench { kind } => match kind {
             // `resolve_command` guarantees this arm always carries a concrete
@@ -109,18 +129,7 @@ async fn run(cli: Cli) -> Result<()> {
                     out: out.as_deref(),
                     assume_yes: yes,
                 };
-                match midds_type {
-                    MiddsKind::MusicalWork => {
-                        bench::fees::run::<MusicalWorkFixtures>(args, MiddsClient::musical_works)
-                            .await
-                    }
-                    MiddsKind::Recording => {
-                        bench::fees::run::<RecordingFixtures>(args, MiddsClient::recordings).await
-                    }
-                    MiddsKind::Release => {
-                        bench::fees::run::<ReleaseFixtures>(args, MiddsClient::releases).await
-                    }
-                }
+                dispatch_kind!(fees, midds_type, args)
             }
             Some(BenchArgs::Throughput {
                 midds_type,
@@ -154,22 +163,7 @@ async fn run(cli: Cli) -> Result<()> {
                     out: out.as_deref(),
                     assume_yes: yes,
                 };
-                match midds_type {
-                    MiddsKind::MusicalWork => {
-                        bench::throughput::run::<MusicalWorkFixtures>(
-                            args,
-                            MiddsClient::musical_works,
-                        )
-                        .await
-                    }
-                    MiddsKind::Recording => {
-                        bench::throughput::run::<RecordingFixtures>(args, MiddsClient::recordings)
-                            .await
-                    }
-                    MiddsKind::Release => {
-                        bench::throughput::run::<ReleaseFixtures>(args, MiddsClient::releases).await
-                    }
-                }
+                dispatch_kind!(throughput, midds_type, args)
             }
             None => unreachable!("resolve_command always promotes Bench.kind to Some"),
         },
@@ -202,6 +196,7 @@ fn resolve_command(cmd: Option<Command>) -> Result<Command> {
 /// duplicating the constants here.
 fn promote_command_choice(choice: interactive::CommandChoice) -> Result<Command> {
     let argv: &[&str] = match choice {
+        interactive::CommandChoice::Create => &["midds", "create"],
         interactive::CommandChoice::Seed => &["midds", "seed"],
         interactive::CommandChoice::BenchFees => &["midds", "bench", "fees"],
         interactive::CommandChoice::BenchThroughput => &["midds", "bench", "throughput"],

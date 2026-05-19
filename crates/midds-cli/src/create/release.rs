@@ -1,0 +1,193 @@
+//! Interactive builder for `Release::V1`.
+
+use anyhow::Result;
+use midds_traits::{Isni, Upc, validate_isni_format, validate_offchain_hash, validate_upc_format};
+use midds_types::release::{
+    self, CATALOG_NUMBER_MAX_LEN as REL_CATALOG_MAX, COVER_CONTRIBUTOR_NAME_MAX_LEN,
+    DISTRIBUTOR_NAME_MAX_LEN,
+};
+use midds_types::{
+    COVER_CONTRIBUTORS_MAX, CoverContributors, Producer, Release, ReleaseFormat, ReleasePackaging,
+    ReleaseStatus, ReleaseType, ReleaseV1, TITLE_MAX_LEN, TRACKS_MAX, Tracks,
+};
+
+use crate::create::{prompts, shared};
+use crate::ui;
+
+const STEPS: usize = 9;
+
+pub fn build() -> Result<Release> {
+    ui::section("Release · V1");
+
+    ui::step(1, STEPS, "Identification");
+    let upc: Upc = prompts::identifier::<13>("UPC / EAN", validate_upc_format, "0123456789012")?;
+    let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
+    let title_aliases = build_title_aliases()?;
+
+    ui::step(2, STEPS, "Artist");
+    let artist = shared::party_id("Main artist identifier")?;
+
+    ui::step(3, STEPS, "Tracklist");
+    let tracks = build_tracks()?;
+
+    ui::step(4, STEPS, "Producers");
+    let producers = build_producers()?;
+
+    ui::step(5, STEPS, "Editorial");
+    let status = prompts::select(
+        "Status",
+        &[
+            ("Official", ReleaseStatus::Official),
+            ("Promotional", ReleaseStatus::Promotional),
+            ("Bootleg", ReleaseStatus::Bootleg),
+            ("Pseudo-release", ReleaseStatus::PseudoRelease),
+            ("Withdrawn", ReleaseStatus::Withdrawn),
+            ("Cancelled", ReleaseStatus::Cancelled),
+            ("Other", ReleaseStatus::Other),
+        ],
+        0,
+    )?;
+    let release_type = prompts::fuzzy_select(
+        "Release type",
+        &[
+            ("Album", ReleaseType::Album),
+            ("Single", ReleaseType::Single),
+            ("EP", ReleaseType::Ep),
+            ("Broadcast", ReleaseType::Broadcast),
+            ("Compilation", ReleaseType::Compilation),
+            ("Soundtrack", ReleaseType::Soundtrack),
+            ("Live", ReleaseType::Live),
+            ("Remix", ReleaseType::Remix),
+            ("Mixtape", ReleaseType::Mixtape),
+            ("Demo", ReleaseType::Demo),
+            ("Other", ReleaseType::Other),
+        ],
+    )?;
+
+    ui::step(6, STEPS, "Release date & territory");
+    let release_date = shared::release_date("Release date")?;
+    let country = shared::country("Country of release")?;
+    let distributor_name =
+        prompts::bounded_string::<DISTRIBUTOR_NAME_MAX_LEN>("Distributor name", true)?;
+
+    ui::step(7, STEPS, "Format & packaging");
+    let format = prompts::fuzzy_select(
+        "Format",
+        &[
+            ("CD", ReleaseFormat::Cd),
+            ("Vinyl", ReleaseFormat::Vinyl),
+            ("Cassette", ReleaseFormat::Cassette),
+            ("Digital download", ReleaseFormat::DigitalDownload),
+            ("Streaming", ReleaseFormat::Streaming),
+            ("DVD", ReleaseFormat::Dvd),
+            ("Blu-ray", ReleaseFormat::BluRay),
+            ("SACD", ReleaseFormat::Sacd),
+            ("MiniDisc", ReleaseFormat::MiniDisc),
+            ("Reel-to-reel", ReleaseFormat::ReelToReel),
+            ("Other", ReleaseFormat::Other),
+        ],
+    )?;
+    let packaging = prompts::fuzzy_select(
+        "Packaging",
+        &[
+            ("None (digital)", ReleasePackaging::None),
+            ("Jewel case", ReleasePackaging::JewelCase),
+            ("Slim jewel case", ReleasePackaging::SlimJewelCase),
+            ("Digipak", ReleasePackaging::Digipak),
+            ("Cardboard sleeve", ReleasePackaging::CardboardSleeve),
+            ("Gatefold", ReleasePackaging::Gatefold),
+            ("Keep case", ReleasePackaging::KeepCase),
+            ("Box", ReleasePackaging::Box),
+            ("Other", ReleasePackaging::Other),
+        ],
+    )?;
+
+    ui::step(8, STEPS, "Cover contributors");
+    let cover_contributors = build_cover_contributors()?;
+
+    ui::step(9, STEPS, "Off-chain extension");
+    let offchain_extension = if prompts::confirm("Attach an off-chain extension hash?", false)? {
+        Some(prompts::identifier::<64>(
+            "Off-chain hash",
+            validate_offchain_hash,
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        )?)
+    } else {
+        None
+    };
+
+    Ok(Release::V1(ReleaseV1 {
+        upc,
+        title,
+        title_aliases,
+        artist,
+        tracks,
+        producers,
+        status,
+        release_date,
+        country,
+        distributor_name,
+        release_type,
+        format,
+        packaging,
+        cover_contributors,
+        offchain_extension,
+    }))
+}
+
+fn build_title_aliases() -> Result<release::TitleAliases> {
+    let aliases = prompts::collect_bounded(
+        "title alias",
+        0,
+        release::TITLE_ALIASES_MAX as usize,
+        |_| prompts::bounded_string::<TITLE_MAX_LEN>("Alias", true),
+    )?;
+    release::TitleAliases::try_from(aliases)
+        .map_err(|_| anyhow::anyhow!("more than {} title aliases", release::TITLE_ALIASES_MAX))
+}
+
+fn build_tracks() -> Result<Tracks> {
+    // Mandatory, non-empty, and the on-chain rule rejects a recording
+    // appearing twice — surfaced at the final `validate_format` pass.
+    ui::info("a release needs at least one track; a recording must not appear twice");
+    let tracks = prompts::collect_bounded("track", 1, TRACKS_MAX as usize, |idx| {
+        shared::recording_ref(&format!("Track #{} recording", idx + 1))
+    })?;
+    Tracks::try_from(tracks).map_err(|_| anyhow::anyhow!("more than {TRACKS_MAX} tracks"))
+}
+
+fn build_producers() -> Result<release::Producers> {
+    let producers = prompts::collect_bounded(
+        "producer / label",
+        0,
+        release::PRODUCERS_MAX as usize,
+        |_| -> Result<Producer> {
+            // Producers are ISNI-keyed legal persons, each with the catalog
+            // number under which they issued the release.
+            let isni: Isni = prompts::identifier::<16>(
+                "Producer ISNI",
+                validate_isni_format,
+                "0000000121032683",
+            )?;
+            let catalog_number =
+                prompts::bounded_string::<REL_CATALOG_MAX>("Catalogue number", true)?;
+            Ok(Producer {
+                isni,
+                catalog_number,
+            })
+        },
+    )?;
+    release::Producers::try_from(producers)
+        .map_err(|_| anyhow::anyhow!("more than {} producers", release::PRODUCERS_MAX))
+}
+
+fn build_cover_contributors() -> Result<CoverContributors> {
+    let names = prompts::collect_bounded(
+        "cover contributor",
+        0,
+        COVER_CONTRIBUTORS_MAX as usize,
+        |_| prompts::bounded_string::<COVER_CONTRIBUTOR_NAME_MAX_LEN>("Contributor name", true),
+    )?;
+    CoverContributors::try_from(names)
+        .map_err(|_| anyhow::anyhow!("more than {COVER_CONTRIBUTORS_MAX} cover contributors"))
+}

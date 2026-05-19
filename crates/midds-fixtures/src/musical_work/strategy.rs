@@ -11,6 +11,7 @@
 
 use frame_support::BoundedVec;
 use midds_traits::{Isrc, Iswc, MiddsFormatError, OffchainHash};
+use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorId, CreatorRole, Creators,
     Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, PitchClass,
@@ -165,7 +166,8 @@ pub fn arb_creators() -> impl Strategy<Value = Creators> {
 }
 
 /// `WorkType` strategy spanning every variant. Source-ref lists for derived
-/// variants are non-empty so the result validates.
+/// variants carry >= 2 refs so the result validates (`validate_format`
+/// requires Medley / Mashup to reference at least two source works).
 pub fn arb_work_type() -> impl Strategy<Value = WorkType> {
     prop_oneof![
         Just(WorkType::Original),
@@ -176,7 +178,7 @@ pub fn arb_work_type() -> impl Strategy<Value = WorkType> {
 }
 
 fn arb_work_references() -> impl Strategy<Value = WorkReferences> {
-    proptest::collection::vec(arb_iswc(), 1..=(WORK_REFERENCES_MAX as usize))
+    proptest::collection::vec(arb_iswc(), 2..=(WORK_REFERENCES_MAX as usize))
         .prop_map(|v| BoundedVec::try_from(v).expect("work refs within bound"))
 }
 
@@ -190,7 +192,9 @@ pub fn arb_classical_info() -> impl Strategy<Value = ClassicalInfo> {
             proptest::collection::vec(printable_ascii(), 1..=(CATALOG_NUMBER_MAX_LEN as usize))
                 .prop_map(|v| BoundedVec::try_from(v).expect("catalog within bound")),
         ),
-        proptest::option::of(any::<u16>()),
+        // `validate_format` rejects `Some(0)` voices — keep the strategy in
+        // the valid range so `arb_musical_work` stays valid by construction.
+        proptest::option::of(1u16..=u16::MAX),
     )
         .prop_map(|(opus, catalog_number, number_of_voices)| ClassicalInfo {
             opus,
@@ -292,13 +296,13 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                 let v1 = MusicalWorkV1 {
                     iswc,
                     title,
-                    creation_year: u16::MAX,
+                    creation_year: YEAR_MAX,
                     // Instrumental is incompatible with `language`. The on-chain
                     // validator does not enforce that — it's a builder-side
                     // convention. Keep `Some(language)` for true max size.
                     instrumental: false,
                     language: Some(Language::En),
-                    bpm: Some(u16::MAX),
+                    bpm: Some(BPM_MAX),
                     key: Some(MusicalKey {
                         pitch: PitchClass::C,
                         mode: Mode::Major,
@@ -345,10 +349,10 @@ pub fn arb_musical_work_invalid() -> impl Strategy<Value = (MusicalWork, MiddsFo
             v1.creators = BoundedVec::default();
             (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Empty Medley refs.
+        // Medley with fewer than 2 refs (here: empty) ⇒ OutOfBounds.
         arb_musical_work_v1().prop_map(|mut v1| {
             v1.work_type = WorkType::Medley(BoundedVec::default());
-            (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
+            (MusicalWork::V1(v1), MiddsFormatError::OutOfBounds)
         }),
         // Empty offchain extension.
         arb_musical_work_v1().prop_map(|mut v1| {

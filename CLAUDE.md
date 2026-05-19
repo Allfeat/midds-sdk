@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/plan.md` — architectural plan. Section 2 contains **locked decisions** (toolchain, pattern, versioning, bond, validation, etc.). Sections 5.x are the per-crate specs. Read it before proposing structural changes.
 - `docs/economics.md` — economic model spec : bond + 7d refundable window + Foundation Treasury, dual dynamic multipliers (`M_fast` anti-DoS, `M_slow` anti-flood), multi-claim identifier index, exact-payload uniqueness via hash, two-variant `force_remove`. Read this before touching anything bond/fee/storage-uniqueness related.
 - `docs/testing.md` — 5-layer test strategy and the planned `midds-fixtures` crate.
+- `docs/validation.md` — **canonical, frozen per-field validation spec** for every MIDDS type (lengths, numeric ranges, cardinality, charset, enum membership) and where each rule is enforced (type vs `validate_format` vs `midds-validate`). Read this before changing any field bound, `validate_format`, or a fixture strategy. Section 7 lists the deliberate V1 asymmetries (e.g. `Release.release_date.year` unconstrained, `Recording.duration` uncapped).
 - `flake.nix` provides a Nix dev shell (`direnv` autoloads it via `.envrc`). Without Nix, install the toolchain pinned in `rust-toolchain.toml`.
 
 ## Build & test commands

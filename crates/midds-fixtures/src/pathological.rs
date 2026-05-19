@@ -8,6 +8,7 @@
 use frame_support::BoundedVec;
 use midds_traits::{Isni, Iswc, MiddsFormatError};
 use midds_types::release as rel;
+use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Country, Creator,
     CreatorId, CreatorRole, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
@@ -78,10 +79,13 @@ pub fn max_size_musical_work() -> MusicalWork {
     let v1 = MusicalWorkV1 {
         iswc: iswc_from_work_code(0),
         title,
-        creation_year: u16::MAX,
+        // `validate_format` bounds `creation_year` to `1..=2999`; `u16`
+        // encodes to a fixed 2 bytes regardless of value, so capping here
+        // does not change the max-encoded-len this constructor pins down.
+        creation_year: YEAR_MAX,
         instrumental: false,
         language: Some(Language::En),
-        bpm: Some(u16::MAX),
+        bpm: Some(BPM_MAX),
         key: Some(MusicalKey {
             pitch: PitchClass::C,
             mode: Mode::Major,
@@ -137,11 +141,12 @@ pub fn invalid_empty_creators() -> (MusicalWork, MiddsFormatError) {
     (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
 }
 
-/// `MusicalWork` with `WorkType::Medley(empty refs)`. Triggers `EmptyMandatoryField`.
+/// `MusicalWork` with `WorkType::Medley` carrying fewer than 2 source refs
+/// (here: empty). Triggers `OutOfBounds` (Medley / Mashup require >= 2 refs).
 pub fn invalid_empty_medley_refs() -> (MusicalWork, MiddsFormatError) {
     let MusicalWork::V1(mut v1) = min_size_musical_work();
     v1.work_type = WorkType::Medley(BoundedVec::default());
-    (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
+    (MusicalWork::V1(v1), MiddsFormatError::OutOfBounds)
 }
 
 // -----------------------------------------------------------------------------
@@ -203,12 +208,12 @@ pub fn max_size_recording() -> Recording {
         work: WorkRef::Iswc(iswc_from_work_code(1)),
         genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
             .expect("genres at bound"),
-        record_year: Some(u16::MAX),
+        record_year: Some(YEAR_MAX),
         version_type: Some(RecordingVersion::Original),
         performers: BoundedVec::try_from(performers).expect("performers at bound"),
         producers: BoundedVec::try_from(producers).expect("producers at bound"),
         duration: Some(u32::MAX),
-        bpm: Some(u16::MAX),
+        bpm: Some(BPM_MAX),
         key: Some(MusicalKey {
             pitch: PitchClass::C,
             mode: Mode::Major,

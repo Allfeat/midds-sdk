@@ -6,7 +6,7 @@ use midds_traits::{
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
-use crate::shared::{MusicalKey, PartyId, Title, WorkRef};
+use crate::shared::{BPM_MAX, BPM_MIN, MusicalKey, PartyId, Title, WorkRef, YEAR_MAX, YEAR_MIN};
 
 /// Maximum number of alternative titles attached to a recording.
 pub const TITLE_ALIASES_MAX: u32 = 8;
@@ -228,6 +228,16 @@ impl RecordingV1 {
                 return Err(MiddsFormatError::EmptyMandatoryField);
             }
         }
+        if let Some(year) = self.record_year
+            && !(YEAR_MIN..=YEAR_MAX).contains(&year)
+        {
+            return Err(MiddsFormatError::OutOfBounds);
+        }
+        if let Some(bpm) = self.bpm
+            && !(BPM_MIN..=BPM_MAX).contains(&bpm)
+        {
+            return Err(MiddsFormatError::OutOfBounds);
+        }
         self.artist.validate_format()?;
         self.work.validate_format()?;
         for p in &self.performers {
@@ -246,5 +256,76 @@ impl RecordingV1 {
             validate_offchain_hash(h)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Boundary tests for the range rules stabilised per
+    //! `docs/validation.md` §5. Identifier-structure and empty-mandatory
+    //! paths are covered by `midds-fixtures` (`pathological`, proptest).
+    use super::*;
+
+    /// Minimal payload that passes `validate_format` — each test mutates one
+    /// field to probe a single rule.
+    fn base() -> RecordingV1 {
+        RecordingV1 {
+            isrc: BoundedVec::try_from(b"USRC17607839".to_vec()).expect("12-byte ISRC"),
+            title: BoundedVec::try_from(b"x".to_vec()).expect("1-byte title"),
+            title_aliases: BoundedVec::default(),
+            artist: PartyId::Ipi(BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI")),
+            work: WorkRef::Midds(0),
+            genres: BoundedVec::default(),
+            record_year: None,
+            version_type: None,
+            performers: BoundedVec::default(),
+            producers: BoundedVec::default(),
+            duration: None,
+            bpm: None,
+            key: None,
+            places: None,
+            contributors: BoundedVec::default(),
+            offchain_extension: None,
+        }
+    }
+
+    #[test]
+    fn base_is_valid() {
+        base().validate_format().expect("base payload validates");
+    }
+
+    #[test]
+    fn record_year_bounds_when_present() {
+        let mut r = base();
+        r.record_year = None;
+        r.validate_format().expect("absent record_year validates");
+        for (year, ok) in [(0u16, false), (1, true), (2999, true), (3000, false)] {
+            let mut r = base();
+            r.record_year = Some(year);
+            assert_eq!(
+                r.validate_format().is_ok(),
+                ok,
+                "record_year {year} expected ok={ok}"
+            );
+            if !ok {
+                assert_eq!(r.validate_format(), Err(MiddsFormatError::OutOfBounds));
+            }
+        }
+    }
+
+    #[test]
+    fn bpm_bounds_when_present() {
+        for (bpm, ok) in [(19u16, false), (20, true), (300, true), (301, false)] {
+            let mut r = base();
+            r.bpm = Some(bpm);
+            assert_eq!(
+                r.validate_format().is_ok(),
+                ok,
+                "bpm {bpm} expected ok={ok}"
+            );
+        }
+        let mut r = base();
+        r.bpm = None;
+        r.validate_format().expect("None bpm validates");
     }
 }

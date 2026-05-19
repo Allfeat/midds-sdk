@@ -161,9 +161,19 @@ fn arb_title_aliases() -> impl Strategy<Value = TitleAliases> {
 }
 
 fn arb_tracks() -> impl Strategy<Value = Tracks> {
-    // Mandatory non-empty tracklist ⇒ at least one entry.
-    proptest::collection::vec(arb_recording_ref(), 1..=(TRACKS_MAX as usize))
-        .prop_map(|v| BoundedVec::try_from(v).expect("tracks within bound"))
+    // Mandatory non-empty tracklist ⇒ at least one entry. `validate_format`
+    // rejects duplicate tracks, so dedup (order-preserving) keeps this
+    // strategy valid by construction even when proptest shrinks ids toward
+    // colliding small values.
+    proptest::collection::vec(arb_recording_ref(), 1..=(TRACKS_MAX as usize)).prop_map(|v| {
+        let mut unique: Vec<RecordingRef> = Vec::with_capacity(v.len());
+        for r in v {
+            if !unique.contains(&r) {
+                unique.push(r);
+            }
+        }
+        BoundedVec::try_from(unique).expect("tracks within bound")
+    })
 }
 
 fn arb_producers() -> impl Strategy<Value = Producers> {
@@ -300,9 +310,13 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                     .map(|a| BoundedVec::try_from(a).expect("alias at bound"))
                     .collect();
                 // Every track is the larger `Isrc` variant at full 12 bytes.
+                // Indices are distinct (`enumerate`) so the tracklist is
+                // duplicate-free: `validate_format` rejects repeats while this
+                // strategy must stay valid at the size bound.
                 let tracks: Vec<RecordingRef> = track_idxs
-                    .into_iter()
-                    .map(|i| RecordingRef::Isrc(isrc_for_index(i)))
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, _)| RecordingRef::Isrc(isrc_for_index(idx as u32)))
                     .collect();
                 let producers: Vec<Producer> = producer_bodies
                     .into_iter()
@@ -383,6 +397,13 @@ pub fn arb_release_invalid() -> impl Strategy<Value = (Release, MiddsFormatError
         arb_release_v1().prop_map(|mut v1| {
             v1.distributor_name = BoundedVec::default();
             (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
+        }),
+        // Duplicate track ⇒ tracklist-uniqueness violation.
+        arb_release_v1().prop_map(|mut v1| {
+            let dup = v1.tracks[0].clone();
+            v1.tracks =
+                BoundedVec::try_from(vec![dup.clone(), dup]).expect("2 tracks ≤ TRACKS_MAX");
+            (Release::V1(v1), MiddsFormatError::CrossFieldInconsistency)
         }),
     ]
 }

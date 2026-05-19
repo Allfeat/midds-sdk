@@ -13,6 +13,7 @@
 
 use frame_support::BoundedVec;
 use midds_traits::{Isni, MiddsFormatError};
+use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,
     PRODUCERS_MAX, PartyId, Performers, Place, Producers, ProductionPlaces, Recording, RecordingV1,
@@ -257,12 +258,16 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                     work: WorkRef::Iswc(iswc_from_work_code(work_code)),
                     genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
                         .expect("genres at bound"),
-                    record_year: Some(u16::MAX),
+                    // `record_year` / `bpm` are bounded by `validate_format`
+                    // (`1..=2999`, `20..=300`); `u16` encodes to a fixed size
+                    // regardless of value, so the max-encoded-len saturation
+                    // this strategy targets is unaffected by the cap.
+                    record_year: Some(YEAR_MAX),
                     version_type: Some(RecordingVersion::Original),
                     performers: BoundedVec::try_from(performers).expect("performers at bound"),
                     producers: BoundedVec::try_from(producers).expect("producers at bound"),
                     duration: Some(u32::MAX),
-                    bpm: Some(u16::MAX),
+                    bpm: Some(BPM_MAX),
                     // `MusicalKey` carries no length-bearing field, so any
                     // concrete value encodes to the same size — pin one.
                     key: Some(midds_types::MusicalKey {

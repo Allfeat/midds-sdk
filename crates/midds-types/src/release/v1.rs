@@ -283,6 +283,15 @@ impl ReleaseV1 {
         for t in &self.tracks {
             t.validate_format()?;
         }
+        // Tracklist uniqueness: a recording must not appear twice on the
+        // release (the legacy front rejected duplicate recordings). Cross-
+        // field invariant ⇒ `CrossFieldInconsistency`. O(n²) over a list
+        // bounded by `TRACKS_MAX`; no alloc, `no_std`-safe.
+        for (i, a) in self.tracks.iter().enumerate() {
+            if self.tracks.iter().skip(i + 1).any(|b| b == a) {
+                return Err(MiddsFormatError::CrossFieldInconsistency);
+            }
+        }
         for p in &self.producers {
             p.validate_format()?;
         }
@@ -299,5 +308,87 @@ impl ReleaseV1 {
             validate_offchain_hash(h)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Boundary tests for the tracklist-uniqueness rule stabilised per
+    //! `docs/validation.md` §6/§8. Identifier-structure and empty-mandatory
+    //! paths are covered by `midds-fixtures` (`pathological`, proptest).
+    use super::*;
+
+    /// Minimal payload that passes `validate_format` — each test mutates
+    /// `tracks` only.
+    fn base() -> ReleaseV1 {
+        ReleaseV1 {
+            upc: BoundedVec::try_from(b"000000000000".to_vec()).expect("12-byte UPC-A"),
+            title: BoundedVec::try_from(b"x".to_vec()).expect("1-byte title"),
+            title_aliases: BoundedVec::default(),
+            artist: PartyId::Ipi(BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI")),
+            tracks: BoundedVec::try_from(vec![RecordingRef::Midds(1)]).expect("1 track"),
+            producers: BoundedVec::default(),
+            status: ReleaseStatus::Official,
+            release_date: ReleaseDate {
+                year: 2000,
+                month: 1,
+                day: 1,
+            },
+            country: Country::Us,
+            distributor_name: BoundedVec::try_from(b"x".to_vec()).expect("1-byte distributor"),
+            release_type: ReleaseType::Album,
+            format: ReleaseFormat::Cd,
+            packaging: ReleasePackaging::None,
+            cover_contributors: BoundedVec::default(),
+            offchain_extension: None,
+        }
+    }
+
+    fn isrc(s: &[u8]) -> RecordingRef {
+        RecordingRef::Isrc(BoundedVec::try_from(s.to_vec()).expect("12-byte ISRC"))
+    }
+
+    #[test]
+    fn base_is_valid() {
+        base().validate_format().expect("base payload validates");
+    }
+
+    #[test]
+    fn distinct_tracks_validate() {
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![
+            RecordingRef::Midds(1),
+            RecordingRef::Midds(2),
+            isrc(b"USRC17607839"),
+            isrc(b"GBAYE0601477"),
+        ])
+        .expect("4 distinct tracks");
+        r.validate_format().expect("distinct tracklist validates");
+    }
+
+    #[test]
+    fn duplicate_midds_track_rejected() {
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![RecordingRef::Midds(7), RecordingRef::Midds(7)])
+            .expect("2 tracks");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency),
+        );
+    }
+
+    #[test]
+    fn duplicate_isrc_track_rejected() {
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![
+            RecordingRef::Midds(1),
+            isrc(b"USRC17607839"),
+            isrc(b"USRC17607839"),
+        ])
+        .expect("3 tracks");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency),
+        );
     }
 }

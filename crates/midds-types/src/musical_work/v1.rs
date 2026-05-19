@@ -6,6 +6,7 @@ use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 use crate::language::Language;
+use crate::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 
 // Shared types live in `crate::shared` so `MusicalWork` and `Recording`
 // encode them identically. Re-exported here (and through `mod.rs` →
@@ -131,6 +132,13 @@ impl ClassicalInfo {
         {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
+        // `number_of_voices` is optional, but a present value of 0 is
+        // nonsensical (legacy front enforced a `>= 1` minimum).
+        if let Some(n) = self.number_of_voices
+            && n == 0
+        {
+            return Err(MiddsFormatError::OutOfBounds);
+        }
         Ok(())
     }
 }
@@ -166,6 +174,14 @@ impl MusicalWorkV1 {
         if self.title.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
+        if !(YEAR_MIN..=YEAR_MAX).contains(&self.creation_year) {
+            return Err(MiddsFormatError::OutOfBounds);
+        }
+        if let Some(bpm) = self.bpm
+            && !(BPM_MIN..=BPM_MAX).contains(&bpm)
+        {
+            return Err(MiddsFormatError::OutOfBounds);
+        }
         if self.creators.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
@@ -175,8 +191,12 @@ impl MusicalWorkV1 {
         match &self.work_type {
             WorkType::Original => {}
             WorkType::Medley(refs) | WorkType::Mashup(refs) => {
-                if refs.is_empty() {
-                    return Err(MiddsFormatError::EmptyMandatoryField);
+                // A medley / mashup that references fewer than two source
+                // works is not one. Min-cardinality ⇒ `OutOfBounds` (the
+                // legacy front required >= 2; previously on-chain only
+                // rejected the empty case).
+                if refs.len() < 2 {
+                    return Err(MiddsFormatError::OutOfBounds);
                 }
                 for r in refs {
                     validate_iswc_format(r)?;
@@ -191,5 +211,123 @@ impl MusicalWorkV1 {
             validate_offchain_hash(h)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Boundary tests for the range / cardinality rules stabilised per
+    //! `docs/validation.md` §4. Identifier-structure and empty-mandatory
+    //! paths are covered by `midds-fixtures` (`pathological`, proptest).
+    use super::*;
+
+    fn iswc() -> Iswc {
+        BoundedVec::try_from(b"T0000000000".to_vec()).expect("11-byte ISWC")
+    }
+
+    /// Minimal payload that passes `validate_format` — each test mutates one
+    /// field to probe a single rule.
+    fn base() -> MusicalWorkV1 {
+        MusicalWorkV1 {
+            iswc: iswc(),
+            title: BoundedVec::try_from(b"x".to_vec()).expect("1-byte title"),
+            creation_year: 2000,
+            instrumental: false,
+            language: None,
+            bpm: None,
+            key: None,
+            work_type: WorkType::Original,
+            creators: BoundedVec::try_from(vec![Creator {
+                role: CreatorRole::Composer,
+                id: CreatorId::Ipi(
+                    BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI"),
+                ),
+            }])
+            .expect("1 creator"),
+            classical_info: None,
+            offchain_extension: None,
+        }
+    }
+
+    #[test]
+    fn base_is_valid() {
+        base().validate_format().expect("base payload validates");
+    }
+
+    #[test]
+    fn creation_year_bounds() {
+        for (year, ok) in [
+            (0u16, false),
+            (1, true),
+            (2000, true),
+            (2999, true),
+            (3000, false),
+        ] {
+            let mut w = base();
+            w.creation_year = year;
+            assert_eq!(
+                w.validate_format().is_ok(),
+                ok,
+                "creation_year {year} expected ok={ok}"
+            );
+            if !ok {
+                assert_eq!(w.validate_format(), Err(MiddsFormatError::OutOfBounds));
+            }
+        }
+    }
+
+    #[test]
+    fn bpm_bounds() {
+        for (bpm, ok) in [(19u16, false), (20, true), (300, true), (301, false)] {
+            let mut w = base();
+            w.bpm = Some(bpm);
+            assert_eq!(
+                w.validate_format().is_ok(),
+                ok,
+                "bpm {bpm} expected ok={ok}"
+            );
+        }
+        // Absent BPM is always fine.
+        let mut w = base();
+        w.bpm = None;
+        w.validate_format().expect("None bpm validates");
+    }
+
+    #[test]
+    fn number_of_voices_must_be_positive_when_present() {
+        let mut w = base();
+        w.classical_info = Some(ClassicalInfo {
+            opus: None,
+            catalog_number: None,
+            number_of_voices: Some(0),
+        });
+        assert_eq!(w.validate_format(), Err(MiddsFormatError::OutOfBounds));
+        if let Some(ci) = w.classical_info.as_mut() {
+            ci.number_of_voices = Some(1);
+        }
+        w.validate_format().expect("1 voice validates");
+        if let Some(ci) = w.classical_info.as_mut() {
+            ci.number_of_voices = None;
+        }
+        w.validate_format().expect("absent voice count validates");
+    }
+
+    #[test]
+    fn medley_and_mashup_need_at_least_two_refs() {
+        let refs = |n: usize| {
+            WorkReferences::try_from(vec![iswc(); n]).expect("refs within WORK_REFERENCES_MAX")
+        };
+        for make in [
+            WorkType::Medley as fn(WorkReferences) -> WorkType,
+            WorkType::Mashup,
+        ] {
+            let mut w = base();
+            w.work_type = make(refs(0));
+            assert_eq!(w.validate_format(), Err(MiddsFormatError::OutOfBounds));
+            w.work_type = make(refs(1));
+            assert_eq!(w.validate_format(), Err(MiddsFormatError::OutOfBounds));
+            w.work_type = make(refs(2));
+            w.validate_format().expect(">= 2 refs validates");
+        }
     }
 }

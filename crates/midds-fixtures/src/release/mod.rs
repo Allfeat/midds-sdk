@@ -17,7 +17,7 @@ use rand::Rng;
 use rand::SeedableRng;
 
 use crate::MiddsFixtures;
-use crate::identifiers::{ipi_random, isni_random, isrc_random, upc_for_index};
+use crate::identifiers::{ipi_random, isni_random, isrc_for_index, upc_for_index};
 
 /// `Release` corner of the `MiddsFixtures` trait. Generic test harnesses
 /// (mass injection, property tests, CLI bench) drive this struct so adding a
@@ -99,12 +99,15 @@ pub fn random_with_upc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Releas
     let artist = random_party_id(rng);
 
     let track_count = rng.gen_range(1..=12usize);
+    // Derive each track id from the distinct loop index so the tracklist is
+    // duplicate-free (`validate_format` rejects repeats); the variant is
+    // still randomised for variety.
     let tracks: Vec<RecordingRef> = (0..track_count)
-        .map(|_| {
+        .map(|i| {
             if rng.r#gen::<bool>() {
-                RecordingRef::Isrc(isrc_random(rng))
+                RecordingRef::Isrc(isrc_for_index(i as u32))
             } else {
-                RecordingRef::Midds(rng.r#gen::<u64>())
+                RecordingRef::Midds(i as u64)
             }
         })
         .collect();

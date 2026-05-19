@@ -21,6 +21,21 @@ pub const TITLE_MAX_LEN: u32 = 256;
 /// A free-text title. Shared by every MIDDS payload that carries one.
 pub type Title = MiddsString<TITLE_MAX_LEN>;
 
+/// Inclusive lower bound for a calendar year carried by a payload
+/// (`MusicalWork.creation_year`, `Recording.record_year`). Structural range
+/// check only — `Release.release_date.year` is deliberately *not* bounded so
+/// future-dated (announced) releases stay representable. See
+/// `docs/validation.md` §7.
+pub const YEAR_MIN: u16 = 1;
+/// Inclusive upper bound for `creation_year` / `record_year`. Mirrors the
+/// `1..=2999` rule the legacy front enforced; see `docs/validation.md` §4–5.
+pub const YEAR_MAX: u16 = 2999;
+
+/// Inclusive lower bound for `bpm`, shared by `MusicalWork` and `Recording`.
+pub const BPM_MIN: u16 = 20;
+/// Inclusive upper bound for `bpm`, shared by `MusicalWork` and `Recording`.
+pub const BPM_MAX: u16 = 300;
+
 /// One of the 12 chromatic pitch classes.
 #[derive(
     Encode,

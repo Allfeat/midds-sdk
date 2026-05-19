@@ -212,8 +212,10 @@ mod tests {
     #[test]
     fn validate_pass_mashup_with_refs() {
         let mut v = sample_v1();
-        v.work_type =
-            WorkType::Mashup(BoundedVec::try_from(vec![bv::<11>(b"T0345246801")]).unwrap());
+        // Mashup requires >= 2 source works (see docs/validation.md §4).
+        v.work_type = WorkType::Mashup(
+            BoundedVec::try_from(vec![bv::<11>(b"T0345246801"), bv::<11>(b"T9876543210")]).unwrap(),
+        );
         assert!(MusicalWork::V1(v).validate_format().is_ok());
     }
 
@@ -225,20 +227,33 @@ mod tests {
     }
 
     #[test]
-    fn validate_fails_empty_medley_refs() {
-        let mut v = sample_v1();
-        v.work_type = WorkType::Medley(BoundedVec::default());
+    fn validate_fails_medley_fewer_than_two_refs() {
+        // 0 refs and 1 ref both violate the >= 2 cardinality rule, surfacing
+        // as OutOfBounds (min-cardinality), checked before per-ref structure.
+        let mut empty = sample_v1();
+        empty.work_type = WorkType::Medley(BoundedVec::default());
         assert_eq!(
-            MusicalWork::V1(v).validate_format(),
-            Err(MiddsFormatError::EmptyMandatoryField),
+            MusicalWork::V1(empty).validate_format(),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+
+        let mut single = sample_v1();
+        single.work_type =
+            WorkType::Medley(BoundedVec::try_from(vec![bv::<11>(b"T0345246801")]).unwrap());
+        assert_eq!(
+            MusicalWork::V1(single).validate_format(),
+            Err(MiddsFormatError::OutOfBounds),
         );
     }
 
     #[test]
     fn validate_fails_invalid_medley_ref() {
         let mut v = sample_v1();
-        v.work_type =
-            WorkType::Medley(BoundedVec::try_from(vec![bv::<11>(b"X1234567890")]).unwrap());
+        // >= 2 refs so the cardinality check passes and the per-ref ISWC
+        // structure check is reached; the second ref is malformed.
+        v.work_type = WorkType::Medley(
+            BoundedVec::try_from(vec![bv::<11>(b"T0345246801"), bv::<11>(b"X1234567890")]).unwrap(),
+        );
         assert_eq!(
             MusicalWork::V1(v).validate_format(),
             Err(MiddsFormatError::InvalidIdentifierStructure),

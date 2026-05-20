@@ -364,6 +364,25 @@ where
         )?;
     }
 
+    // Surface partial failures as a non-zero exit. `seed` is a "give me N
+    // records on the chain" command — anything less is a failure the
+    // operator (or wrapping script / CI / e2e test) needs to know about.
+    // Reasons in practice: stale ISWCs colliding with prior runs, the
+    // funder running out of balance mid-batch, or a runtime change that
+    // started rejecting payloads `validate_format` still accepts. The
+    // report file (if requested) has already been written above so the
+    // operator can inspect the partial outcome.
+    if total.failed > 0 {
+        return Err(anyhow!(
+            "seed completed with failures: {ok}/{count} succeeded, {failed} failed \
+             (next_midds_id = {next_midds_id}). Common causes: identifier collision \
+             with a previous run (try `--rng-seed`), exhausted funder balance, or \
+             a runtime rejecting payloads the local validator accepts.",
+            ok = total.ok,
+            failed = total.failed,
+        ));
+    }
+
     Ok(())
 }
 

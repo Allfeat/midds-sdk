@@ -209,7 +209,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
             item.validate_format()?;
         }
 
-        let at_block = self.client.inner.at_current_block().await?;
+        let at_block = self.client.at_best_block().await?;
         let tx_client = at_block.transactions();
         let mut inner_calls: Vec<Vec<u8>> = Vec::with_capacity(items.len());
         for item in &items {
@@ -264,7 +264,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     /// hardcoding values that vary between testnet (`melodie`) and any
     /// future runtime variants.
     pub async fn deposit_constants(&self) -> Result<(Balance, Balance), Error> {
-        let at_block = self.client.inner.at_current_block().await?;
+        let at_block = self.client.at_best_block().await?;
         let consts = at_block.constants();
         // Constants are decoded via `DecodeAsType` against the runtime
         // metadata, so the same code works whether the runtime declares the
@@ -285,7 +285,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     pub async fn next_midds_id(&self) -> Result<MiddsId, Error> {
         let address: subxt::storage::DynamicAddress =
             subxt::dynamic::storage(self.pallet_name, NEXT_MIDDS_ID_STORAGE);
-        let at_block = self.client.inner.at_current_block().await?;
+        let at_block = self.client.at_best_block().await?;
         let value = at_block.storage().fetch(address, Vec::new()).await?;
         let bytes = value.bytes();
         Ok(MiddsId::decode(&mut &bytes[..])?)
@@ -365,7 +365,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     /// into `T`. Runtime API responses are plain SCALE so any `Decode` type
     /// (including tuples and `Option<...>`) round-trips through here.
     async fn runtime_api<T: Decode>(&self, method: &str, args: &[u8]) -> Result<T, Error> {
-        let at_block = self.client.inner.at_current_block().await?;
+        let at_block = self.client.at_best_block().await?;
         let function = format!("{}_{method}", self.runtime_api_name);
         let bytes = at_block
             .runtime_apis()
@@ -384,29 +384,31 @@ impl<'a, M: Midds> PalletApi<'a, M> {
         S: Signer<ChainConfig>,
         P: subxt::tx::Payload,
     {
-        // Subxt 0.50 routes every tx through `at_current_block()`, which pins
-        // the operation to a specific block hash. Under heavy concurrent load
-        // the node prunes that block (or replies with a stale handle whose
-        // header is no longer in the cache) before we get to sign+submit, and
-        // the call fails with a `BlockHeaderNotFound`-style error. The fix is
-        // to retry with a fresh `at_current_block()`: re-fetching naturally
-        // captures a newer block ref and the second attempt usually goes
-        // through. We only retry up to the point of submission — once the tx
-        // is in flight, retrying would risk a duplicate. See sibling
-        // `transient_at_block_error` for the exact match heuristic.
+        // Pin the operation to a fresh best-block handle (see
+        // `MiddsClient::at_best_block`). Under heavy concurrent load the
+        // node prunes the pinned block (or replies with a stale handle
+        // whose header is no longer in the cache) before we get to
+        // sign+submit, and the call fails with a `BlockHeaderNotFound`-
+        // style error. The fix is to retry with a fresh `at_best_block()`:
+        // re-fetching naturally captures a newer block ref and the second
+        // attempt usually goes through. We only retry up to the point of
+        // submission — once the tx is in flight, retrying would risk a
+        // duplicate. See sibling `transient_at_block_error` for the exact
+        // match heuristic.
         const MAX_PREP_RETRIES: u32 = 8;
         let progress = {
             let mut attempt: u32 = 0;
             loop {
                 let result = async {
-                    let at_block = self.client.inner.at_current_block().await?;
+                    let at_block = self.client.at_best_block().await?;
                     let mut tx_client = at_block.transactions();
                     match nonce {
                         Some(n) => {
                             // Caller is tracking the nonce themselves —
-                            // override subxt's auto-fetch so back-to-back
-                            // sequential submits don't pick up a stale value
-                            // from the lagging finalised state.
+                            // override subxt's auto-fetch. Mostly useful
+                            // for high-throughput batch flows (`bench
+                            // seed`) where even a best-block round-trip
+                            // per submit is too much overhead.
                             let params =
                                 subxt::config::DefaultExtrinsicParamsBuilder::<ChainConfig>::new()
                                     .nonce(n)
@@ -457,7 +459,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
 /// recover from by re-fetching the at-block handle.
 ///
 /// Two variants surface in practice under high concurrency:
-/// - `BlockHeaderNotFound` — the block hash captured by `at_current_block()`
+/// - `BlockHeaderNotFound` — the block hash captured by `at_best_block()`
 ///   was pruned from the node's cache before we got around to using it.
 /// - `CannotGetBlockHeader` — the header fetch RPC returned an error (often a
 ///   side-effect of the same backend pruning under load).

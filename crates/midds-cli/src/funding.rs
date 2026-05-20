@@ -100,7 +100,10 @@ async fn submit_batch(
     targets: &[Keypair],
     amount: u128,
 ) -> Result<()> {
-    let at_block = client.inner().at_current_block().await?;
+    // Best-block pin so the funder's auto-nonce reflects pending transfers
+    // — same rationale as `MiddsClient::at_best_block`. Finalised would
+    // reject back-to-back batches as "Transaction is outdated".
+    let at_block = client.at_best_block().await?;
     let mut tx_client = at_block.transactions();
 
     let mut inner_calls: Vec<Vec<u8>> = Vec::with_capacity(targets.len());

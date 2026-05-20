@@ -26,6 +26,12 @@ pub enum Error {
         /// Event variant name we searched for.
         variant: &'static str,
     },
+
+    /// `chain_getBlockHash(None)` returned `null` — the node has no best
+    /// block yet. Surfaces as a hard error rather than a retry signal:
+    /// any node we're meant to talk to is past genesis.
+    #[error("node has no best block yet (chain_getBlockHash returned null)")]
+    NoBestBlock,
 }
 
 impl From<MiddsFormatError> for Error {
@@ -61,4 +67,8 @@ from_subxt_subkind! {
     subxt_err::StorageError,
     subxt_err::ConstantError,
     subxt_err::RuntimeApiError,
+    // Raised by `chain_getBlockHash` and other raw RPC calls in
+    // `MiddsClient::at_best_block`; routed through `Subxt` via
+    // `subxt::Error::OtherRpcClientError` so callers keep one error arm.
+    subxt::rpcs::Error,
 }

@@ -80,6 +80,7 @@ pub trait Midds: Parameter + MaxEncodedLen {
 | `midds-client` | std | Subxt façade. Uses `subxt::dynamic` (not generated bindings) — see "Client choices" below. |
 | `midds-codegen` | std (bin) | CLI wrapping `subxt-codegen` for **external consumers** (TS via polkadot-api, etc.). `midds-client` itself does not consume its output. |
 | `midds-cli` | std (bin: `midds`) | Interactive operator CLI. `create`: offline guided MIDDS builder → validated SCALE hex + JSON (no node). `seed` / `bench`: live-node mass-seed + fee/throughput. No-arg launch = banner + menu. `console`/`indicatif`/`dialoguer` UX; chrome→stderr, payload→stdout. No admin/sudo commands. |
+| `midds-e2e` | std (tests) | End-to-end test suite. Five `[[test]]` targets exercising the full types → pallet → runtime-api → rpc → client → cli stack against a running `allfeat --dev`. Skips silently when no node responds at `MIDDS_E2E_WS` (default `ws://127.0.0.1:9944`). `publish = false`. |
 
 ### Pallet (`pallet-midds`) mechanics
 
@@ -110,15 +111,17 @@ The `../Allfeat` runtime consumes this SDK via path dependencies. `pallet_midds<
 
 ### Testing layers
 
-Per `docs/testing.md`, the planned strategy is 5 layers:
+Per `docs/testing.md`, the strategy is 5 layers:
 
 1. **Unit pallet** (`pallets/pallet-midds/src/tests.rs`) — exists, mock FRAME.
-2. **Property-based pallet** — proptest on the mock (planned).
-3. **Mass injection** — N=10k–100k on the mock with a committed `storage_root_hash` for anti-regression (planned).
+2. **Property-based pallet** (`pallets/pallet-midds/src/property_tests.rs`) — proptest on the mock; nightly job runs 10k cases.
+3. **Mass injection** (`pallets/pallet-midds/tests/mass_injection.rs`) — N=10k/100k on the mock with committed `storage_root_hash`; nightly job.
 4. **Runtime integration / fee reporting** — lives in the sibling `Allfeat` repo (`runtime/melodie/tests/`), not here, to preserve the SDK / runtime decoupling.
-5. **E2E node** — extends `midds-cli` with `seed`, `bench`, `verify-state` subcommands (planned).
+5. **E2E node** — split between:
+   - **Inter-crate stability** (`crates/midds-e2e`) — `cargo test -p midds-e2e` against a user-managed `allfeat --dev`. Validates that every SDK seam (types ↔ pallet ↔ runtime-api ↔ rpc ↔ client ↔ cli) speaks the same wire shape. The node URL is read from `MIDDS_E2E_WS` (default `ws://127.0.0.1:9944`); when no node responds the tests skip silently so the workspace's `cargo test` stays green for contributors without a node booted on the side.
+   - **Operator tooling** (`crates/midds-cli/src/bench/`) — `midds seed` / `midds bench fees` / `midds bench throughput` for mass-seeding a dev node and measuring real fees. Operator-facing, not an automated test.
 
-The cornerstone for all of the above is a planned `midds-fixtures` crate (proptest strategies + JSON corpora). Don't add a new test-tooling crate without checking whether `midds-fixtures` or `midds-cli` should host it.
+The cornerstone for layers 1–3 is the `midds-fixtures` crate (proptest strategies + deterministic per-index generators + JSON corpora). Don't add a new test-tooling crate without checking whether `midds-fixtures`, `midds-e2e`, or `midds-cli` should host it instead.
 
 ## Release & versioning
 
@@ -127,9 +130,9 @@ The cornerstone for all of the above is a planned `midds-fixtures` crate (propte
 - **Trunk branch is `master`** (not `main`). PRs target `master`.
 - **Conventional Commits are mandatory** — `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `perf:`, with `!` or a `BREAKING CHANGE:` footer for breaking changes. No exceptions: `release-plz` derives versions and CHANGELOG entries from commit messages.
 - **crates.io is deferred** — while the API stabilises, consumers use path/git deps. No publish workflow is wired yet.
-- **`midds-fixtures` is `publish = false`** — internal test scaffolding; never published even once other crates are.
+- **`midds-fixtures` and `midds-e2e` are `publish = false`** — internal test scaffolding; never published even once the rest of the workspace is.
 - **Pre-built binaries (`midds`, `midds-codegen`)** — from v1.0+ only, via `cargo-dist` on GitHub Releases. Before that, install via `cargo install --path …` from a clone.
-- **Release tooling — `release-plz`** (`release-plz.toml` + `.github/workflows/release-plz.yml`) — maintains a release PR on `master` that bumps versions and generates per-crate `CHANGELOG.md`. Configured in **git-only mode** (`git_only = true`): no `cargo publish`, versions derived from git tags. Single workspace tag (`vX.Y.Z`) carried by `pallet-midds`; the other publishable crates inherit the version via `version.workspace = true`. `midds-fixtures` is excluded (`release = false`).
+- **Release tooling — `release-plz`** (`release-plz.toml` + `.github/workflows/release-plz.yml`) — maintains a release PR on `master` that bumps versions and generates per-crate `CHANGELOG.md`. Configured in **git-only mode** (`git_only = true`): no `cargo publish`, versions derived from git tags. Single workspace tag (`vX.Y.Z`) carried by `pallet-midds`; the other publishable crates inherit the version via `version.workspace = true`. `midds-fixtures` and `midds-e2e` are excluded (`release = false`).
 - **CI** (`.github/workflows/ci.yml`) — 5 jobs run on push to `master` and on PR: `fmt`, `clippy` (`-D warnings`, `--all-targets --all-features`), `test` (`--workspace --all-features`), `wasm` (`pallet-midds` `no_std` build for `wasm32-unknown-unknown`), and `commitlint` (PR-only, validates Conventional Commits via `.commitlintrc.yaml`).
 
 ## Conventions

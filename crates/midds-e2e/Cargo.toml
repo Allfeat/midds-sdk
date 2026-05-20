@@ -1,0 +1,40 @@
+[package]
+name = "midds-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "End-to-end tests for the MIDDS SDK against a live Allfeat dev node."
+publish = false
+
+# Inter-crate stability: deposit / update / lookup / get / force_remove / RPC /
+# CLI all exercised together against one running node. Skip silently when
+# `MIDDS_E2E_WS` is unset (or no node responds) so plain `cargo test` stays
+# green for contributors without a node booted on the side.
+
+[dependencies]
+midds-traits = { workspace = true, features = ["std"] }
+midds-types = { workspace = true, features = ["std"] }
+midds-fixtures = { workspace = true }
+midds-client = { workspace = true }
+
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
+parity-scale-codec = { workspace = true, features = ["std"] }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+
+# Used by `tests/rpc_namespace.rs` to decode an opaque RPC response as
+# `serde_json::Value` — keeps the test agnostic to the wire shape of the
+# typed payload it gets back.
+serde_json = { workspace = true }
+
+# No dev-dependencies: the CLI smoke test spawns `cargo run -p midds-cli` as
+# a subprocess, which avoids pulling assert_cmd / escargot just to resolve a
+# cross-crate binary path. The trade-off is a slower first run (cargo builds
+# the binary), which is fine for e2e.

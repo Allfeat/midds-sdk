@@ -34,7 +34,8 @@
 | 2. Property-based pallet | Les invariants tiennent-ils sur 10k cas générés ? | `pallets/pallet-midds/src/property_tests.rs` | `proptest` sur le mock |
 | 3. Mass injection mock | Storage / weights / bond cumulé scalent-ils ? | `pallets/pallet-midds/tests/mass_injection.rs` | mock FRAME + boucle N=10k–100k |
 | 4. Runtime integration | **Fees réelles** sur melodie-runtime | `Allfeat/runtime/melodie/tests/midds_integration.rs` | `TestExternalities` sur `melodie-runtime` |
-| 5. E2E node | Inclusion réelle, RPC, multi-comptes | `crates/midds-cli/src/bench/` | node `--dev` + subxt + `midds-client` |
+| 5a. E2E inter-crates (tests auto) | Tous les seams SDK parlent la même forme | `crates/midds-e2e/tests/` | node `--dev` externe (`MIDDS_E2E_WS`) + subxt + `midds-client` |
+| 5b. E2E node (outillage opérateur) | Inclusion réelle, fees, throughput, multi-comptes | `crates/midds-cli/src/bench/` | node `--dev` + subxt + `midds-client` |
 
 ---
 
@@ -213,11 +214,77 @@ Sert de baseline pour décider de tuner `DepositBase` / `DepositPerByte`.
 
 ---
 
-## 8. Couche 5 — E2E node via `midds-cli` (extension)
+## 8. Couche 5 — E2E node
 
-Plutôt qu'une nouvelle crate, on étend la CLI existante.
+La Couche 5 est scindée en deux livrables séparés mais consommant le même node `--dev` :
 
-### 8.1 Sous-commandes ajoutées
+### 8.a Crate `midds-e2e` — tests automatisés inter-crates
+
+`crates/midds-e2e/` regroupe les `[[test]]` cibles qui font tourner toute la
+stack (`types → pallet → runtime-api → rpc → client → cli`) contre un node
+externe — sa raison d'être est de garantir que tous les seams parlent la
+même forme.
+
+#### 8.a.1 Layout
+
+```
+crates/midds-e2e/
+├── Cargo.toml          # publish = false
+├── src/
+│   ├── lib.rs          # re-exporte le scaffolding
+│   ├── env.rs          # MIDDS_E2E_WS lookup
+│   ├── client.rs       # try_connect() → skip silencieux si pas de node
+│   ├── signer.rs       # //Alice, //Bob
+│   ├── session.rs      # base index = nanos % 10^9, atomic slot par test
+│   └── tx.rs           # helpers raw (update, force_remove_refund, sudo,
+│                       #   free_balance) qui contournent midds-client
+└── tests/
+    ├── happy_path.rs       # deposit → lookup → get → assert payload identique
+    ├── update_window.rs    # update dans la fenêtre → assert payload muté
+    ├── force_admin.rs      # sudo force_remove_refund → assert bond restitué
+    ├── rpc_namespace.rs    # appels JSON-RPC midds_musicalWorks_*
+    └── cli_smoke.rs        # `cargo run -p midds-cli -- seed --count 5`
+```
+
+#### 8.a.2 Contrat de skip
+
+Pas de node = `cargo test -p midds-e2e` reste vert. Chaque test commence par
+`let Some(client) = client::try_connect().await else { return; }`. La
+résolution de l'URL :
+
+```
+MIDDS_E2E_WS=ws://… cargo test -p midds-e2e   # node explicite
+cargo test -p midds-e2e                       # ws://127.0.0.1:9944 par défaut
+```
+
+#### 8.a.3 Isolation des runs
+
+Tous les tests partagent la même chaîne, donc l'état s'accumule entre runs.
+`session::fresh_musical_work()` mint des ISWC déterministes via
+`base_index = nanos_since_epoch % 10^9` + un slot atomique par test, ce qui
+garantit qu'aucun run successif ne tape `AlreadyExists` et qu'aucun test
+parallèle ne se piétine.
+
+#### 8.a.4 Wiring contre Allfeat
+
+Le node `allfeat --dev` est lancé séparément par l'opérateur (ou un job CI
+qui le démarre en background avant le `cargo test`). Aucune dépendance Rust
+vers `../Allfeat` côté SDK — la frontière reste le WS RPC.
+
+```bash
+# Terminal 1
+../Allfeat/target/release/allfeat --dev --tmp
+
+# Terminal 2
+cargo test -p midds-e2e
+```
+
+### 8.b Outillage opérateur — `midds-cli`
+
+Indépendamment des tests, la CLI continue d'exposer des sous-commandes
+opérateur pour les usages live-node manuels.
+
+#### 8.b.1 Sous-commandes ajoutées
 
 ```
 midds-cli seed
@@ -246,15 +313,15 @@ midds-cli verify-state
   --expected-storage-root 0x...
 ```
 
-### 8.2 Architecture interne
+#### 8.b.2 Architecture interne
 
-- Nouveau module `crates/midds-cli/src/bench/` (mod.rs, seed.rs, fees.rs,
+- Module `crates/midds-cli/src/bench/` (mod.rs, seed.rs, fees.rs,
   throughput.rs, verify.rs).
 - Réutilise `midds-client` pour les extrinsics, `midds-fixtures` pour la
   génération.
 - Les rapports de seed sont rejoués-vérifiables via `verify-state`.
 
-### 8.3 Multi-comptes
+#### 8.b.3 Multi-comptes
 
 Dérivation déterministe `//Alice//<N>` (jusqu'à plusieurs milliers).
 Pré-funding via une sous-commande dédiée :
@@ -329,7 +396,8 @@ ne pas confondre. Ici on calibre les weights FRAME, pas le débit réseau.
 | Couche 3 (10k seulement) | Chaque PR | <5 min |
 | Couche 3 (100k) + property avec `PROPTEST_CASES=10000` | Nightly | <30 min |
 | Couche 4 (côté Allfeat) | Nightly Allfeat | <10 min |
-| Couche 5 throughput | Manuel + tag release | variable |
+| Couche 5a (`midds-e2e`) | Manuel local pour V1, à wirer en CI plus tard | <2 min après boot du node |
+| Couche 5b throughput | Manuel + tag release | variable |
 | Régénération weights + snapshot seeded | Tag release | <1h |
 
 ---

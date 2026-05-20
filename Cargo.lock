@@ -3068,6 +3068,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "midds-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "midds-client",
+ "midds-fixtures",
+ "midds-traits",
+ "midds-types",
+ "parity-scale-codec",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "serde_json",
+ "subxt",
+ "subxt-signer",
+ "tokio",
+]
+
+[[package]]
 name = "midds-fixtures"
 version = "0.1.0"
 dependencies = [

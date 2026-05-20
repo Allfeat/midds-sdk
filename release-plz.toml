@@ -42,3 +42,11 @@ name = "midds-fixtures"
 release = false
 changelog_update = false
 publish = false
+
+# Same deal for the e2e test crate: not a public library, just a `[[test]]`
+# harness exercising the full inter-crate seam against a live dev node.
+[[package]]
+name = "midds-e2e"
+release = false
+changelog_update = false
+publish = false

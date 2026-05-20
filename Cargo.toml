@@ -10,6 +10,7 @@ members = [
     "crates/midds-codegen",
     "crates/midds-cli",
     "crates/midds-fixtures",
+    "crates/midds-e2e",
     "pallets/pallet-midds",
 ]
 

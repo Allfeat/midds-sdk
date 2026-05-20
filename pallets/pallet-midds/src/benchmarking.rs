@@ -115,8 +115,6 @@ mod benchmarks {
         MiddsPallet::<T, I>::deposit(RawOrigin::Signed(caller).into(), item)?;
         warp_past_window::<T, I>();
 
-        // `finalize`'s origin is intentionally permissionless — anyone can
-        // crank it. Use the whitelisted caller to keep the cost stable.
         let cranker: T::AccountId = whitelisted_caller();
 
         #[extrinsic_call]
@@ -184,12 +182,8 @@ mod benchmarks {
         fund_caller::<T, I>(&operator);
         let item = T::BenchmarkHelper::bench_instance(s);
 
-        // Worst-case `valid_until` for benches: far enough in the future
-        // that signature freshness never trips during the run.
         let valid_until = BlockNumberFor::<T>::max_value();
 
-        // Derive the owner deterministically through the helper, then build
-        // and sign the payload at the current `OnBehalfNonce[owner]` value.
         let dummy = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
             kind: MiddsPallet::<T, I>::kind_bytes(),
             genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
@@ -333,9 +327,6 @@ mod benchmarks {
             dep_sig,
         )?;
 
-        // Worst case: a third-party relayer (≠ sponsor, ≠ owner) submits.
-        // Use a distinct funded account so the bench measures the souple
-        // caller path rather than collapsing to the sponsor case.
         let relayer: T::AccountId = account("relayer", 0, 0);
         fund_caller::<T, I>(&relayer);
 
@@ -363,9 +354,6 @@ mod benchmarks {
         let caller: T::AccountId = whitelisted_caller();
         fund_caller::<T, I>(&caller);
 
-        // Each iteration produces a fresh worst-case payload — the helper
-        // contract is that distinct `size` values yield distinct payloads
-        // (otherwise the per-payload hash guard refuses the second deposit).
         let mut requests = vec![];
         for i in 0..n {
             let item = T::BenchmarkHelper::bench_instance(i);

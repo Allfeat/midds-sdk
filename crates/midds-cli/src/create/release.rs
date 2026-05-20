@@ -139,8 +139,6 @@ fn build_title_aliases() -> Result<release::TitleAliases> {
 }
 
 fn build_tracks() -> Result<Tracks> {
-    // Mandatory, non-empty, and the on-chain rule rejects a recording
-    // appearing twice — surfaced at the final `validate_format` pass.
     ui::info("a release needs at least one track; a recording must not appear twice");
     let tracks = prompts::collect_bounded("track", 1, TRACKS_MAX as usize, |idx| {
         shared::recording_ref(&format!("Track #{} recording", idx + 1))
@@ -154,8 +152,6 @@ fn build_producers() -> Result<release::Producers> {
         0,
         release::PRODUCERS_MAX as usize,
         |_| -> Result<Producer> {
-            // Producers are ISNI-keyed legal persons, each with the catalog
-            // number under which they issued the release.
             let isni: Isni = prompts::identifier::<16>(
                 "Producer ISNI",
                 validate_isni_format,

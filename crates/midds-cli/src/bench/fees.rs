@@ -133,8 +133,6 @@ pub struct Args<'a> {
 pub async fn run<F>(args: Args<'_>, api_of: ApiOf<F::Item>) -> Result<()>
 where
     F: MiddsFixtures,
-    // `Sync` because each worker holds a `&[F::Item]` `chunks()` iterator
-    // across an `.await`, which `JoinSet::spawn` requires to be `Send`.
     F::Item: Send + Sync + 'static,
 {
     let Args {
@@ -154,9 +152,6 @@ where
         assume_yes,
     } = args;
 
-    // Mirror `bench::seed`: build the config from CLI flags (with `count = 0`
-    // as a placeholder when missing) and only hand off to the wizard if
-    // `count` was omitted. Both paths converge at the destructure below.
     let cfg = interactive::FeesConfig {
         count: count.unwrap_or(0),
         size_distribution: distribution,
@@ -199,9 +194,6 @@ where
 
     let (signer_count, concurrency) = sanitize_signer_concurrency(signer_count, concurrency);
     let batch_size = batch_size.max(1);
-    // Auto-fund on a solo `//Alice` run is a no-op (only one signer, already
-    // pre-funded) — silently disable it so the CLI flag and the wizard don't
-    // surprise users who flipped the toggle without thinking.
     let auto_fund = auto_fund && signer_count > 1;
 
     println!(
@@ -216,9 +208,6 @@ where
         );
     }
 
-    // Pre-generate all payloads from a single RNG so multi-signer runs stay
-    // bit-for-bit reproducible against the single-signer baseline: same
-    // (rng_seed, count) ⇒ same `Vec<MusicalWork>` ⇒ same on-chain state.
     let payloads: Vec<F::Item> = {
         let mut rng = seeded_rng(rng_seed);
         (0..count)
@@ -248,9 +237,6 @@ where
         url,
         base_signer: &base_signer,
         signer_count,
-        // Solo runs sign with the base URI verbatim so a fresh chain's
-        // pre-funded `//Alice` keeps working without auto-fund. Multi-signer
-        // flips back into the derivation scheme shared with seed/throughput.
         solo_uses_base_uri: true,
         payloads,
         api_of,
@@ -275,13 +261,6 @@ where
         let client = client.clone();
         let tx = tx.clone();
         let batch_size_usize = batch_size as usize;
-        // Spawn every worker eagerly and have them wait for a concurrency
-        // permit *inside* the task. Acquiring before the spawn would serialise
-        // the loop on the semaphore: with `concurrency` < `signer_count`, the
-        // loop blocks until an existing worker drains its whole partition,
-        // which delays the consumer task (spawned after this loop) by tens of
-        // minutes — long enough that the user sees "no progress" right after
-        // auto-fund and assumes the run is dead.
         set.spawn(async move {
             let _permit = match semaphore.acquire_owned().await {
                 Ok(p) => p,
@@ -304,9 +283,6 @@ where
                 .collect();
             let total_chunks = chunk_sizes.len();
             for (chunk_idx, chunk) in partition.chunks(batch_size_usize).enumerate() {
-                // Pre-compute encoded sizes so we can move the chunk into the
-                // batch call (the call consumes its `Vec<MusicalWork>`) and
-                // still attribute each receipt back to its source size.
                 let encoded_sizes: Vec<u32> =
                     chunk.iter().map(|w| w.encoded_size() as u32).collect();
                 match api
@@ -315,11 +291,6 @@ where
                 {
                     Ok(receipts) => {
                         nonce = nonce.saturating_add(1);
-                        // The runtime returns one `Deposited` per inner
-                        // deposit in submission order, plus one outer
-                        // `TransactionFeePaid` — `tx_fee` here is the
-                        // amortised per-record share. `bond` / `base_bond`
-                        // are exact per-record values (one event each).
                         for (encoded_size, receipt) in encoded_sizes.iter().zip(receipts.iter()) {
                             let tx_fee = receipt.tx_fee.unwrap_or(0);
                             let _ = tx.send(WorkerEvent::Sample(Sample {
@@ -331,15 +302,6 @@ where
                         }
                     }
                     Err(e) => {
-                        // Mirror seed / throughput batched: bail the whole
-                        // worker on first failure. Continuing is hopeless —
-                        // runtime errors (e.g. `BondHoldFailed` when a
-                        // signer is broke) consume the nonce, so the chain
-                        // advances under us. Re-fetching from finalised
-                        // storage lags 2-3 blocks behind best, so the next
-                        // submit picks up a stale nonce and rejects as
-                        // `Transaction is outdated`. Surviving signers keep
-                        // draining their partitions.
                         let remaining_records: u32 = chunk_sizes[chunk_idx..].iter().sum();
                         let remaining_chunks = total_chunks - chunk_idx;
                         let _ = tx.send(WorkerEvent::Failed {
@@ -360,14 +322,8 @@ where
             }
         });
     }
-    // Drop the original sender so `rx.recv()` returns None once every worker
-    // has dropped its clone — i.e. the channel naturally closes when the run
-    // is complete.
     drop(tx);
 
-    // Single consumer task drains the events stream, owns the progress
-    // printer, and accumulates samples. Keeping it on its own task means the
-    // main task can `join_next` workers without contending with the printer.
     let consumer = tokio::spawn(run_progress_consumer(
         rx,
         count,
@@ -395,11 +351,6 @@ where
         .map_err(|e| anyhow!("consumer panicked: {e}"))?;
     let duration_ms = started.elapsed().as_millis();
 
-    // Second snapshot taken after the deposit loop so the report can show
-    // how much the multipliers / weekly load drifted across the run. We
-    // only fail the run if both this and the per-record events were
-    // unavailable; a soft snapshot read failure is logged but otherwise
-    // ignored — the rest of the report is still valuable.
     let snapshot_end = match api_of(&client).pricing_snapshot().await {
         Ok(s) => Some(s),
         Err(e) => {
@@ -437,10 +388,6 @@ where
     };
 
     match out.as_deref() {
-        // Markdown is only worth its noise when the output is going to be
-        // committed or pasted somewhere markdown-aware. On stdout the
-        // pipe-and-dash table is unreadable, so render an aligned text
-        // version with proper column padding instead.
         Some(path) => write_report_to(path, &build_markdown_report(ctx, &samples))?,
         None => println!("\n{}", build_text_report(ctx, &samples)),
     }

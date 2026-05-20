@@ -108,9 +108,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
         let events = self.submit(signer, payload, nonce).await?;
 
         let (mut deposited, fee) = collect_deposit_events(&events, self.pallet_name)?;
-        // Single-deposit extrinsics emit exactly one `Deposited`. Use `pop`
-        // to get the last (and only) entry; mirrors the previous "remember
-        // the last `Deposited` we saw" behaviour without the explicit loop.
         let (id, bond, base_bond) = deposited.pop().ok_or(Error::EventNotFound {
             pallet: self.pallet_name,
             variant: DEPOSITED_EVENT,
@@ -214,9 +211,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
         let mut inner_calls: Vec<Vec<u8>> = Vec::with_capacity(items.len());
         for item in &items {
             let inner = subxt::dynamic::tx(self.pallet_name, DEPOSIT_CALL, EncodedCall::one(item));
-            // `call_data` resolves pallet/call indices via metadata and
-            // returns the canonical SCALE-encoded `RuntimeCall` bytes — the
-            // wire shape `Vec<RuntimeCall>` expects per element.
             inner_calls.push(tx_client.call_data(&inner)?);
         }
         let payload = subxt::dynamic::tx(
@@ -225,11 +219,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
             EncodedCall::one(&PreEncodedCalls::new(inner_calls)),
         );
 
-        // `submit` provides at-block retry on transient prune errors and the
-        // same inclusion-wait policy as the single-deposit path. The event
-        // stream contains one `Deposited` per inner deposit plus the single
-        // outer `TransactionFeePaid` (event order matches inner-call order,
-        // which subxt preserves).
         let events = self.submit(signer, payload, nonce).await?;
 
         let expected = items.len();
@@ -240,9 +229,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
                 variant: DEPOSITED_EVENT,
             });
         }
-        // Integer division loses up to (records-1) plancks of total fee per
-        // batch — negligible on a 12-decimal chain (sub-pico-token rounding)
-        // and identical for every record in the batch by construction.
         let amortised_fee = total_fee.map(|fee| fee / expected as Balance);
         Ok(deposited
             .into_iter()
@@ -266,10 +252,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     pub async fn deposit_constants(&self) -> Result<(Balance, Balance), Error> {
         let at_block = self.client.at_best_block().await?;
         let consts = at_block.constants();
-        // Constants are decoded via `DecodeAsType` against the runtime
-        // metadata, so the same code works whether the runtime declares the
-        // balance as `u128` or some narrower alias — as long as the wire
-        // shape matches `Balance`.
         let base_addr = subxt::dynamic::constant::<Balance>(self.pallet_name, DEPOSIT_BASE_CONST);
         let per_byte_addr =
             subxt::dynamic::constant::<Balance>(self.pallet_name, DEPOSIT_PER_BYTE_CONST);
@@ -384,17 +366,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
         S: Signer<ChainConfig>,
         P: subxt::tx::Payload,
     {
-        // Pin the operation to a fresh best-block handle (see
-        // `MiddsClient::at_best_block`). Under heavy concurrent load the
-        // node prunes the pinned block (or replies with a stale handle
-        // whose header is no longer in the cache) before we get to
-        // sign+submit, and the call fails with a `BlockHeaderNotFound`-
-        // style error. The fix is to retry with a fresh `at_best_block()`:
-        // re-fetching naturally captures a newer block ref and the second
-        // attempt usually goes through. We only retry up to the point of
-        // submission — once the tx is in flight, retrying would risk a
-        // duplicate. See sibling `transient_at_block_error` for the exact
-        // match heuristic.
         const MAX_PREP_RETRIES: u32 = 8;
         let progress = {
             let mut attempt: u32 = 0;
@@ -404,11 +375,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
                     let mut tx_client = at_block.transactions();
                     match nonce {
                         Some(n) => {
-                            // Caller is tracking the nonce themselves —
-                            // override subxt's auto-fetch. Mostly useful
-                            // for high-throughput batch flows (`bench
-                            // seed`) where even a best-block round-trip
-                            // per submit is too much overhead.
                             let params =
                                 subxt::config::DefaultExtrinsicParamsBuilder::<ChainConfig>::new()
                                     .nonce(n)
@@ -429,9 +395,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
                     Ok(progress) => break progress,
                     Err(e) if attempt < MAX_PREP_RETRIES && transient_at_block_error(&e) => {
                         attempt += 1;
-                        // Exponential-ish backoff: 50, 100, 200, 400 ms, capped
-                        // — prevents a thundering herd from re-stampeding the
-                        // same already-pruned block.
                         let backoff_ms = 50_u64 * (1 << attempt.min(3));
                         tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
                     }
@@ -439,16 +402,6 @@ impl<'a, M: Midds> PalletApi<'a, M> {
                 }
             }
         };
-        // Wait for inclusion (best block) instead of finalisation: GRANDPA
-        // finality lags 2-3 blocks behind best, so `wait_for_finalized` adds
-        // 12-18 s per submit for no measurement gain — `TransactionFeePaid`,
-        // `Deposited`, and any pallet error are all emitted at inclusion. The
-        // shorter pin window also reduces the chance the in-block hash gets
-        // unpinned by the chainHead backend before we fetch events. The
-        // tradeoff is theoretical fork resistance, which doesn't apply on
-        // single-authority dev nodes (best == finalized in practice) and is
-        // tolerable on testnets given that this SDK is operator/test tooling
-        // rather than a production submission path.
         let in_block = wait_for_in_block(progress).await?;
         let events = in_block.wait_for_success().await?;
         Ok(events)

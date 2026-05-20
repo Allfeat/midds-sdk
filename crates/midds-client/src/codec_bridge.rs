@@ -128,9 +128,6 @@ mod tests {
 
     #[test]
     fn fewer_fields_than_blobs_errors() {
-        // Caller supplied two encoded blobs but the metadata only advertises
-        // one field. Catches the runtime-side mismatch where someone changes a
-        // dispatchable signature without bumping `EncodedCall::two` to ::one.
         let call = EncodedCall::two(&1u32, &2u32);
         let err = run(&call, 1).expect_err("must reject narrower metadata");
         let msg = err.to_string();
@@ -142,8 +139,6 @@ mod tests {
 
     #[test]
     fn more_fields_than_blobs_errors() {
-        // Reverse: metadata advertises two fields but the caller only encoded
-        // one. Catches the case where a dispatchable gains a new argument.
         let call = EncodedCall::one(&1u32);
         let err = run(&call, 2).expect_err("must reject wider metadata");
         let msg = err.to_string();

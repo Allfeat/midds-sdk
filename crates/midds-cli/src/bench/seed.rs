@@ -87,8 +87,6 @@ pub struct Args<'a> {
 pub async fn run<F>(args: Args<'_>, api_of: ApiOf<F::Item>) -> Result<()>
 where
     F: MiddsFixtures,
-    // `Sync` because each worker holds a `&[F::Item]` `chunks()` iterator
-    // across an `.await`, which `JoinSet::spawn` requires to be `Send`.
     F::Item: Send + Sync + 'static,
 {
     let Args {
@@ -107,10 +105,6 @@ where
         assume_yes,
     } = args;
 
-    // Build the config from CLI flags (with `count = 0` as a placeholder when
-    // missing) and only hand off to the wizard if `count` was omitted. The
-    // wizard re-asks every field; the non-interactive path runs through
-    // `sanitize_signer_concurrency` + the per-field clamps below.
     let cfg = interactive::SeedConfig {
         count: count.unwrap_or(0),
         rng_seed: rng_seed.unwrap_or(DEFAULT_RNG_SEED),
@@ -172,12 +166,6 @@ where
         )
     };
 
-    // -------------------------------------------------------------
-    // Shared setup: prompt, derive signers, partition payloads, connect,
-    // snapshot pricing, and (when `auto_fund`) pre-fund every signer with
-    // worst-case-multiplier-sized headroom. Same scaffold as `bench fees`
-    // and `bench throughput`.
-    // -------------------------------------------------------------
     let RunnerHandles {
         client,
         signers,
@@ -188,8 +176,6 @@ where
         url,
         base_signer: &base_signer,
         signer_count,
-        // Always derive — `seed` has no historical solo-`//Alice` flow to
-        // preserve; even `signer_count == 1` runs against `<base>//1`.
         solo_uses_base_uri: false,
         payloads,
         api_of,
@@ -204,10 +190,6 @@ where
 
     let semaphore = Arc::new(Semaphore::new(concurrency as usize));
     let mut set: JoinSet<()> = JoinSet::new();
-    // Workers feed per-chunk progress to a single consumer task that owns
-    // the printer. Channel is unbounded because chunk events are tiny and
-    // workers are throttled by GRANDPA inclusion (one event per ~6 s on a
-    // dev node), so unbounded growth is not a concern in practice.
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<WorkerEvent>();
 
     let started = Instant::now();
@@ -219,19 +201,12 @@ where
         let client = client.clone();
         let batch_size = batch_size as usize;
         let tx = tx.clone();
-        // Acquire the permit *inside* the spawn so the loop can spawn every
-        // worker eagerly: outside-the-spawn would serialise on the semaphore
-        // when `concurrency < signer_count` and delay the consumer task.
         set.spawn(async move {
             let _permit = match semaphore.acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => return,
             };
             let api = api_of(&client);
-            // Each chunk = one `Utility::batch_all` extrinsic. Atomic, so a
-            // failure inside surfaces the whole chunk as failed; partial
-            // application is impossible. We keep going on subsequent chunks
-            // because re-runs are idempotent for non-overlapping ISWC ranges.
             let mut nonce = match fetch_signer_nonce(&client, &signer).await {
                 Ok(n) => n,
                 Err(e) => {
@@ -240,9 +215,6 @@ where
                          auto-nonce (may surface as `Transaction is outdated` \
                          after the first batch)"
                     )));
-                    // Sentinel that triggers the auto-nonce path below. The
-                    // counter never wraps in practice (a signer would have
-                    // to send 2^64 extrinsics before this aliases).
                     u64::MAX
                 }
             };
@@ -270,25 +242,6 @@ where
                         });
                     }
                     Err(e) => {
-                        // Stop the worker on the first failure: continuing
-                        // is hopeless either way.
-                        //
-                        // - Runtime errors (e.g. `BondHoldFailed` when a
-                        //   signer is broke) consume the nonce, so the chain
-                        //   advances under us. Re-fetching from finalised
-                        //   storage lags 2-3 blocks behind, so the next
-                        //   submit picks a stale nonce and rejects as
-                        //   `Transaction is outdated`. Same outcome —
-                        //   nothing useful happens after this point.
-                        //
-                        // - Validation errors (`Transaction is outdated`,
-                        //   `Invalid transaction`, …) typically mean either
-                        //   our local counter has drifted or the txpool has
-                        //   evicted us; recovery would require a txpool-
-                        //   aware nonce read (`system_accountNextIndex`),
-                        //   which we don't currently plumb. Bailing keeps
-                        //   the run output clean and lets surviving signers
-                        //   continue.
                         let remaining_records: u32 = chunk_sizes[chunk_idx..].iter().sum();
                         let remaining_chunks = total_chunks - chunk_idx;
                         let _ = tx.send(WorkerEvent::Notice(format!(
@@ -364,14 +317,6 @@ where
         )?;
     }
 
-    // Surface partial failures as a non-zero exit. `seed` is a "give me N
-    // records on the chain" command — anything less is a failure the
-    // operator (or wrapping script / CI / e2e test) needs to know about.
-    // Reasons in practice: stale ISWCs colliding with prior runs, the
-    // funder running out of balance mid-batch, or a runtime change that
-    // started rejecting payloads `validate_format` still accepts. The
-    // report file (if requested) has already been written above so the
-    // operator can inspect the partial outcome.
     if total.failed > 0 {
         return Err(anyhow!(
             "seed completed with failures: {ok}/{count} succeeded, {failed} failed \

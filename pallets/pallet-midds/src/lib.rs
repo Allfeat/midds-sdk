@@ -460,24 +460,15 @@ pub mod pallet {
         fn on_initialize(n: BlockNumberFor<T>) -> Weight {
             let mut weight = T::DbWeight::get().reads_writes(1, 1);
 
-            // 1) Drain the previous block's deposits counter and adjust M_fast.
             let fast_count = DepositsThisBlock::<T, I>::take();
             Self::adjust_fast_multiplier(fast_count);
 
-            // 2) Daily slow-window rotation (skip genesis to avoid rotating an
-            //    all-zero window before any deposit happened).
             if !n.is_zero() && (n % T::BlocksPerDay::get()).is_zero() {
                 Self::rotate_slow_bucket();
                 Self::adjust_slow_multiplier();
                 weight = weight.saturating_add(T::DbWeight::get().reads_writes(2, 2));
             }
 
-            // 3) Drain pending finalizations from the rolling cursor up to
-            //    `n`, capped globally at `MaxFinalizationsPerBlock`. The
-            //    cursor only advances when budget remains after a prefix
-            //    drain, so a prefix the cap couldn't fully clear stays put
-            //    and gets re-scanned next block. Permissionless
-            //    `finalize(id)` is still available as a tertiary fallback.
             let cap = T::MaxFinalizationsPerBlock::get() as usize;
             let mut remaining = cap;
             let initial_cursor = NextFinalizationScan::<T, I>::get();
@@ -490,18 +481,11 @@ pub mod pallet {
                     .collect();
                 let count = due.len();
                 for id in due {
-                    // Best-effort: a single failure must not poison the
-                    // rest of the queue. The slot can be retried via
-                    // `finalize(id)`.
                     let _ = Self::do_finalize(id);
                     weight = weight.saturating_add(T::WeightInfo::finalize_one());
                 }
                 remaining = remaining.saturating_sub(count);
                 if remaining > 0 {
-                    // Either the prefix was empty or we drained it under
-                    // budget — safe to step forward. If we hit the cap
-                    // mid-prefix `remaining == 0` and we leave the cursor
-                    // here so next block resumes draining the same slot.
                     cursor = cursor.saturating_add(One::one());
                 }
             }
@@ -525,7 +509,6 @@ pub mod pallet {
         #[frame_support::transactional]
         pub fn deposit(origin: OriginFor<T>, item: T::Midds) -> DispatchResult {
             let who = T::ProviderOrigin::ensure_origin(origin)?;
-            // For self-deposit `depositor == bond_payer == caller`.
             Self::do_deposit(who.clone(), who, item)
         }
 
@@ -693,7 +676,6 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::finalize_one())]
         #[frame_support::transactional]
         pub fn finalize(_origin: OriginFor<T>, id: MiddsId) -> DispatchResult {
-            // Origin is intentionally ignored: this is a maintenance crank.
             let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
             ensure!(!info.finalized, Error::<T, I>::AlreadyFinalized);
 

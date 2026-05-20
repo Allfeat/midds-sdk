@@ -9,9 +9,6 @@
 
 use anyhow::{Context, Result};
 use dialoguer::Input;
-// The structural validators live in `midds_traits`; the per-field prompt
-// loops call them so a malformed code is rejected before the payload is ever
-// assembled.
 use midds_traits::{
     OffchainHash, validate_ipi_format, validate_isni_format, validate_isrc_format,
     validate_iswc_format, validate_offchain_hash,

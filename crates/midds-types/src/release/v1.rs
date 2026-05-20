@@ -283,10 +283,6 @@ impl ReleaseV1 {
         for t in &self.tracks {
             t.validate_format()?;
         }
-        // Tracklist uniqueness: a recording must not appear twice on the
-        // release (the legacy front rejected duplicate recordings). Cross-
-        // field invariant ⇒ `CrossFieldInconsistency`. O(n²) over a list
-        // bounded by `TRACKS_MAX`; no alloc, `no_std`-safe.
         for (i, a) in self.tracks.iter().enumerate() {
             if self.tracks.iter().skip(i + 1).any(|b| b == a) {
                 return Err(MiddsFormatError::CrossFieldInconsistency);

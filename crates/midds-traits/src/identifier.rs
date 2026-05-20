@@ -108,13 +108,11 @@ mod tests {
     /// for `len < 64`, 2 bytes for `64 <= len < 16384`.
     #[test]
     fn identifier_max_encoded_lens_are_stable() {
-        // Identifiers whose bound is < 64 ⇒ 1-byte Compact prefix + N bytes.
         assert_eq!(<Iswc as MaxEncodedLen>::max_encoded_len(), 1 + 11);
         assert_eq!(<Isni as MaxEncodedLen>::max_encoded_len(), 1 + 16);
         assert_eq!(<Ipi as MaxEncodedLen>::max_encoded_len(), 1 + 11);
         assert_eq!(<Isrc as MaxEncodedLen>::max_encoded_len(), 1 + 12);
         assert_eq!(<Upc as MaxEncodedLen>::max_encoded_len(), 1 + 13);
-        // 64 bytes ⇒ 2-byte Compact prefix + 64 bytes.
         assert_eq!(<OffchainHash as MaxEncodedLen>::max_encoded_len(), 2 + 64);
     }
 
@@ -250,7 +248,6 @@ mod tests {
 
     #[test]
     fn upc_pass() {
-        // UPC-A (12 digits) and EAN-13 / GTIN-13 (13 digits).
         assert!(validate_upc_format(b"036000291452").is_ok());
         assert!(validate_upc_format(b"4006381333931").is_ok());
         assert!(validate_upc_format(b"000000000000").is_ok());

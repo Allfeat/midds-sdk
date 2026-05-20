@@ -22,10 +22,6 @@ use sp_runtime::{
 
 type Instance = ();
 
-// -----------------------------------------------------------------------------
-// deposit
-// -----------------------------------------------------------------------------
-
 #[test]
 fn deposit_works() {
     new_test_ext().execute_with(|| {
@@ -34,9 +30,6 @@ fn deposit_works() {
         let base = expected_base_bond_for(&item);
         let bond = expected_total_bond_for(&item);
 
-        // At genesis multipliers default to 1.0× so total = base — the test
-        // also pins this assumption explicitly so a future change to the
-        // default multipliers fails loudly here.
         assert_eq!(bond, base);
 
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item.clone()));
@@ -54,7 +47,6 @@ fn deposit_works() {
         assert!(!info.finalized);
         assert_eq!(pallet_midds::NextMiddsId::<Test, Instance>::get(), 1);
 
-        // PendingFinalization queues at deposited_at + CommitmentWindow.
         let expected_expiry = info.deposited_at + COMMITMENT_WINDOW;
         assert!(
             pallet_midds::PendingFinalization::<Test, Instance>::contains_key(expected_expiry, 0)
@@ -74,13 +66,11 @@ fn deposit_works() {
 
 #[test]
 fn deposit_accepts_same_identifier_with_different_payload() {
-    // Multi-claim is a feature, not a bug: two different parties may register
-    // their own version of the same canonical ISWC.
     new_test_ext().execute_with(|| {
         let first = mock_midds(b"abc", 5);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), first.clone()));
 
-        let second = mock_midds(b"abc", 7); // same id, different payload
+        let second = mock_midds(b"abc", 7);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(BOB), second.clone()));
 
         assert!(
@@ -99,8 +89,6 @@ fn deposit_rejects_exact_duplicate_payload() {
         let item = mock_midds(b"abc", 5);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item.clone()));
 
-        // Byte-identical payload → DuplicatePayload, even from a different
-        // depositor.
         assert_noop!(
             Midds::deposit(RuntimeOrigin::signed(BOB), item),
             pallet_midds::Error::<Test, Instance>::DuplicatePayload,
@@ -146,7 +134,6 @@ fn deposit_holds_correct_bond() {
 #[test]
 fn deposit_increments_demand_trackers() {
     new_test_ext().execute_with(|| {
-        // No deposit yet → counters at zero.
         assert_eq!(pallet_midds::DepositsThisBlock::<Test, Instance>::get(), 0);
         assert_eq!(Midds::weekly_actual(), 0);
 
@@ -164,10 +151,6 @@ fn deposit_increments_demand_trackers() {
     });
 }
 
-// -----------------------------------------------------------------------------
-// update
-// -----------------------------------------------------------------------------
-
 #[test]
 fn update_within_window_works() {
     new_test_ext().execute_with(|| {
@@ -178,9 +161,6 @@ fn update_within_window_works() {
         updated.data.iter_mut().for_each(|b| *b = 1);
         let new_base = expected_base_bond_for(&updated);
 
-        // Last in-window block: window is strictly < CommitmentWindow, so the
-        // last accepted offset is `CommitmentWindow - 1`. At `+ window` exactly
-        // the record is already finalizable.
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW - 1);
         assert_ok!(Midds::update(
             RuntimeOrigin::signed(ALICE),
@@ -190,9 +170,7 @@ fn update_within_window_works() {
 
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("deposit info");
         assert_eq!(pallet_midds::Items::<Test, Instance>::get(0), Some(updated));
-        // Self-deposit: delta lands on sponsor_layer (no owner layer needed).
         assert_eq!(info.sponsor_layer.base, new_base);
-        // Multipliers unchanged across the test → premium = 0, amount = base.
         assert_eq!(info.sponsor_layer.amount, new_base);
         assert!(info.owner_layer.is_none());
 
@@ -211,9 +189,6 @@ fn update_after_window_freezes() {
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item.clone()));
 
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
-        // The same payload is still indexed by hash, so we have to point at a
-        // distinct payload to ensure the failure is the window check, not the
-        // duplicate-payload guard.
         let other = mock_midds(b"abc", 6);
         assert_noop!(
             Midds::update(RuntimeOrigin::signed(ALICE), 0, other),
@@ -294,7 +269,6 @@ fn update_adjusts_bond_down() {
 #[test]
 fn update_preserves_deposit_time_premium() {
     new_test_ext().execute_with(|| {
-        // Inflate M_fast to 2.0× so a fresh deposit pays 2 × base.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
 
         let item = mock_midds(b"abc", 5);
@@ -305,17 +279,12 @@ fn update_preserves_deposit_time_premium() {
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item.clone()));
         assert_eq!(held(ALICE), total);
 
-        // Drop M_fast back to 1.0× — a fresh deposit *now* would pay base.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::one());
 
-        // Update with a same-size payload (different bytes so the hash moves
-        // off the original).
         let mut other = mock_midds(b"abc", 5);
         other.data.iter_mut().for_each(|b| *b = 1);
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, other));
 
-        // The held amount stays at `2 × base` — the premium was banked at
-        // deposit time and survives the price drop.
         assert_eq!(held(ALICE), total);
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
         assert_eq!(info.sponsor_layer.amount, total);
@@ -325,15 +294,12 @@ fn update_preserves_deposit_time_premium() {
 
 #[test]
 fn update_rejects_collision_with_other_payload() {
-    // Update can change the exact payload, but it can't land on a hash
-    // already owned by *another* record.
     new_test_ext().execute_with(|| {
         let a = mock_midds(b"a", 5);
         let b = mock_midds(b"b", 8);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), a.clone()));
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), b.clone()));
 
-        // Try to update record 0 to look exactly like record 1 → rejected.
         assert_noop!(
             Midds::update(RuntimeOrigin::signed(ALICE), 0, b.clone()),
             pallet_midds::Error::<Test, Instance>::IdentifierImmutable,
@@ -350,37 +316,25 @@ fn update_rejects_collision_with_other_payload() {
 #[test]
 fn update_rejects_payload_collision_under_multi_claim() {
     new_test_ext().execute_with(|| {
-        // Two records share identifier "abc" with different payloads —
-        // multi-claim is legal at deposit time.
         let r0 = mock_midds(b"abc", 5);
         let mut r1 = mock_midds(b"abc", 5);
         r1.data.iter_mut().for_each(|byte| *byte = 1);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), r0.clone()));
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), r1.clone()));
 
-        // Updating r0 with r1's exact payload would byte-equal record 1.
-        // Identifier check passes (still "abc"), but the payload hash now
-        // maps to id 1, not 0 — `do_apply_edit` rejects with
-        // `DuplicatePayload`.
         assert_noop!(
             Midds::update(RuntimeOrigin::signed(ALICE), 0, r1.clone()),
             pallet_midds::Error::<Test, Instance>::DuplicatePayload,
         );
 
-        // Storage left untouched.
         assert_eq!(pallet_midds::Items::<Test, Instance>::get(0), Some(r0));
         assert_eq!(pallet_midds::Items::<Test, Instance>::get(1), Some(r1));
     });
 }
 
-// -----------------------------------------------------------------------------
-// remove_own
-// -----------------------------------------------------------------------------
-
 #[test]
 fn remove_own_refunds_base_and_sends_premium_to_treasury() {
     new_test_ext().execute_with(|| {
-        // 2× M_fast so there's a non-zero premium to track.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
 
         let item = mock_midds(b"abc", 5);
@@ -396,12 +350,9 @@ fn remove_own_refunds_base_and_sends_premium_to_treasury() {
         assert_ok!(Midds::remove_own(RuntimeOrigin::signed(ALICE), 0));
 
         assert_eq!(held(ALICE), 0);
-        // Depositor gets `base` back (paid `total`, refunded `total`, then
-        // `premium` flowed to Treasury).
         assert_eq!(free(ALICE), free_before - premium);
         assert_eq!(treasury_balance(), treasury_before + premium);
 
-        // Storage cleared.
         assert!(pallet_midds::Items::<Test, Instance>::get(0).is_none());
         assert!(pallet_midds::DepositInfo::<Test, Instance>::get(0).is_none());
         assert!(
@@ -432,7 +383,6 @@ fn remove_own_within_window_with_no_premium_is_full_refund() {
         assert_eq!(held(ALICE), 0);
         assert_eq!(free(ALICE), free_before);
         assert_eq!(treasury_balance(), 0);
-        // Sanity: at unit multipliers, the held amount equalled the base.
         assert_eq!(bond, expected_base_bond_for(&mock_midds(b"abc", 5)));
     });
 }
@@ -446,7 +396,6 @@ fn remove_own_within_window_with_no_premium_is_full_refund() {
 #[test]
 fn remove_own_at_sub_unit_multiplier_refunds_amount_not_base() {
     new_test_ext().execute_with(|| {
-        // Pin M_fast at the configured floor (mock = 0.1×).
         let floor = <Test as pallet_midds::Config>::FastMultiplierMin::get();
         pallet_midds::FastMultiplier::<Test, Instance>::put(floor);
 
@@ -461,10 +410,8 @@ fn remove_own_at_sub_unit_multiplier_refunds_amount_not_base() {
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item));
         assert_ok!(Midds::remove_own(RuntimeOrigin::signed(ALICE), 0));
 
-        // ALICE paid `total`, got `total` back: net zero balance movement.
         assert_eq!(held(ALICE), 0);
         assert_eq!(free(ALICE), free_before);
-        // No premium ever existed → Treasury sees nothing.
         assert_eq!(treasury_balance(), treasury_before);
 
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
@@ -505,10 +452,6 @@ fn remove_own_after_window_is_rejected() {
     });
 }
 
-// -----------------------------------------------------------------------------
-// finalize
-// -----------------------------------------------------------------------------
-
 #[test]
 fn finalize_after_window_moves_bond_to_treasury() {
     new_test_ext().execute_with(|| {
@@ -519,15 +462,12 @@ fn finalize_after_window_moves_bond_to_treasury() {
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
         assert_ok!(Midds::finalize(RuntimeOrigin::signed(BOB), 0));
 
-        // Bond moved.
         assert_eq!(held(ALICE), 0);
         assert_eq!(treasury_balance(), bond);
-        // Record stays on chain, marked permanent.
         let info =
             pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("kept after finalize");
         assert!(info.finalized);
         assert!(pallet_midds::Items::<Test, Instance>::get(0).is_some());
-        // Pending finalization slot drained.
         let expiry = info.deposited_at + COMMITMENT_WINDOW;
         assert!(!pallet_midds::PendingFinalization::<Test, Instance>::contains_key(expiry, 0));
 
@@ -546,7 +486,6 @@ fn finalize_before_window_close_is_rejected() {
         let item = mock_midds(b"abc", 5);
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item));
 
-        // Still inside the window.
         assert_noop!(
             Midds::finalize(RuntimeOrigin::signed(BOB), 0),
             pallet_midds::Error::<Test, Instance>::CommitmentWindowOpen,
@@ -567,10 +506,8 @@ fn window_boundary_at_expiry_is_finalizable_only() {
         assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), item));
         let deposited_at = System::block_number();
 
-        // Land exactly on the expiry block.
         System::set_block_number(deposited_at + COMMITMENT_WINDOW);
 
-        // `update` and `remove_own` no longer accept this depositor's call.
         let other = mock_midds(b"abc", 6);
         assert_noop!(
             Midds::update(RuntimeOrigin::signed(ALICE), 0, other),
@@ -581,7 +518,6 @@ fn window_boundary_at_expiry_is_finalizable_only() {
             pallet_midds::Error::<Test, Instance>::CommitmentWindowClosed,
         );
 
-        // `finalize` works at the same block.
         assert_ok!(Midds::finalize(RuntimeOrigin::signed(BOB), 0));
     });
 }
@@ -630,9 +566,6 @@ fn on_initialize_finalizes_at_expiry_block() {
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
         let expiry = info.deposited_at + COMMITMENT_WINDOW;
 
-        // Window is strictly less than `CommitmentWindow` so the expiry
-        // block itself is finalizable. The hook drains `PendingFinalization`
-        // at exactly that block.
         advance_to_block(expiry);
 
         assert_eq!(treasury_balance(), bond);
@@ -649,9 +582,6 @@ fn on_initialize_finalizes_at_expiry_block() {
 #[test]
 fn on_initialize_rolls_pending_finalizations_forward() {
     new_test_ext().execute_with(|| {
-        // Deposit `cap + overflow` records at block 1 so they all share the
-        // same expiry prefix. The fast multiplier will spike under this
-        // burst — expected, irrelevant to what we exercise here.
         let cap: u64 =
             <<Test as pallet_midds::Config<Instance>>::MaxFinalizationsPerBlock as Get<u32>>::get()
                 .into();
@@ -673,7 +603,6 @@ fn on_initialize_rolls_pending_finalizations_forward() {
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("first info");
         let expiry = info.deposited_at + COMMITMENT_WINDOW;
 
-        // First hook at the expiry block can only drain `cap` entries.
         advance_to_block(expiry);
         let finalized_first_pass = (0..total)
             .filter(|i| {
@@ -686,15 +615,11 @@ fn on_initialize_rolls_pending_finalizations_forward() {
             finalized_first_pass, cap,
             "first hook should finalize exactly `cap` records"
         );
-        // Cursor must still point at the overflowed prefix so the next hook
-        // resumes the drain instead of skipping ahead.
         assert_eq!(
             pallet_midds::NextFinalizationScan::<Test, Instance>::get(),
             expiry,
         );
 
-        // One more block clears the leftover and advances the cursor past
-        // the prefix.
         advance_to_block(expiry + 1);
         let finalized_total = (0..total)
             .filter(|i| {
@@ -713,10 +638,6 @@ fn on_initialize_rolls_pending_finalizations_forward() {
         );
     });
 }
-
-// -----------------------------------------------------------------------------
-// force_edit
-// -----------------------------------------------------------------------------
 
 #[test]
 fn force_edit_bypasses_window() {
@@ -784,7 +705,6 @@ fn force_edit_post_finalization_updates_payload_only() {
 
         assert_ok!(Midds::force_edit(RuntimeOrigin::root(), 0, edited.clone()));
 
-        // Payload + hash index swapped; bond accounting untouched.
         assert_eq!(pallet_midds::Items::<Test, Instance>::get(0), Some(edited));
         let info_after = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
         assert!(info_after.finalized);
@@ -804,14 +724,9 @@ fn force_edit_post_finalization_updates_payload_only() {
     });
 }
 
-// -----------------------------------------------------------------------------
-// force_remove_refund
-// -----------------------------------------------------------------------------
-
 #[test]
 fn force_remove_refund_returns_full_bond() {
     new_test_ext().execute_with(|| {
-        // 2× premium to verify the refund is *total* (premium included).
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
 
         let item = mock_midds(b"abc", 5);
@@ -860,17 +775,12 @@ fn force_remove_refund_rejects_after_finalization() {
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
         assert_ok!(Midds::finalize(RuntimeOrigin::signed(BOB), 0));
 
-        // Bond is already in Treasury — there's nothing to refund.
         assert_noop!(
             Midds::force_remove_refund(RuntimeOrigin::root(), 0),
             pallet_midds::Error::<Test, Instance>::AlreadyFinalized,
         );
     });
 }
-
-// -----------------------------------------------------------------------------
-// force_remove_slash
-// -----------------------------------------------------------------------------
 
 #[test]
 fn force_remove_slash_pre_finalization_sends_bond_to_treasury() {
@@ -884,7 +794,6 @@ fn force_remove_slash_pre_finalization_sends_bond_to_treasury() {
 
         assert!(pallet_midds::Items::<Test, Instance>::get(0).is_none());
         assert_eq!(held(ALICE), 0);
-        // Depositor lost the entire bond.
         assert_eq!(free(ALICE), free_before - bond);
         assert_eq!(treasury_balance(), bond);
     });
@@ -906,7 +815,6 @@ fn force_remove_slash_post_finalization_only_cleans_storage() {
 
         assert!(pallet_midds::Items::<Test, Instance>::get(0).is_none());
         assert!(pallet_midds::DepositInfo::<Test, Instance>::get(0).is_none());
-        // Treasury balance unchanged: bond was already there.
         assert_eq!(treasury_balance(), treasury_after_finalize);
     });
 }
@@ -922,10 +830,6 @@ fn force_remove_slash_requires_root() {
         );
     });
 }
-
-// -----------------------------------------------------------------------------
-// force_remove_many
-// -----------------------------------------------------------------------------
 
 #[test]
 fn force_remove_many_batch_refund() {
@@ -1045,7 +949,6 @@ fn force_remove_many_mixed_batch_per_id_kind() {
         ));
 
         assert_eq!(held(ALICE), 0);
-        // id 0 refunded → ALICE balance restored, id 1 slashed → treasury keeps `total_b`.
         assert_eq!(free(ALICE), free_before - total_b);
         assert_eq!(treasury_balance(), total_b);
     });
@@ -1069,10 +972,6 @@ fn force_remove_many_rolls_back_partial_batch_on_failure() {
         let held_after_deposit = held(ALICE);
         assert_eq!(held_after_deposit, total_a + total_b);
 
-        // Submit a batch where the second id (=42) does not exist. Without
-        // `#[transactional]`, the loop would settle id=0 then bail at id=42,
-        // leaving ALICE's hold = total_b. With it, the failure rolls back
-        // both layers and ALICE's hold is unchanged.
         assert_noop!(
             Midds::force_remove_many(
                 RuntimeOrigin::root(),
@@ -1082,7 +981,7 @@ fn force_remove_many_rolls_back_partial_batch_on_failure() {
                         kind: RemovalKind::Refund,
                     },
                     RemovalRequest {
-                        id: 42, // never deposited
+                        id: 42,
                         kind: RemovalKind::Refund,
                     },
                 ])
@@ -1099,10 +998,6 @@ fn force_remove_many_rolls_back_partial_batch_on_failure() {
         assert!(pallet_midds::DepositInfo::<Test, Instance>::contains_key(0));
     });
 }
-
-// -----------------------------------------------------------------------------
-// pathological: bond hold failure
-// -----------------------------------------------------------------------------
 
 #[test]
 fn deposit_fails_when_account_lacks_funds_for_bond() {
@@ -1144,7 +1039,6 @@ fn deposit_fails_when_account_lacks_funds_for_bond() {
 #[test]
 fn update_grow_records_deposit_demand() {
     new_test_ext().execute_with(|| {
-        // Fresh chain: nothing recorded yet.
         assert_eq!(pallet_midds::DepositsThisBlock::<Test, Instance>::get(), 0);
 
         let small = mock_midds(b"grow1", 1);
@@ -1152,8 +1046,6 @@ fn update_grow_records_deposit_demand() {
         let after_deposit = pallet_midds::DepositsThisBlock::<Test, Instance>::get();
         assert_eq!(after_deposit, 1, "deposit always counts");
 
-        // Same-block grow via `update` must increment the counter — the
-        // network observes a storage extension just like a fresh deposit.
         let bigger = mock_midds(b"grow1", 8);
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
         assert_eq!(
@@ -1162,8 +1054,6 @@ fn update_grow_records_deposit_demand() {
             "update grow must bump per-block demand"
         );
 
-        // A subsequent shrink must NOT count — freeing storage is the
-        // opposite of demand.
         let smaller = mock_midds(b"grow1", 3);
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, smaller));
         assert_eq!(
@@ -1174,10 +1064,6 @@ fn update_grow_records_deposit_demand() {
     });
 }
 
-// -----------------------------------------------------------------------------
-// reverse lookup
-// -----------------------------------------------------------------------------
-
 /// Pin the cap surfaced by `lookup_by_identifier`: a popular identifier
 /// must not produce an unbounded `Vec<MiddsId>`, otherwise the runtime
 /// API / RPC would OOM the node. Pagination via
@@ -1185,7 +1071,6 @@ fn update_grow_records_deposit_demand() {
 #[test]
 fn lookup_by_identifier_paginates_and_caps() {
     new_test_ext().execute_with(|| {
-        // Six different payloads sharing the same identifier "shared".
         let total = 6u8;
         for i in 0..total {
             let mut item = mock_midds(b"shared", 5);
@@ -1194,7 +1079,6 @@ fn lookup_by_identifier_paginates_and_caps() {
         }
         let identifier = mock_midds(b"shared", 5).id.clone();
 
-        // Unpaginated call returns every id sorted ascending (under cap).
         let all = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier(identifier.clone());
         assert_eq!(all, (0..total as u64).collect::<Vec<_>>());
         assert_eq!(
@@ -1202,7 +1086,6 @@ fn lookup_by_identifier_paginates_and_caps() {
             total as u32,
         );
 
-        // Page through with limit=2 and walk the cursor.
         let page1 = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
             identifier.clone(),
             None,
@@ -1228,7 +1111,6 @@ fn lookup_by_identifier_paginates_and_caps() {
         );
         assert!(page4.is_empty(), "exhausted cursor must yield empty page");
 
-        // Limit beyond the cap clamps silently.
         let cap = pallet_midds::Pallet::<Test, Instance>::MAX_LOOKUP_LIMIT;
         let oversize = pallet_midds::Pallet::<Test, Instance>::lookup_by_identifier_paged(
             identifier,
@@ -1239,17 +1121,12 @@ fn lookup_by_identifier_paginates_and_caps() {
     });
 }
 
-// -----------------------------------------------------------------------------
-// multiplier dynamics
-// -----------------------------------------------------------------------------
-
 /// A burst beyond `FastTargetPerBlock` pushes `M_fast` upward at the next
 /// `on_initialize`. Mirrors the spec's "block stuffing → fast multiplier
 /// spike" claim (§5.1).
 #[test]
 fn fast_multiplier_climbs_on_burst() {
     new_test_ext().execute_with(|| {
-        // Saturate this block: deposits beyond FastTargetPerBlock.
         for i in 0..(FAST_TARGET_PER_BLOCK as u8 + 5) {
             let id_bytes = format!("a{i}");
             assert_ok!(Midds::deposit(
@@ -1279,10 +1156,6 @@ fn fast_multiplier_step_scales_with_deviation() {
 
     fn observe(deposits: u32) -> FixedU128 {
         new_test_ext().execute_with(|| {
-            // Genesis multipliers are 1.0×; we feed `deposits` directly into
-            // `DepositsThisBlock` instead of going through `Midds::deposit`
-            // so the test isolates the multiplier math from the rest of the
-            // pallet (bonds, format checks, etc.).
             pallet_midds::DepositsThisBlock::<Test, Instance>::put(deposits);
             let n = System::block_number() + 1;
             System::set_block_number(n);
@@ -1295,17 +1168,12 @@ fn fast_multiplier_step_scales_with_deviation() {
     let m_at_2x = observe(2 * target);
     let m_at_10x = observe(10 * target);
 
-    // Both should be > 1.0× (above target).
     assert!(m_at_2x > FixedU128::one());
     assert!(m_at_10x > FixedU128::one());
-    // 10× burst must lift the multiplier strictly more than a 2× burst —
-    // proves the step is not a constant `+rate` regardless of amplitude.
     assert!(
         m_at_10x > m_at_2x,
         "10× burst ({m_at_10x:?}) must outpace 2× burst ({m_at_2x:?})"
     );
-    // And the gap must be material: the 10× step should be at least double
-    // the 2× step (in linear-step terms `9·rate` vs `1·rate`).
     let step_2x = m_at_2x - FixedU128::one();
     let step_10x = m_at_10x - FixedU128::one();
     assert!(
@@ -1317,7 +1185,6 @@ fn fast_multiplier_step_scales_with_deviation() {
 #[test]
 fn fast_multiplier_drops_on_idle_block() {
     new_test_ext().execute_with(|| {
-        // Pin M_fast at 2.0× and idle through one block.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
         advance_to_block(System::block_number() + 1);
         assert!(pallet_midds::FastMultiplier::<Test, Instance>::get() < FixedU128::from_u32(2));
@@ -1331,8 +1198,6 @@ fn fast_multiplier_drops_on_idle_block() {
 #[test]
 fn current_deposit_price_matches_actual_bond() {
     new_test_ext().execute_with(|| {
-        // Move M_fast off the unit baseline so the test would catch a
-        // missing multiplier in the quote path.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_rational(7, 4));
         let item = mock_midds(b"abc", 5);
         let size = item.encoded_size() as u32;
@@ -1349,10 +1214,6 @@ fn current_deposit_price_matches_actual_bond() {
         assert_eq!(held(ALICE), quoted, "held bond must match the quote");
     });
 }
-
-// -----------------------------------------------------------------------------
-// invariants
-// -----------------------------------------------------------------------------
 
 /// Walk a sequence of extrinsics and check the storage invariants the SDK
 /// commits to.
@@ -1432,7 +1293,6 @@ fn check_invariants(expected: &[(u64, AccountId, MockId)]) {
             expected_base_bond_for(&item),
             "Σ layer.base drifted from the bond formula at id={id}"
         );
-        // Each layer: amount = base + premium ≥ base.
         assert!(info.sponsor_layer.amount >= info.sponsor_layer.base);
         if let Some(layer) = info.owner_layer.as_ref() {
             assert!(layer.amount >= layer.base);
@@ -1454,10 +1314,6 @@ fn check_invariants(expected: &[(u64, AccountId, MockId)]) {
         );
     }
 }
-
-// -----------------------------------------------------------------------------
-// deposit_on_behalf / update_on_behalf
-// -----------------------------------------------------------------------------
 
 /// Convenience `valid_until` for tests that don't specifically exercise
 /// signature expiry — pinned far enough in the future that no realistic
@@ -1553,10 +1409,8 @@ fn deposit_on_behalf_attributes_owner_holds_on_operator() {
         assert_eq!(info.sponsor_layer.amount, bond);
         assert!(info.owner_layer.is_none());
 
-        // Bond is held against the sponsor, not the owner.
         assert_eq!(held(BOB), bond);
         assert_eq!(held(ALICE), 0);
-        // Per-owner nonce bumps.
         assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 1);
 
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Deposited {
@@ -1573,7 +1427,6 @@ fn deposit_on_behalf_attributes_owner_holds_on_operator() {
 fn deposit_on_behalf_rejects_invalid_signature() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"sponsor2", 5);
-        // Sign a payload claiming a *different* operator than the one calling.
         let payload = deposit_payload(&item, CHARLIE, 0, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
 
@@ -1599,8 +1452,6 @@ fn deposit_on_behalf_rejects_replay() {
             sig.clone(),
         ));
 
-        // Same nonce used twice — the on-chain counter is now 1, replay
-        // attempt at nonce=0 is refused.
         let second = mock_midds(b"replay2", 5);
         let stale_payload = deposit_payload(&second, BOB, 0, FAR_FUTURE);
         let stale_sig = sign(ALICE, &stale_payload);
@@ -1624,7 +1475,6 @@ fn deposit_on_behalf_rejects_replay() {
 #[test]
 fn deposit_on_behalf_rejects_nonce_overflow() {
     new_test_ext().execute_with(|| {
-        // Pin the on-chain counter at the boundary.
         pallet_midds::OnBehalfNonce::<Test, Instance>::insert(ALICE, u64::MAX);
 
         let item = mock_midds(b"maxnonce", 5);
@@ -1652,7 +1502,6 @@ fn deposit_on_behalf_rejects_nonce_overflow() {
 fn deposit_on_behalf_rejects_expired_signature() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"expires", 5);
-        // Sign with `valid_until = current_block`, then advance past it.
         let now = System::block_number();
         let payload = deposit_payload(&item, BOB, 0, now);
         let sig = sign(ALICE, &payload);
@@ -1674,8 +1523,6 @@ fn deposit_on_behalf_rejects_expired_signature() {
 fn deposit_on_behalf_rejects_wrong_genesis_hash() {
     new_test_ext().execute_with(|| {
         let item = mock_midds(b"otherchn", 5);
-        // Forge a payload pretending to come from a different chain (any
-        // non-real H256 will do; test_genesis_hash() returns the real one).
         let mut payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         payload.genesis_hash = sp_core::H256::from([0xAB; 32]);
         let sig = sign(ALICE, &payload);
@@ -1709,11 +1556,8 @@ fn remove_own_on_sponsored_record_refunds_sponsor() {
             FAR_FUTURE,
             sig,
         ));
-        // Owner keeps authority — they call remove_own.
         assert_ok!(Midds::remove_own(RuntimeOrigin::signed(ALICE), 0));
 
-        // Sponsor's hold released; net loss is exactly the multiplier
-        // premium that flowed to the Treasury. Owner's balance is untouched.
         assert_eq!(held(BOB), 0);
         assert_eq!(free(BOB), bob_free_before - premium);
         assert_eq!(free(ALICE), alice_free_before);
@@ -1751,14 +1595,12 @@ fn update_grows_sponsored_record_via_escape_hatch() {
         ));
         let sponsor_held_before = held(BOB);
 
-        // Force a 2× M_fast so we can observe the owner's premium getting
-        // banked at *current* multipliers when the owner_layer is created.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
 
         let bigger = mock_midds(b"plainup", 10);
         let bigger_base = expected_base_bond_for(&bigger);
         let delta_base = bigger_base - initial_base;
-        let owner_amount = delta_base * 2; // current M = 2.0×
+        let owner_amount = delta_base * 2;
 
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
 
@@ -1772,10 +1614,6 @@ fn update_grows_sponsored_record_via_escape_hatch() {
         assert_eq!(owner_layer.base, delta_base);
         assert_eq!(owner_layer.amount, owner_amount);
 
-        // Sponsor's hold is unchanged; owner's hold equals the multiplied
-        // delta. (We don't assert on `free(ALICE)` here because the first
-        // hold on a previously-untouched account also kicks in the ED
-        // accounting in `pallet_balances::reducible_balance`.)
         assert_eq!(held(BOB), sponsor_held_before);
         assert_eq!(held(ALICE), owner_amount);
 
@@ -1806,14 +1644,12 @@ fn update_on_behalf_coexists_with_owner_layer() {
             dep_sig,
         ));
 
-        // Step 1 — owner extends in solo, materializes owner_layer.
         let mid = mock_midds(b"coexist", 10);
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, mid));
         let after_owner = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
         let owner_after_step1 = after_owner.owner_layer.as_ref().expect("layer").amount;
         let sponsor_after_step1 = after_owner.sponsor_layer.amount;
 
-        // Step 2 — sponsor extends further on top, both layers must coexist.
         let bigger = mock_midds(b"coexist", 18);
         let upd_payload = update_payload(0, &bigger, BOB, 1, FAR_FUTURE);
         let upd_sig = sign(ALICE, &upd_payload);
@@ -1827,7 +1663,6 @@ fn update_on_behalf_coexists_with_owner_layer() {
         ));
 
         let after_sponsor = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
-        // Sponsor layer grew; owner layer untouched.
         assert!(after_sponsor.sponsor_layer.amount > sponsor_after_step1);
         let owner_layer = after_sponsor
             .owner_layer
@@ -1856,30 +1691,21 @@ fn update_shrink_drains_owner_then_overflows_to_sponsor() {
         ));
         let bob_held_at_deposit = held(BOB);
 
-        // Owner extends so owner_layer.base = 25 - 5 = 20 (unit multipliers).
         let bigger = mock_midds(b"shrink", 25);
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
         let alice_held_after_extend = held(ALICE);
 
-        // Owner shrinks back to size 0: total base = DEPOSIT_BASE only,
-        // delta = -(25 unit bytes). LIFO drains owner first (20), then
-        // overflows 5 into sponsor's base.
         let smaller = mock_midds(b"shrink", 0);
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, smaller));
 
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
-        // Owner layer kept (premium=0 at unit multipliers, but the layer
-        // survives) with base = 0.
         let owner_layer = info.owner_layer.as_ref().expect("layer survives");
         assert_eq!(owner_layer.base, 0);
         assert_eq!(owner_layer.amount, 0);
-        // Sponsor base shrunk by the overflow (5 bytes).
         assert!(info.sponsor_layer.base < bob_held_at_deposit);
-        // Owner fully released.
         assert_eq!(held(ALICE), 0);
-        // Sponsor partially released.
         assert!(held(BOB) < bob_held_at_deposit);
-        assert!(alice_held_after_extend > 0); // sanity for the helper variable
+        assert!(alice_held_after_extend > 0);
     });
 }
 
@@ -1914,10 +1740,8 @@ fn update_on_behalf_extends_sponsor_hold() {
         let info = pallet_midds::DepositInfo::<Test, Instance>::get(0).expect("info");
         assert_eq!(info.depositor, ALICE);
         assert_eq!(info.sponsor_layer.payer, BOB);
-        // Hold against the sponsor grew, not against the owner.
         assert!(held(BOB) > initial_held);
         assert_eq!(held(ALICE), 0);
-        // No owner contribution yet — sponsor is the sole payer.
         assert!(info.owner_layer.is_none());
         assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 2);
     });
@@ -1938,9 +1762,6 @@ fn update_on_behalf_rejects_wrong_sponsor() {
             dep_sig,
         ));
 
-        // Charlie tries to extend the hold even with a valid owner signature
-        // co-authorizing the update. Refused: only the original sponsor may
-        // grow their own hold.
         let updated = mock_midds(b"wrongsp", 8);
         let upd_payload = update_payload(0, &updated, CHARLIE, 1, FAR_FUTURE);
         let upd_sig = sign(ALICE, &upd_payload);
@@ -1975,7 +1796,6 @@ fn update_on_behalf_rejects_invalid_signature() {
 
         let updated = mock_midds(b"badsig", 8);
         let upd_payload = update_payload(0, &updated, BOB, 1, FAR_FUTURE);
-        // Charlie (not the owner) signs — verification keys to ALICE, not CHARLIE.
         let bad_sig = sign(CHARLIE, &upd_payload);
         assert_noop!(
             Midds::update_on_behalf(
@@ -1991,10 +1811,6 @@ fn update_on_behalf_rejects_invalid_signature() {
     });
 }
 
-// -----------------------------------------------------------------------------
-// remove_own_on_behalf
-// -----------------------------------------------------------------------------
-
 /// Closes the meta-tx loop: an owner with **no AFT at all** retracts a
 /// sponsored record by signing a payload off-chain, while a third-party
 /// relayer (≠ sponsor, ≠ owner) submits the extrinsic and pays the
@@ -2003,7 +1819,6 @@ fn update_on_behalf_rejects_invalid_signature() {
 #[test]
 fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
     new_test_ext().execute_with(|| {
-        // 2× M_fast so we can verify the per-layer premium splits cleanly.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
 
         let item = mock_midds(b"meta", 5);
@@ -2012,16 +1827,11 @@ fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
         let premium = total - base;
         assert!(premium > 0);
 
-        // Capture balances BEFORE deposit so the ED/provider-bookkeeping
-        // around the first hold is symmetric in both snapshots (the
-        // assertions hold equally well whichever way `reducible_balance`
-        // accounts for ED — same shape on both sides).
         let bob_free_before = free(BOB);
         let alice_free_before = free(ALICE);
         let charlie_free_before = free(CHARLIE);
         let treasury_before = treasury_balance();
 
-        // Sponsor (BOB) deposits on behalf of owner (ALICE).
         let dep_payload = deposit_payload(&item, BOB, 0, FAR_FUTURE);
         let dep_sig = sign(ALICE, &dep_payload);
         assert_ok!(Midds::deposit_on_behalf(
@@ -2033,9 +1843,6 @@ fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
             dep_sig,
         ));
 
-        // Third-party relayer = CHARLIE (different from BOB the sponsor and
-        // ALICE the owner). ALICE signs the payload pinning CHARLIE as the
-        // submitter.
         let payload = remove_payload(0, CHARLIE, 1, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
         assert_ok!(Midds::remove_own_on_behalf(
@@ -2046,18 +1853,12 @@ fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
             sig,
         ));
 
-        // Sponsor recovered base; their net loss is the multiplier premium
-        // they banked at deposit time. Owner balance untouched (they signed
-        // off-chain, paid nothing). Relayer balance untouched (mock has no
-        // tx fees).
         assert_eq!(held(BOB), 0);
         assert_eq!(free(BOB), bob_free_before - premium);
         assert_eq!(free(ALICE), alice_free_before);
         assert_eq!(free(CHARLIE), charlie_free_before);
         assert_eq!(treasury_balance(), treasury_before + premium);
-        // Storage cleared.
         assert!(pallet_midds::Items::<Test, Instance>::get(0).is_none());
-        // Nonce bumped on the owner.
         assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 2);
 
         System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::Refunded {
@@ -2077,14 +1878,10 @@ fn remove_own_on_behalf_routes_refunds_per_layer_with_third_party_relayer() {
 #[test]
 fn remove_own_on_behalf_settles_owner_layer_when_present() {
     new_test_ext().execute_with(|| {
-        // Capture starting balances so the ED/consumer accounting is
-        // symmetric in both snapshots (cf. the relayer test for the same
-        // motivation).
         let bob_free_before = free(BOB);
         let alice_free_before = free(ALICE);
         let treasury_before = treasury_balance();
 
-        // Sponsor deposits at unit M (so sponsor_premium = 0 for clarity).
         let initial = mock_midds(b"twolayer", 5);
         let sponsor_base = expected_base_bond_for(&initial);
         let dep_payload = deposit_payload(&initial, BOB, 0, FAR_FUTURE);
@@ -2098,7 +1895,6 @@ fn remove_own_on_behalf_settles_owner_layer_when_present() {
             dep_sig,
         ));
 
-        // Owner extends in solo at 2× M, banking an owner-side premium.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::from_u32(2));
         let bigger = mock_midds(b"twolayer", 12);
         let bigger_total_base = expected_base_bond_for(&bigger);
@@ -2107,8 +1903,6 @@ fn remove_own_on_behalf_settles_owner_layer_when_present() {
         let owner_premium = owner_amount - owner_delta_base;
         assert_ok!(Midds::update(RuntimeOrigin::signed(ALICE), 0, bigger));
 
-        // Reset multipliers to 1× to make sure remove math reads the
-        // *banked* per-layer premiums, not the current `M`.
         pallet_midds::FastMultiplier::<Test, Instance>::put(FixedU128::one());
 
         let payload = remove_payload(0, BOB, 1, FAR_FUTURE);
@@ -2121,15 +1915,9 @@ fn remove_own_on_behalf_settles_owner_layer_when_present() {
             sig,
         ));
 
-        // Sponsor: deposit_on_behalf paid `sponsor_base` (unit M, premium=0)
-        // and remove returned all of it. Net delta = 0.
         assert_eq!(free(BOB), bob_free_before);
-        // Owner: paid `owner_amount` for the solo extend, got back
-        // `owner_delta_base`. Net loss = `owner_premium`.
         assert_eq!(free(ALICE), alice_free_before - owner_premium);
-        // Treasury collects only the owner-side premium.
         assert_eq!(treasury_balance(), treasury_before + owner_premium);
-        // Both holds drained.
         assert_eq!(held(BOB), 0);
         assert_eq!(held(ALICE), 0);
 
@@ -2159,7 +1947,6 @@ fn remove_own_on_behalf_rejects_invalid_signature() {
             dep_sig,
         ));
 
-        // Charlie (not the owner) signs — verification keys to ALICE.
         let payload = remove_payload(0, CHARLIE, 1, FAR_FUTURE);
         let bad_sig = sign(CHARLIE, &payload);
         assert_noop!(
@@ -2188,9 +1975,6 @@ fn remove_own_on_behalf_rejects_wrong_action_tag() {
             dep_sig,
         ));
 
-        // Forge a payload that *looks* like a remove (right id/operator/
-        // nonce) but is signed under the `Update` action discriminant —
-        // which would never validate against the chain's `Remove` payload.
         let forged = update_payload(0, &item, BOB, 1, FAR_FUTURE);
         let sig = sign(ALICE, &forged);
         assert_noop!(
@@ -2203,7 +1987,6 @@ fn remove_own_on_behalf_rejects_wrong_action_tag() {
 #[test]
 fn remove_own_on_behalf_rejects_replay_with_stale_nonce() {
     new_test_ext().execute_with(|| {
-        // Two records so the second remove has a target.
         let first = mock_midds(b"replay1", 5);
         let second = mock_midds(b"replay2", 5);
         for (item, n) in [(&first, 0), (&second, 1)] {
@@ -2219,7 +2002,6 @@ fn remove_own_on_behalf_rejects_replay_with_stale_nonce() {
             ));
         }
 
-        // Burn nonce 2 on the first remove.
         let p1 = remove_payload(0, BOB, 2, FAR_FUTURE);
         let s1 = sign(ALICE, &p1);
         assert_ok!(Midds::remove_own_on_behalf(
@@ -2230,7 +2012,6 @@ fn remove_own_on_behalf_rejects_replay_with_stale_nonce() {
             s1,
         ));
 
-        // Replay-attempt the *same* nonce on the second record — refused.
         let p2_stale = remove_payload(1, BOB, 2, FAR_FUTURE);
         let s2_stale = sign(ALICE, &p2_stale);
         assert_noop!(
@@ -2255,7 +2036,6 @@ fn remove_own_on_behalf_rejects_after_window_closed() {
             dep_sig,
         ));
 
-        // Drift past the window so settlement is finalize-only.
         System::set_block_number(System::block_number() + COMMITMENT_WINDOW + 1);
 
         let payload = remove_payload(0, BOB, 1, FAR_FUTURE);
@@ -2264,7 +2044,6 @@ fn remove_own_on_behalf_rejects_after_window_closed() {
             Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::CommitmentWindowClosed,
         );
-        // Nonce must NOT bump on a rejected call.
         assert_eq!(pallet_midds::OnBehalfNonce::<Test, Instance>::get(ALICE), 1);
     });
 }
@@ -2288,10 +2067,6 @@ fn remove_own_on_behalf_rejects_finalized_record() {
 
         let payload = remove_payload(0, BOB, 1, FAR_FUTURE);
         let sig = sign(ALICE, &payload);
-        // `!info.finalized` is checked before `ensure_in_window` in the
-        // extrinsic, so a finalized post-window record surfaces
-        // `AlreadyFinalized` rather than `CommitmentWindowClosed` — even
-        // though both conditions hold.
         assert_noop!(
             Midds::remove_own_on_behalf(RuntimeOrigin::signed(BOB), 0, 1, FAR_FUTURE, sig),
             pallet_midds::Error::<Test, Instance>::AlreadyFinalized,

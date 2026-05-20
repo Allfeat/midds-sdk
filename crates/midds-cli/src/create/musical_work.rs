@@ -49,7 +49,6 @@ pub fn build() -> Result<MusicalWork> {
     ui::step(8, STEPS, "Off-chain extension");
     let offchain_extension = shared::offchain_extension()?;
 
-    // Step 9 is the validate + recap pass, driven by `create::finish`.
     Ok(MusicalWork::V1(MusicalWorkV1 {
         iswc,
         title,
@@ -86,8 +85,6 @@ fn build_work_type() -> Result<WorkType> {
     Ok(match kind {
         Kind::Original => WorkType::Original,
         Kind::Medley | Kind::Mashup => {
-            // Min 2 source ISWCs — fewer "is not a medley/mashup"
-            // (`docs/validation.md` §4).
             let refs =
                 prompts::collect_bounded("source ISWC", 2, WORK_REFERENCES_MAX as usize, |_| {
                     prompts::identifier::<11>("Source ISWC", validate_iswc_format, "T0345246801")
@@ -139,8 +136,6 @@ fn build_classical_info() -> Result<Option<ClassicalInfo>> {
     let opus = prompts::optional_string::<OPUS_MAX_LEN>("Opus (e.g. Op. 27 No. 2)")?;
     let catalog_number =
         prompts::optional_string::<CATALOG_NUMBER_MAX_LEN>("Catalogue number (e.g. BWV 565)")?;
-    // Optional, but a present value of 0 is nonsensical — the on-chain rule
-    // requires `>= 1`.
     let number_of_voices = prompts::optional_int_in_range::<u16>("Number of voices", 1, u16::MAX)?;
     Ok(Some(ClassicalInfo {
         opus,

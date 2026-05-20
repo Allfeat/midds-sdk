@@ -161,10 +161,6 @@ fn arb_title_aliases() -> impl Strategy<Value = TitleAliases> {
 }
 
 fn arb_tracks() -> impl Strategy<Value = Tracks> {
-    // Mandatory non-empty tracklist ⇒ at least one entry. `validate_format`
-    // rejects duplicate tracks, so dedup (order-preserving) keeps this
-    // strategy valid by construction even when proptest shrinks ids toward
-    // colliding small values.
     proptest::collection::vec(arb_recording_ref(), 1..=(TRACKS_MAX as usize)).prop_map(|v| {
         let mut unique: Vec<RecordingRef> = Vec::with_capacity(v.len());
         for r in v {
@@ -309,10 +305,6 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                     .into_iter()
                     .map(|a| BoundedVec::try_from(a).expect("alias at bound"))
                     .collect();
-                // Every track is the larger `Isrc` variant at full 12 bytes.
-                // Indices are distinct (`enumerate`) so the tracklist is
-                // duplicate-free: `validate_format` rejects repeats while this
-                // strategy must stay valid at the size bound.
                 let tracks: Vec<RecordingRef> = track_idxs
                     .iter()
                     .enumerate()
@@ -364,27 +356,22 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
 /// can assert exact-error matches.
 pub fn arb_release_invalid() -> impl Strategy<Value = (Release, MiddsFormatError)> {
     prop_oneof![
-        // UPC too short ⇒ length check fires.
         arb_release_v1().prop_map(|mut v1| {
             v1.upc = BoundedVec::try_from(b"12345678".to_vec()).expect("8 bytes ≤ 13");
             (Release::V1(v1), MiddsFormatError::OutOfBounds)
         }),
-        // UPC bad charset: a letter where a digit is required.
         arb_release_v1().prop_map(|mut v1| {
             v1.upc = BoundedVec::try_from(b"40063813339X1".to_vec()).expect("13 bytes");
             (Release::V1(v1), MiddsFormatError::InvalidCharset)
         }),
-        // Empty title.
         arb_release_v1().prop_map(|mut v1| {
             v1.title = BoundedVec::default();
             (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Empty mandatory tracklist.
         arb_release_v1().prop_map(|mut v1| {
             v1.tracks = BoundedVec::default();
             (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Out-of-range month.
         arb_release_v1().prop_map(|mut v1| {
             v1.release_date = ReleaseDate {
                 year: 2024,
@@ -393,12 +380,10 @@ pub fn arb_release_invalid() -> impl Strategy<Value = (Release, MiddsFormatError
             };
             (Release::V1(v1), MiddsFormatError::OutOfBounds)
         }),
-        // Empty distributor name.
         arb_release_v1().prop_map(|mut v1| {
             v1.distributor_name = BoundedVec::default();
             (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Duplicate track ⇒ tracklist-uniqueness violation.
         arb_release_v1().prop_map(|mut v1| {
             let dup = v1.tracks[0].clone();
             v1.tracks =

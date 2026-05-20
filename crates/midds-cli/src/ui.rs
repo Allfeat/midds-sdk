@@ -23,9 +23,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 /// 130-char SCALE hex line to wrap cleanly without dominating an 80-col term.
 const PANEL_WIDTH: usize = 62;
 
-// Emoji with ASCII fallbacks — `console` swaps to the second form when the
-// terminal can't render the first, so output never turns into mojibake on a
-// bare TTY or when piped.
 static DIAMOND: Emoji<'static, 'static> = Emoji("◆ ", "* ");
 static CHECK: Emoji<'static, 'static> = Emoji("✓ ", "+ ");
 static CROSS: Emoji<'static, 'static> = Emoji("✗ ", "x ");
@@ -109,8 +106,6 @@ pub fn summary(title: &str, rows: &[(String, String)]) {
     section(title);
     let width = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
     for (k, v) in rows {
-        // Pad the *plain* key before styling — padding a `StyledObject`
-        // counts the ANSI escapes toward the width and wrecks the column.
         let key = format!("{k:<width$}");
         eprintln!(
             "  {}  {}  {}",
@@ -128,7 +123,6 @@ pub fn payload_panel(title: &str, body: &str) {
     eprintln!();
     eprintln!("  {} {}", style("▍").cyan(), style(title).cyan().bold(),);
     eprintln!("  {}", style("─".repeat(PANEL_WIDTH)).dim());
-    // The payload itself — and nothing else — on stdout.
     println!("{body}");
 }
 

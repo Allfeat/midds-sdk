@@ -65,9 +65,6 @@ impl Stub {
             id,
             DepositInfoOf {
                 depositor,
-                // Stub keeps the self-deposit shape (sponsor_layer.payer ==
-                // depositor, no owner_layer) — sponsored variants are
-                // exercised by pallet-level tests, not the RPC surface.
                 sponsor_layer: BondLayerOf {
                     payer: depositor,
                     amount: bond,
@@ -156,8 +153,6 @@ impl MusicalWorkRpcApiServer<BlockHash, Iswc, MusicalWork, AccountId, Balance> f
     }
 
     fn current_deposit_price(&self, size: u32, _at: Option<BlockHash>) -> RpcResult<Balance> {
-        // Stub formula — matches the unit-multiplier mock so tests can still
-        // assert on a deterministic number.
         Ok(10 + size as Balance)
     }
 
@@ -191,10 +186,6 @@ fn sample_work() -> MusicalWork {
         .creation_year(2024)
         .build()
 }
-
-// -----------------------------------------------------------------------------
-// `lookup_by_identifier`
-// -----------------------------------------------------------------------------
 
 #[tokio::test]
 async fn lookup_missing_identifier_returns_empty_array() {
@@ -239,9 +230,6 @@ async fn lookup_present_identifier_returns_ids() {
 
 #[tokio::test]
 async fn lookup_returns_all_claims_for_an_identifier() {
-    // Multi-claim: same ISWC, two different `MiddsId`s. We insert twice
-    // through the stub, which lists the identifier under both ids — exactly
-    // the on-chain behaviour `IdentifierClaims` produces.
     let stub = Stub::default();
     let work = sample_work();
     let other = MusicalWorkBuilder::new()
@@ -259,17 +247,11 @@ async fn lookup_returns_all_claims_for_an_identifier() {
     let resp = call(stub, &request).await;
     let result = resp.get("result").expect("result present");
     let arr = result.as_array().expect("array");
-    // Both `work` and `other` come out of the builder with the same default
-    // ISWC, so the lookup surfaces both ids.
     assert_eq!(arr.len(), 2);
     let mut ids: Vec<u64> = arr.iter().map(|v| v.as_u64().expect("u64")).collect();
     ids.sort();
     assert_eq!(ids, vec![7, 11]);
 }
-
-// -----------------------------------------------------------------------------
-// `get`
-// -----------------------------------------------------------------------------
 
 #[tokio::test]
 async fn get_missing_id_returns_json_null() {
@@ -301,10 +283,6 @@ async fn get_present_id_returns_serialized_work() {
         serde_json::from_value(result.clone()).expect("deserialize work");
     assert_eq!(roundtripped, work);
 }
-
-// -----------------------------------------------------------------------------
-// `deposit_info`
-// -----------------------------------------------------------------------------
 
 #[tokio::test]
 async fn deposit_info_missing_id_returns_json_null() {
@@ -342,7 +320,6 @@ async fn deposit_info_present_id_returns_full_view() {
         .get("sponsor_layer")
         .and_then(|v| v.as_object())
         .expect("sponsor_layer object");
-    // Stub uses self-deposit shape: sponsor_layer.payer == depositor.
     assert_eq!(sponsor.get("payer").and_then(|v| v.as_u64()), Some(99));
     assert_eq!(sponsor.get("amount").and_then(|v| v.as_u64()), Some(12_345));
     assert_eq!(sponsor.get("base").and_then(|v| v.as_u64()), Some(10_000));
@@ -352,10 +329,6 @@ async fn deposit_info_present_id_returns_full_view() {
     );
     assert_eq!(obj.get("finalized").and_then(|v| v.as_bool()), Some(false));
 }
-
-// -----------------------------------------------------------------------------
-// pricing
-// -----------------------------------------------------------------------------
 
 #[tokio::test]
 async fn current_deposit_price_returns_balance() {
@@ -383,12 +356,6 @@ async fn weekly_gauge_endpoints_dispatch() {
         );
     }
 }
-
-// -----------------------------------------------------------------------------
-// Method-name regression — `#[rpc(server)]` hardcodes the names that the
-// integrating node hands to clients. A rename would silently break every
-// existing front-end, so pin every method here.
-// -----------------------------------------------------------------------------
 
 #[tokio::test]
 async fn unknown_method_is_rejected() {

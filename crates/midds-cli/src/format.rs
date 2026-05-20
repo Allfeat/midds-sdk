@@ -38,7 +38,6 @@ pub fn plancks(amount: u128) -> String {
 pub fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        // `write!` to a String is infallible.
         use std::fmt::Write as _;
         let _ = write!(s, "{b:02x}");
     }

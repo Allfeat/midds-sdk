@@ -196,18 +196,12 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     ) -> DispatchResult {
         Self::enforce_format(&item)?;
 
-        // Exact-payload uniqueness — a depositor cannot register a byte-
-        // identical copy of an existing record (multi-claim only allows
-        // *different* versions sharing an identifier).
         let payload_hash = Self::hash_payload(&item);
         ensure!(
             !PayloadHashes::<T, I>::contains_key(payload_hash),
             Error::<T, I>::DuplicatePayload
         );
 
-        // Allocate the id (and check the counter doesn't overflow) before
-        // holding any bond — otherwise an overflow would leak a held bond
-        // for a record that never made it to storage.
         let id = NextMiddsId::<T, I>::get();
         let next = id.checked_add(1).ok_or(Error::<T, I>::CounterOverflow)?;
 
@@ -246,8 +240,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         PendingFinalization::<T, I>::insert(expiry, id, ());
         NextMiddsId::<T, I>::put(next);
 
-        // Update demand trackers AFTER state writes so a failure above
-        // doesn't poison the multiplier inputs.
         Self::record_deposit_demand();
 
         Self::deposit_event(Event::Deposited {
@@ -299,11 +291,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         let new_total_base = Self::compute_base_bond(new_size);
         let old_total_base = Self::total_base(&info);
 
-        // Re-key the payload-hash index. Identifier immutability is enforced
-        // upstream by `ensure_identifier_unchanged`; here we only guard
-        // against landing on another record's exact payload. Mutated *after*
-        // the bond mutations succeed so a hold/release failure leaves the
-        // index untouched.
         let new_hash = Self::hash_payload(&item);
         if new_hash != info.payload_hash {
             if let Some(existing) = PayloadHashes::<T, I>::get(new_hash) {
@@ -369,17 +356,8 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             if delta.is_zero() {
                 return Ok(());
             }
-            // Growth bumps the multiplier demand counters: storage byte
-            // volume genuinely increases, so feeding `M_fast` / `M_slow`
-            // closes the bypass where an actor could deposit small at low
-            // multiplier then grow later without paying the current market
-            // rate (cf. `docs/economics.md` §5.5: the sticky-premium per
-            // layer keeps the grow itself cheap, but the network as a
-            // whole still observes the demand). Shrinks deliberately do
-            // not record demand — they free storage, not occupy it.
             Self::record_deposit_demand();
             if caller_is_sponsor {
-                // Sponsor extends own layer; premium preserved per layer.
                 Self::extend_layer_in_place(
                     &info.sponsor_layer.payer.clone(),
                     &mut info.sponsor_layer,
@@ -387,15 +365,12 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
                 )?;
                 return Ok(());
             }
-            // Owner-driven grow.
             match info.owner_layer.as_mut() {
                 Some(layer) => {
                     let payer = layer.payer.clone();
                     Self::extend_layer_in_place(&payer, layer, delta)?;
                 }
                 None => {
-                    // First contribution from the depositor: bank the
-                    // current multiplier premium against them.
                     let amount = Self::apply_multipliers(delta);
                     if !amount.is_zero() {
                         <T::Currency as MutateHold<T::AccountId>>::hold(
@@ -415,18 +390,13 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             return Ok(());
         }
 
-        // Shrink: split base reduction LIFO across layers, then recompute
-        // each touched layer's amount via the per-layer premium rule.
         let delta_base = old_total_base.saturating_sub(new_total_base);
         let owner_base = Self::owner_base(info);
         let (sponsor_release_base, owner_release_base) = if caller_is_sponsor {
-            // Caller = sponsor: drain sponsor first, overflow into owner
-            // (only possible when an owner layer exists).
             let s = info.sponsor_layer.base.min(delta_base);
             let overflow = delta_base.saturating_sub(s);
             (s, overflow.min(owner_base))
         } else {
-            // Caller = owner: drain owner first, overflow into sponsor.
             let o = owner_base.min(delta_base);
             let overflow = delta_base.saturating_sub(o);
             (overflow.min(info.sponsor_layer.base), o)
@@ -470,7 +440,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             )
             .map_err(|_| Error::<T, I>::BondHoldFailed)?;
         } else if !amount_release.is_zero() {
-            // Possible only if `delta_base = 0` somehow — defensive.
             <T::Currency as MutateHold<T::AccountId>>::release(
                 &Self::deposit_reason(),
                 payer,
@@ -692,7 +661,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         let info = DepositInfo::<T, I>::get(id).ok_or(Error::<T, I>::MiddsNotFound)?;
 
         let amount_to_treasury = if info.finalized {
-            // Bond already moved at finalize time — nothing to send now.
             Zero::zero()
         } else {
             let total = Self::total_amount(&info);
@@ -724,8 +692,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         PendingFinalization::<T, I>::remove(expiry, id);
         Ok(())
     }
-
-    // ---- Public read helpers (consumed via `midds-runtime-api`) ----
 
     /// Current bond price for a payload of `size` bytes — `base × M_fast ×
     /// M_slow`. Read at the current block.

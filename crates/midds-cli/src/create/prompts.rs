@@ -91,10 +91,6 @@ where
     T: Copy + PartialOrd + Display + FromStr + Clone + 'static,
     <T as FromStr>::Err: Display,
 {
-    // Bind the theme: `Input::with_theme(&ui::theme())` would borrow a
-    // temporary that drops before `interact_text` runs.
-    // dialoguer's builders consume `self` and return `Self`, so the chain is
-    // move-based; the optional default is folded in by reassignment.
     let theme = ui::theme();
     let mut builder = Input::<T>::with_theme(&theme)
         .with_prompt(format!("{label} [{min}..={max}]"))
@@ -200,9 +196,6 @@ pub fn collect_bounded<T>(
             ui::info(&format!("reached the {max}-{noun} cap"));
             break;
         }
-        // Below `min` the question is "add the next mandatory one?" (default
-        // yes); at/above `min` it's "add another?" (default no) so the happy
-        // path for an optional collection is a single keypress.
         let need_more = idx < min;
         let prompt = if idx == 0 {
             format!("Add a {noun}?")
@@ -211,7 +204,6 @@ pub fn collect_bounded<T>(
         };
         let proceed = if need_more {
             if idx == 0 && min == 1 {
-                // Exactly-one-required collection: don't even ask, just build.
                 true
             } else {
                 ui::info(&format!("at least {min} {noun}(s) required"));

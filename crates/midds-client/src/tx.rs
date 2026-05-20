@@ -28,8 +28,6 @@ where
 {
     while let Some(status) = progress.next().await {
         match status? {
-            // `InFinalizedBlock` is only here because `next()` can race past
-            // `InBestBlock` under heavy load; treat it as the same signal.
             TransactionStatus::InBestBlock(in_block)
             | TransactionStatus::InFinalizedBlock(in_block) => return Ok(in_block),
             TransactionStatus::Error { message } => {

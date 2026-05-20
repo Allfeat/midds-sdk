@@ -87,10 +87,6 @@ mod tests {
 
     #[test]
     fn iswc_corpus_is_checksum_correct() {
-        // Implements the CISAC mod-10 check inline so the corpus stops being
-        // accepted the moment someone edits a JSON entry incorrectly. Mirrors
-        // the algorithm in `midds-validate::verify_iswc_checksum` but runs
-        // here without depending on `midds-validate` (avoids cycles).
         for iswc in iter_real_iswcs() {
             let bytes = iswc.as_slice();
             let digits: [u32; 10] = core::array::from_fn(|i| (bytes[i + 1] - b'0') as u32);

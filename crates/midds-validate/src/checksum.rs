@@ -190,8 +190,6 @@ mod tests {
 
     #[test]
     fn iswc_not_applicable_when_short() {
-        // Length 11 is enforced by the BoundedVec; we instead probe the
-        // structural guard via a wrong prefix.
         assert_eq!(
             verify_iswc_checksum(&iswc(b"X0345246802")),
             CheckResult::NotApplicable
@@ -217,12 +215,6 @@ mod tests {
 
     #[test]
     fn isni_x_check_pass() {
-        // Construct a synthetic ISNI whose ISO 7064 check evaluates to 10 ('X').
-        // Forward-iterate r = ((r + d) * 2) mod 11 over fifteen 1s:
-        //   1 → r=2; 2 → r=6; 3 → r=3; 4 → r=8; 5 → r=7; 6 → r=5;
-        //   7 → r=1; 8 → r=4; 9 → r=10; 10 → r=0; 11 → r=2; 12 → r=6;
-        //   13 → r=3; 14 → r=8; 15 → r=7
-        // (12 − 7) mod 11 = 5, not 10. Easier: brute-force a string in tests.
         let mut found = None;
         'outer: for pad in [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9'] {
             for tail in 0u8..=9 {
@@ -245,8 +237,6 @@ mod tests {
 
     #[test]
     fn ipi_pass() {
-        // digits 1,2,3,4,5,6,7,8 → sum = 1+4+9+16+25+36+49+64 = 204
-        // → expected check (10 − 204 % 10) % 10 = 6.
         assert_eq!(verify_ipi_checksum(&ipi(b"123456786")), CheckResult::Pass);
     }
 
@@ -257,14 +247,11 @@ mod tests {
 
     #[test]
     fn ipi_not_applicable_when_too_short_to_be_meaningful() {
-        // 9..=11 is enforced upstream; here we ensure non-digit bytes short-circuit.
         assert_eq!(
             verify_ipi_checksum(&ipi(b"123A56786")),
             CheckResult::NotApplicable
         );
     }
-
-    // ISRC: structural-only verification, since ISO 3901 has no check digit.
 
     #[test]
     fn isrc_pass_real_world_examples() {
@@ -286,7 +273,6 @@ mod tests {
 
     #[test]
     fn isrc_not_applicable_bad_country_code() {
-        // Country slot must be alpha — digits invalidate the structure.
         assert_eq!(
             verify_isrc_checksum(&isrc(b"1SRC17607839")),
             CheckResult::NotApplicable
@@ -303,7 +289,6 @@ mod tests {
 
     #[test]
     fn isrc_not_applicable_bad_year() {
-        // Year segment must be exactly 2 digits.
         assert_eq!(
             verify_isrc_checksum(&isrc(b"USRC1A607839")),
             CheckResult::NotApplicable
@@ -320,7 +305,6 @@ mod tests {
 
     #[test]
     fn isrc_not_applicable_lowercase_registrant() {
-        // Registrant must be uppercase A-Z or digit; lowercase is rejected.
         assert_eq!(
             verify_isrc_checksum(&isrc(b"USrC17607839")),
             CheckResult::NotApplicable
@@ -333,7 +317,6 @@ mod tests {
 
     #[test]
     fn upc_pass_upc_a_and_ean_13() {
-        // Classic GS1 worked examples: UPC-A 036000291452, EAN-13 4006381333931.
         assert_eq!(
             verify_upc_checksum(&upc(b"036000291452")),
             CheckResult::Pass

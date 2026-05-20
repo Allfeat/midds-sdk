@@ -48,27 +48,22 @@ pub fn arb_isrc_valid() -> impl Strategy<Value = Isrc> {
 /// `MusicalWork`-extension tests once Recording lands.
 pub fn arb_isrc_invalid() -> impl Strategy<Value = (Isrc, MiddsFormatError)> {
     prop_oneof![
-        // Bad country code (digits in slot 0..2).
         Just((
             BoundedVec::try_from(b"12RC17607839".to_vec()).expect("12 bytes"),
             MiddsFormatError::InvalidCharset,
         )),
-        // Bad registrant (lowercase).
         Just((
             BoundedVec::try_from(b"USrc17607839".to_vec()).expect("12 bytes"),
             MiddsFormatError::InvalidCharset,
         )),
-        // Bad year (letter).
         Just((
             BoundedVec::try_from(b"USRC1A607839".to_vec()).expect("12 bytes"),
             MiddsFormatError::InvalidCharset,
         )),
-        // Bad designation (letter).
         Just((
             BoundedVec::try_from(b"USRC1760783A".to_vec()).expect("12 bytes"),
             MiddsFormatError::InvalidCharset,
         )),
-        // Too short.
         Just((
             BoundedVec::try_from(b"USRC".to_vec()).expect("≤ 12 bytes"),
             MiddsFormatError::OutOfBounds,
@@ -84,10 +79,6 @@ pub fn arb_title() -> impl Strategy<Value = Title> {
 
 /// Strategy producing non-empty off-chain extension hashes.
 pub fn arb_offchain_hash() -> impl Strategy<Value = OffchainHash> {
-    // Cap at 64 — the on-chain bound. Lower bound 1 — `validate_offchain_hash`
-    // rejects empty. Restrict to printable ASCII because the field is by
-    // convention a CIDv1 multibase string (see `OffchainHash` doc), which the
-    // off-chain JSON wire format relies on for round-tripping as a string.
     proptest::collection::vec(printable_ascii(), 1..=64usize)
         .prop_map(|bytes| BoundedVec::try_from(bytes).expect("offchain hash within bound"))
 }
@@ -192,8 +183,6 @@ pub fn arb_classical_info() -> impl Strategy<Value = ClassicalInfo> {
             proptest::collection::vec(printable_ascii(), 1..=(CATALOG_NUMBER_MAX_LEN as usize))
                 .prop_map(|v| BoundedVec::try_from(v).expect("catalog within bound")),
         ),
-        // `validate_format` rejects `Some(0)` voices — keep the strategy in
-        // the valid range so `arb_musical_work` stays valid by construction.
         proptest::option::of(1u16..=u16::MAX),
     )
         .prop_map(|(opus, catalog_number, number_of_voices)| ClassicalInfo {
@@ -297,9 +286,6 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                     iswc,
                     title,
                     creation_year: YEAR_MAX,
-                    // Instrumental is incompatible with `language`. The on-chain
-                    // validator does not enforce that — it's a builder-side
-                    // convention. Keep `Some(language)` for true max size.
                     instrumental: false,
                     language: Some(Language::En),
                     bpm: Some(BPM_MAX),
@@ -322,14 +308,12 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
 /// can assert exact-error matches.
 pub fn arb_musical_work_invalid() -> impl Strategy<Value = (MusicalWork, MiddsFormatError)> {
     prop_oneof![
-        // Bad ISWC charset: replace one digit with `A`.
         arb_musical_work_v1().prop_map(|mut v1| {
             let mut bad = v1.iswc.to_vec();
             bad[5] = b'A';
             v1.iswc = BoundedVec::try_from(bad).expect("11 bytes");
             (MusicalWork::V1(v1), MiddsFormatError::InvalidCharset)
         }),
-        // Bad ISWC structural prefix: replace `T` with `X`.
         arb_musical_work_v1().prop_map(|mut v1| {
             let mut bad = v1.iswc.to_vec();
             bad[0] = b'X';
@@ -339,22 +323,18 @@ pub fn arb_musical_work_invalid() -> impl Strategy<Value = (MusicalWork, MiddsFo
                 MiddsFormatError::InvalidIdentifierStructure,
             )
         }),
-        // Empty title.
         arb_musical_work_v1().prop_map(|mut v1| {
             v1.title = BoundedVec::default();
             (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Empty creators list.
         arb_musical_work_v1().prop_map(|mut v1| {
             v1.creators = BoundedVec::default();
             (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Medley with fewer than 2 refs (here: empty) ⇒ OutOfBounds.
         arb_musical_work_v1().prop_map(|mut v1| {
             v1.work_type = WorkType::Medley(BoundedVec::default());
             (MusicalWork::V1(v1), MiddsFormatError::OutOfBounds)
         }),
-        // Empty offchain extension.
         arb_musical_work_v1().prop_map(|mut v1| {
             v1.offchain_extension = Some(BoundedVec::default());
             (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
@@ -385,9 +365,6 @@ mod tests {
         fn arb_musical_work_max_size_saturates_bound(work in arb_musical_work_max_size()) {
             let max = <MusicalWork as MaxEncodedLen>::max_encoded_len();
             let actual = work.encoded_size();
-            // Encoded size is exactly the bound for this strategy: every bounded
-            // field is filled, every Option is Some, and the worst-case
-            // WorkType variant is used.
             prop_assert_eq!(actual, max);
         }
 

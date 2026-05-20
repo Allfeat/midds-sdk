@@ -39,10 +39,6 @@ use sp_runtime::{
     traits::{Get, IdentifyAccount, Verify},
 };
 
-// -----------------------------------------------------------------------------
-// Mock runtime
-// -----------------------------------------------------------------------------
-
 type AccountId = u64;
 type Balance = u128;
 type BlockNumber = u64;
@@ -124,8 +120,6 @@ impl pallet_midds::BenchmarkHelper<MusicalWork, StubSignature, AccountId>
         midds_fixtures::pathological::min_size_musical_work()
     }
     fn create_signature(_entropy: &[u8], _msg: &[u8]) -> (StubSignature, AccountId) {
-        // Mass-injection scenarios never call the on-behalf extrinsics, so
-        // no real signing is needed — return a placeholder.
         (StubSignature, 0)
     }
 }
@@ -181,10 +175,6 @@ impl pallet_midds::Config for Test {
     type BenchmarkHelper = MusicalWorkBenchHelper;
 }
 
-// -----------------------------------------------------------------------------
-// Externalities builder
-// -----------------------------------------------------------------------------
-
 fn build_ext(account_count: u64, balance_each: Balance) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default()
         .build_storage()
@@ -202,10 +192,6 @@ fn build_ext(account_count: u64, balance_each: Balance) -> sp_io::TestExternalit
     ext
 }
 
-// -----------------------------------------------------------------------------
-// Scenario harness
-// -----------------------------------------------------------------------------
-
 struct ScenarioStats {
     scenario: &'static str,
     n: u64,
@@ -219,9 +205,6 @@ fn run_scenario(scenario: &'static str, items: Vec<MusicalWork>, depositors: &[A
     assert!(!depositors.is_empty(), "depositors slice must not be empty");
     let n = items.len();
 
-    // Targets so high the multipliers never adjust away from 1.0× over the
-    // lifetime of the run — ensures `total_bond == base_bond` and lets the
-    // stats harness keep its analytical mirror of `do_compute_base_bond`.
     let total_required_bond: Balance = items
         .iter()
         .map(|i| DEPOSIT_BASE + DEPOSIT_PER_BYTE * i.encoded_size() as Balance)
@@ -274,10 +257,6 @@ fn run_scenario(scenario: &'static str, items: Vec<MusicalWork>, depositors: &[A
     check_or_bless(scenario, &stats.storage_root_hash);
 }
 
-// -----------------------------------------------------------------------------
-// Storage projection
-// -----------------------------------------------------------------------------
-
 /// Deterministic hash of the pallet's storage state.
 ///
 /// Concatenates SCALE-encoded `(key, value)` pairs in a fixed order
@@ -313,10 +292,6 @@ fn projected_storage_hash() -> [u8; 32] {
 
     blake2_256(&buf)
 }
-
-// -----------------------------------------------------------------------------
-// Reports / fixtures I/O
-// -----------------------------------------------------------------------------
 
 fn report_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -388,10 +363,6 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
-// -----------------------------------------------------------------------------
-// Scenarios — see `docs/testing.md` §6.1
-// -----------------------------------------------------------------------------
-
 const SEED_10K: u64 = 0x000A_C0FF_EEDE_AD42;
 const SEED_50K: u64 = 0x0032_FEED_FACE_BEEF;
 const SEED_100K: u64 = 0x0064_CAFE_BABE_F00D;
@@ -452,7 +423,6 @@ fn mass_injection_10k_with_multipliers() {
         .iter()
         .map(|i| DEPOSIT_BASE + DEPOSIT_PER_BYTE * i.encoded_size() as Balance)
         .sum::<Balance>();
-    // ×3 envelope: ×1.5 multiplier × headroom for fees / per-account skew.
     let per_account = total_required_bond / depositors.len() as Balance;
     let balance_each = per_account.saturating_mul(3).saturating_add(1_000_000);
     let max_account = *depositors.iter().max().expect("non-empty");
@@ -460,8 +430,6 @@ fn mass_injection_10k_with_multipliers() {
 
     let started = Instant::now();
     let (sum_size, sum_bond, sum_base) = ext.execute_with(|| {
-        // Pin M_fast at 1.5× so every deposit pays a non-trivial premium.
-        // No `on_initialize` ticks during the run → multiplier stays put.
         pallet_midds::FastMultiplier::<Test, ()>::put(FixedU128::from_rational(3, 2));
 
         let mut sum_size: u128 = 0;
@@ -471,8 +439,6 @@ fn mass_injection_10k_with_multipliers() {
             let depositor = depositors[i % depositors.len()];
             let size = item.encoded_size();
             let base = DEPOSIT_BASE + DEPOSIT_PER_BYTE * size as Balance;
-            // 1.5× multiplier == base * 3 / 2 — integer-division rounding
-            // matches `FixedU128::saturating_mul_int` exactly.
             let multiplied = base.saturating_mul(3) / 2;
             sum_size += size as u128;
             sum_bond += multiplied;

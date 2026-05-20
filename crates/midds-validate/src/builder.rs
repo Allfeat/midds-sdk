@@ -159,8 +159,6 @@ impl MusicalWorkBuilder {
     /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
     /// [`BuildError::Fields`] with one [`FieldError`] per failing input.
     pub fn build(self) -> Result<MusicalWork, BuildError> {
-        // Mandatory presence checks short-circuit the per-field aggregation
-        // because nothing useful can be said about absent inputs.
         let iswc_raw = self
             .iswc_raw
             .as_deref()
@@ -260,7 +258,6 @@ impl MusicalWorkBuilder {
             return Err(BuildError::Fields(errors));
         }
 
-        // Every Option above carries `Some` here because `errors` is empty.
         let iswc = iswc.expect("no errors → iswc parsed");
         let title = title.expect("no errors → title parsed");
         let creators = creators_bv.expect("no errors → creators bounded");
@@ -365,13 +362,6 @@ mod tests {
     }
 }
 
-// =============================================================================
-// Recording
-// =============================================================================
-
-// `Iswc`, `OffchainHash`, `MusicalKey`, `TITLE_MAX_LEN`, `BoundedVec`,
-// `parse_ipi`, `parse_isni`, `parse_iswc`, `BuildError`, `FieldError` are
-// already imported at the top of this module for `MusicalWorkBuilder`.
 use midds_traits::Isni;
 use midds_types::{
     CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId,
@@ -588,9 +578,6 @@ impl RecordingBuilder {
     /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
     /// [`BuildError::Fields`] with one [`FieldError`] per failing input.
     pub fn build(self) -> Result<Recording, BuildError> {
-        // Mandatory presence checks short-circuit the per-field aggregation
-        // because nothing useful can be said about absent inputs (mirrors
-        // `MusicalWorkBuilder::build`).
         let isrc_raw = self
             .isrc_raw
             .as_deref()
@@ -686,7 +673,6 @@ impl RecordingBuilder {
             return Err(BuildError::Fields(errors));
         }
 
-        // Every Option above carries `Some` here because `errors` is empty.
         let v1 = RecordingV1 {
             isrc: isrc.expect("no errors → isrc parsed"),
             title: title.expect("no errors → title parsed"),
@@ -1011,10 +997,6 @@ mod recording_tests {
     }
 }
 
-// -----------------------------------------------------------------------------
-// ReleaseBuilder — parser-tolerant builder for `Release::V1`
-// -----------------------------------------------------------------------------
-
 use midds_types::release::{
     CATALOG_NUMBER_MAX_LEN, COVER_CONTRIBUTOR_NAME_MAX_LEN, COVER_CONTRIBUTORS_MAX,
     DISTRIBUTOR_NAME_MAX_LEN, PRODUCERS_MAX as RELEASE_PRODUCERS_MAX,
@@ -1191,8 +1173,6 @@ impl ReleaseBuilder {
     /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
     /// [`BuildError::Fields`] with one [`FieldError`] per failing input.
     pub fn build(self) -> Result<Release, BuildError> {
-        // Mandatory presence checks short-circuit the per-field aggregation
-        // (mirrors `RecordingBuilder::build`).
         let upc_raw = self.upc_raw.as_deref().ok_or(BuildError::Missing("upc"))?;
         let title_raw = self
             .title_raw
@@ -1302,7 +1282,6 @@ impl ReleaseBuilder {
             return Err(BuildError::Fields(errors));
         }
 
-        // Every Option above carries `Some` here because `errors` is empty.
         let v1 = ReleaseV1 {
             upc: upc.expect("no errors → upc parsed"),
             title: title.expect("no errors → title parsed"),

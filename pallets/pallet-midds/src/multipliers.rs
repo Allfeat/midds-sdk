@@ -124,10 +124,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         max: FixedU128,
     ) -> FixedU128 {
         use core::cmp::Ordering;
-        // `target == 0` means no target was wired — treat any observation as
-        // "on target" so we don't divide by zero. The runtime always wires a
-        // positive target (cf. `docs/economics.md` §5); this branch only
-        // protects pathological mock / config setups.
         if target == 0 {
             return current;
         }
@@ -135,14 +131,12 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         let candidate = match observed.cmp(&target) {
             Ordering::Equal => current,
             Ordering::Greater => {
-                // δ = (observed − target) / target ∈ [0, ∞).
                 let excess = observed.saturating_sub(target);
                 let delta_ratio = FixedU128::saturating_from_rational(excess, target);
                 let factor_up = one.saturating_add(rate.saturating_mul(delta_ratio));
                 current.saturating_mul(factor_up)
             }
             Ordering::Less => {
-                // δ = (target − observed) / target ∈ (0, 1].
                 let shortfall = target.saturating_sub(observed);
                 let delta_ratio = FixedU128::saturating_from_rational(shortfall, target);
                 let scaled = rate.saturating_mul(delta_ratio);
@@ -169,8 +163,6 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             .copied()
             .fold(0u32, |acc, x| acc.saturating_add(x))
     }
-
-    // ---- Public read helpers (consumed via `midds-runtime-api`) ----
 
     /// Current `(M_fast, M_slow)`.
     pub fn current_multipliers() -> (FixedU128, FixedU128) {

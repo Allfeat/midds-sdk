@@ -12,8 +12,6 @@ mod shared;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-// `Midds: Parameter: Codec` already brings `Encode::encode` into scope for any
-// `M: Midds`, so no explicit `parity_scale_codec::Encode` import is needed.
 use midds_traits::Midds;
 
 use crate::cli::{CreateFormat, MiddsKind};
@@ -45,8 +43,6 @@ pub fn run(kind: Option<MiddsKind>, out: Option<PathBuf>, fmt: CreateFormat) -> 
         )?,
     };
 
-    // Each arm builds its concrete type, re-prompting on a failed
-    // `validate_format`, then hands off to the generic emitter.
     match kind {
         MiddsKind::MusicalWork => finish(build_validated(musical_work::build)?, &out, fmt),
         MiddsKind::Recording => finish(build_validated(recording::build)?, &out, fmt),
@@ -118,10 +114,6 @@ fn finish<M: Midds + serde::Serialize>(
 
     match out {
         Some(path) => {
-            // With `--out`, write a single canonical form: JSON by default,
-            // hex on explicit `--format hex`. Echo the complementary form to
-            // stderr so a file run still surfaces both without polluting the
-            // written artifact.
             let (file_label, file_body, echo_label, echo_body) = if matches!(fmt, CreateFormat::Hex)
             {
                 (HEX_LABEL, &hex, JSON_LABEL, &json)

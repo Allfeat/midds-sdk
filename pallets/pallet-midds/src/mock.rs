@@ -25,15 +25,6 @@ pub type Balance = u64;
 pub type BlockNumber = u64;
 pub type Block = frame_system::mocking::MockBlock<Test>;
 
-// ── Test signature plumbing for the on-behalf flows ──────────────────────────
-//
-// Real runtimes hand the pallet an `sp_runtime::MultiSignature` whose `Signer`
-// is `MultiSigner` and whose verification recovers an `AccountId32`. The mock
-// keeps `AccountId = u64` for parity with the rest of the test surface, so we
-// substitute a stub that maps a u64 signer through `IdentifyAccount` and
-// considers a signature valid iff its embedded `(signer, payload)` matches the
-// caller's expected owner and the bytes verified — same shape as `pallet-ats`.
-
 #[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct TestSigner(pub u64);
 
@@ -134,12 +125,6 @@ pub struct MockBenchmarkHelper;
 #[cfg(feature = "runtime-benchmarks")]
 impl pallet_midds::BenchmarkHelper<MockMidds, TestSignature, AccountId> for MockBenchmarkHelper {
     fn bench_instance(size: u32) -> MockMidds {
-        // Stable id so `update` / `force_edit` benchmarks (which keep the
-        // identifier across the deposit→update transition) compile-pass the
-        // immutable-id check. Uniqueness across sizes comes from folding
-        // `size` into the data bytes — distinct sizes yield distinct
-        // payloads, which the post-economics `PayloadHashes` guard requires
-        // for `force_remove_many` to enqueue N records back-to-back.
         let payload_len = (size as usize).min(32);
         let data: Vec<u8> = (0..payload_len).map(|_| size as u8).collect();
         MockMidds {
@@ -149,9 +134,6 @@ impl pallet_midds::BenchmarkHelper<MockMidds, TestSignature, AccountId> for Mock
     }
 
     fn create_signature(entropy: &[u8], msg: &[u8]) -> (TestSignature, AccountId) {
-        // Derive a deterministic u64 signer from `entropy`; offset to a high
-        // range so the synthesized account never collides with the
-        // hand-picked test accounts (ALICE/BOB/CHARLIE) or TREASURY.
         let mut buf = [0u8; 8];
         for (i, b) in entropy.iter().take(8).enumerate() {
             buf[i] = *b;
@@ -201,7 +183,6 @@ impl Get<AccountId> for TreasuryAccount {
 pub struct FastAdjustmentRate;
 impl Get<FixedU128> for FastAdjustmentRate {
     fn get() -> FixedU128 {
-        // 12.5 % per block, mirrors `docs/economics.md` §5.1.
         FixedU128::from_rational(125, 1_000)
     }
 }
@@ -209,7 +190,6 @@ impl Get<FixedU128> for FastAdjustmentRate {
 pub struct SlowAdjustmentRate;
 impl Get<FixedU128> for SlowAdjustmentRate {
     fn get() -> FixedU128 {
-        // 5 % per day, mirrors `docs/economics.md` §5.2.
         FixedU128::from_rational(5, 100)
     }
 }
@@ -286,10 +266,6 @@ pub fn mock_midds(id: &[u8], payload_len: usize) -> MockMidds {
         data: BoundedVec::try_from(vec![0u8; payload_len]).expect("data within bound"),
     }
 }
-
-// -----------------------------------------------------------------------------
-// Test helpers (shared between `tests.rs` and `property_tests.rs`).
-// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 pub mod test_helpers {

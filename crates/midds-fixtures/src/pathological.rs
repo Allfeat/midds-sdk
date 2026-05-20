@@ -23,10 +23,6 @@ use crate::identifiers::{
     upc_for_index,
 };
 
-// -----------------------------------------------------------------------------
-// Size extremes
-// -----------------------------------------------------------------------------
-
 /// Minimum-size valid `MusicalWork`: smallest non-empty title, single
 /// 9-digit-IPI creator, no optional fields, `Original` work type.
 pub fn min_size_musical_work() -> MusicalWork {
@@ -58,8 +54,6 @@ pub fn max_size_musical_work() -> MusicalWork {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let creators: Vec<Creator> = (0..CREATORS_MAX)
         .map(|i| {
-            // Distinct ISNI bodies per creator so the SCALE encoding doesn't
-            // accidentally compress identical entries.
             let body: [u8; 15] = core::array::from_fn(|j| ((i + j as u32 + 1) % 10) as u8);
             Creator {
                 role: CreatorRole::Composer,
@@ -79,9 +73,6 @@ pub fn max_size_musical_work() -> MusicalWork {
     let v1 = MusicalWorkV1 {
         iswc: iswc_from_work_code(0),
         title,
-        // `validate_format` bounds `creation_year` to `1..=2999`; `u16`
-        // encodes to a fixed 2 bytes regardless of value, so capping here
-        // does not change the max-encoded-len this constructor pins down.
         creation_year: YEAR_MAX,
         instrumental: false,
         language: Some(Language::En),
@@ -101,10 +92,6 @@ pub fn max_size_musical_work() -> MusicalWork {
     };
     MusicalWork::V1(v1)
 }
-
-// -----------------------------------------------------------------------------
-// Invalid payloads — paired with the expected error
-// -----------------------------------------------------------------------------
 
 /// ISWC with `T` replaced by `X`. Triggers `InvalidIdentifierStructure`.
 pub fn invalid_iswc_wrong_prefix() -> (MusicalWork, MiddsFormatError) {
@@ -148,10 +135,6 @@ pub fn invalid_empty_medley_refs() -> (MusicalWork, MiddsFormatError) {
     v1.work_type = WorkType::Medley(BoundedVec::default());
     (MusicalWork::V1(v1), MiddsFormatError::OutOfBounds)
 }
-
-// -----------------------------------------------------------------------------
-// Recording — size extremes
-// -----------------------------------------------------------------------------
 
 /// Minimum-size valid `Recording`: smallest non-empty title, an IPI artist,
 /// the work referenced by the cheapest `WorkRef::Midds` variant, every
@@ -229,10 +212,6 @@ pub fn max_size_recording() -> Recording {
     Recording::V1(v1)
 }
 
-// -----------------------------------------------------------------------------
-// Recording — invalid payloads paired with the expected error
-// -----------------------------------------------------------------------------
-
 /// ISRC with a lowercase country code. Triggers `InvalidCharset`.
 pub fn invalid_recording_isrc_bad_charset() -> (Recording, MiddsFormatError) {
     let Recording::V1(mut v1) = min_size_recording();
@@ -266,10 +245,6 @@ pub fn invalid_recording_work_iswc_prefix() -> (Recording, MiddsFormatError) {
         MiddsFormatError::InvalidIdentifierStructure,
     )
 }
-
-// -----------------------------------------------------------------------------
-// Release — size extremes
-// -----------------------------------------------------------------------------
 
 /// Minimum-size valid `Release`: a 12-digit UPC-A, smallest non-empty title,
 /// an IPI artist, a single cheapest `RecordingRef::Midds` track, every
@@ -330,7 +305,7 @@ pub fn max_size_release() -> Release {
         .collect();
     let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = ReleaseV1 {
-        upc: upc_for_index(0), // 13-byte EAN-13 saturates the 13-byte bound
+        upc: upc_for_index(0),
         title,
         title_aliases: BoundedVec::try_from(aliases).expect("aliases at bound"),
         artist: PartyId::Isni(isni_at(99)),
@@ -354,10 +329,6 @@ pub fn max_size_release() -> Release {
     };
     Release::V1(v1)
 }
-
-// -----------------------------------------------------------------------------
-// Release — invalid payloads paired with the expected error
-// -----------------------------------------------------------------------------
 
 /// UPC with a non-digit byte. Triggers `InvalidCharset`.
 pub fn invalid_release_upc_bad_charset() -> (Release, MiddsFormatError) {

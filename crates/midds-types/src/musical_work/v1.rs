@@ -8,11 +8,6 @@ use scale_info::TypeInfo;
 use crate::language::Language;
 use crate::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 
-// Shared types live in `crate::shared` so `MusicalWork` and `Recording`
-// encode them identically. Re-exported here (and through `mod.rs` →
-// `lib.rs`) so `midds_types::{Title, MusicalKey, Mode, PitchClass,
-// TITLE_MAX_LEN, CreatorId}` stay valid for existing consumers. `CreatorId`
-// is now an alias of the generalised `shared::PartyId`.
 pub use crate::shared::PartyId as CreatorId;
 pub use crate::shared::{Mode, MusicalKey, PitchClass, TITLE_MAX_LEN, Title};
 
@@ -132,8 +127,6 @@ impl ClassicalInfo {
         {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
-        // `number_of_voices` is optional, but a present value of 0 is
-        // nonsensical (legacy front enforced a `>= 1` minimum).
         if let Some(n) = self.number_of_voices
             && n == 0
         {
@@ -191,10 +184,6 @@ impl MusicalWorkV1 {
         match &self.work_type {
             WorkType::Original => {}
             WorkType::Medley(refs) | WorkType::Mashup(refs) => {
-                // A medley / mashup that references fewer than two source
-                // works is not one. Min-cardinality ⇒ `OutOfBounds` (the
-                // legacy front required >= 2; previously on-chain only
-                // rejected the empty case).
                 if refs.len() < 2 {
                     return Err(MiddsFormatError::OutOfBounds);
                 }
@@ -287,7 +276,6 @@ mod tests {
                 "bpm {bpm} expected ok={ok}"
             );
         }
-        // Absent BPM is always fine.
         let mut w = base();
         w.bpm = None;
         w.validate_format().expect("None bpm validates");

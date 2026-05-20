@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn validate_pass_full() {
         let mut v = sample_v1();
-        v.upc = bv(b"036000291452"); // 12-digit UPC-A
+        v.upc = bv(b"036000291452");
         v.title_aliases = BoundedVec::try_from(vec![bv(b"Alt Title"), bv(b"Titre FR")]).unwrap();
         v.artist = PartyId::Isni(bv::<16>(b"0000000121032683"));
         v.tracks = BoundedVec::try_from(vec![
@@ -286,9 +286,6 @@ mod tests {
     fn max_encoded_len_is_finite() {
         let max = <Release as MaxEncodedLen>::max_encoded_len();
         assert!(max > 0);
-        // A `Release` aggregates a full tracklist (up to `TRACKS_MAX`
-        // `RecordingRef`s) plus aliases / producers / cover credits, so its
-        // bound is legitimately larger than a single-entity `Recording`.
         assert!(max < 16384, "Release max_encoded_len = {max}");
     }
 }

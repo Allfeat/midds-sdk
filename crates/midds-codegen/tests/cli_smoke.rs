@@ -28,8 +28,6 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn binary() -> PathBuf {
-    // `CARGO_BIN_EXE_<name>` is set by Cargo for any `[[bin]]` declared in the
-    // tested crate. Stable since 1.43.
     PathBuf::from(env!("CARGO_BIN_EXE_midds-codegen"))
 }
 
@@ -64,9 +62,6 @@ fn missing_required_args_errors() {
 
 #[test]
 fn nonexistent_metadata_path_fails_fast() {
-    // Use an absolute path that's guaranteed not to exist. Catches the case
-    // where a refactor of `is_url` / `read_metadata_bytes` accidentally
-    // delays the I/O error until after expensive codegen setup.
     let output = Command::new(binary())
         .args([
             "--metadata",

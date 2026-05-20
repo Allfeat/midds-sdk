@@ -149,8 +149,6 @@ fn build_party_collection(noun: &str, max: usize) -> Result<Vec<midds_types::Par
 }
 
 fn build_producers() -> Result<Producers> {
-    // Producers are legal/natural persons identified by ISNI in industry
-    // metadata — never IPI here.
     let producers =
         prompts::collect_bounded("producer", 0, PRODUCERS_MAX as usize, |_| -> Result<Isni> {
             prompts::identifier::<16>("Producer ISNI", validate_isni_format, "0000000121032683")

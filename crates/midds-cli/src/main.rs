@@ -49,9 +49,6 @@ macro_rules! dispatch_kind {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    // The no-argument launcher is the "installer" entry point — greet with
-    // the banner. Explicit subcommands stay banner-free so scripted / piped
-    // invocations keep clean output.
     if cli.command.is_none() {
         ui::banner();
     }
@@ -95,8 +92,6 @@ async fn run(cli: Cli) -> Result<()> {
             dispatch_kind!(seed, midds_type, args)
         }
         Command::Bench { kind } => match kind {
-            // `resolve_command` guarantees this arm always carries a concrete
-            // sub-scenario by the time we get here.
             Some(BenchArgs::Fees {
                 midds_type,
                 count,

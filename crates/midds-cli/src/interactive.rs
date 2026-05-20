@@ -242,10 +242,6 @@ pub fn fees_wizard(defaults: FeesConfig) -> Result<FeesConfig> {
         defaults.batch_size.max(1),
     )?;
 
-    // Funding only makes sense for derived signers — solo `//Alice`-style
-    // runs already use a pre-funded account and skip this whole block.
-    // Multi-signer flows on a fresh chain almost always need funding, so the
-    // default is `yes` and the happy path is one Enter press.
     let (auto_fund, funder, fund_margin, fund_batch_size) = if signer_count > 1 {
         prompt_auto_fund_block(
             &theme,
@@ -325,10 +321,6 @@ pub fn throughput_wizard(defaults: ThroughputConfig) -> Result<ThroughputConfig>
         defaults.batch_size.max(1),
     )?;
 
-    // Funding only makes sense for derived signers — solo runs against
-    // `//Alice//1` on a fresh chain need it the most, and a `signer_count == 1`
-    // throughput run uses `//Alice//1` (not `//Alice` verbatim, unlike fees) so
-    // it benefits from auto-fund just as much as multi-signer.
     let (auto_fund, funder, fund_margin, fund_batch_size) = prompt_auto_fund_block(
         &theme,
         "Auto-fund derived signers from funder before measuring?",

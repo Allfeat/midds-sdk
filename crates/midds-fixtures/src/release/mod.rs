@@ -53,9 +53,6 @@ impl MiddsFixtures for ReleaseFixtures {
 
     #[cfg(feature = "corpus")]
     fn corpus() -> Vec<Self::Item> {
-        // No committed full-payload `Release` corpus in V1 — synthesise a
-        // small deterministic one so generic harnesses get a non-empty
-        // iterator, mirroring `RecordingFixtures::corpus`.
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0xD15C_0DED_D15C_0DED);
         (0..32u32)
             .map(|i| random_with_upc_index(&mut rng, i))
@@ -99,9 +96,6 @@ pub fn random_with_upc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Releas
     let artist = random_party_id(rng);
 
     let track_count = rng.gen_range(1..=12usize);
-    // Derive each track id from the distinct loop index so the tracklist is
-    // duplicate-free (`validate_format` rejects repeats); the variant is
-    // still randomised for variety.
     let tracks: Vec<RecordingRef> = (0..track_count)
         .map(|i| {
             if rng.r#gen::<bool>() {

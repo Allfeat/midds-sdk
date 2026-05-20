@@ -212,7 +212,6 @@ mod tests {
     #[test]
     fn validate_pass_mashup_with_refs() {
         let mut v = sample_v1();
-        // Mashup requires >= 2 source works (see docs/validation.md §4).
         v.work_type = WorkType::Mashup(
             BoundedVec::try_from(vec![bv::<11>(b"T0345246801"), bv::<11>(b"T9876543210")]).unwrap(),
         );
@@ -228,8 +227,6 @@ mod tests {
 
     #[test]
     fn validate_fails_medley_fewer_than_two_refs() {
-        // 0 refs and 1 ref both violate the >= 2 cardinality rule, surfacing
-        // as OutOfBounds (min-cardinality), checked before per-ref structure.
         let mut empty = sample_v1();
         empty.work_type = WorkType::Medley(BoundedVec::default());
         assert_eq!(
@@ -249,8 +246,6 @@ mod tests {
     #[test]
     fn validate_fails_invalid_medley_ref() {
         let mut v = sample_v1();
-        // >= 2 refs so the cardinality check passes and the per-ref ISWC
-        // structure check is reached; the second ref is malformed.
         v.work_type = WorkType::Medley(
             BoundedVec::try_from(vec![bv::<11>(b"T0345246801"), bv::<11>(b"X1234567890")]).unwrap(),
         );
@@ -322,7 +317,6 @@ mod json_tests {
     fn shape_minimal() {
         let json = serde_json::to_value(MusicalWork::V1(minimal_v1())).unwrap();
 
-        // Internal version tag, fields flat alongside.
         assert_eq!(json["version"], "v1");
         assert_eq!(json["iswc"], "T1234567890");
         assert_eq!(json["title"], "My Work Title");
@@ -332,9 +326,7 @@ mod json_tests {
         assert_eq!(json["bpm"], 120);
         assert_eq!(json["key"]["pitch"], "C");
         assert_eq!(json["key"]["mode"], "Major");
-        // Unit variant of WorkType is a bare string.
         assert_eq!(json["work_type"], "Original");
-        // Creators is an array of objects with the canonical role + id shape.
         assert_eq!(json["creators"][0]["role"], "Composer");
         assert_eq!(json["creators"][0]["id"]["Ipi"], "123456789");
         assert!(json["classical_info"].is_null());
@@ -374,12 +366,10 @@ mod json_tests {
         .unwrap();
 
         let json = serde_json::to_value(MusicalWork::V1(v)).unwrap();
-        // Tuple variants of WorkType use external tagging; ascii_vec yields strings.
         assert_eq!(
             json["work_type"]["Medley"],
             serde_json::json!(["T0345246801", "T9876543210"])
         );
-        // Nested ASCII strings round-trip through ascii_opt.
         assert_eq!(json["classical_info"]["opus"], "Op. 27 No. 2");
         assert_eq!(json["classical_info"]["catalog_number"], "K. 545");
         assert_eq!(json["classical_info"]["number_of_voices"], 4);
@@ -407,8 +397,6 @@ mod json_tests {
 
     #[test]
     fn rejects_oversized_iswc_at_decode() {
-        // 14 ASCII chars cannot fit in MiddsString<11>; deserialize must fail
-        // before any further validation runs.
         let bad = r#"{
             "version":"v1",
             "iswc":"T1234567890123",

@@ -52,8 +52,6 @@ mod tests {
 
     #[test]
     fn round_trip_matches_native_vec_encoding() {
-        // Each "call" is opaque bytes — the inner shape is irrelevant to the
-        // outer Vec encoding, only the concatenation order matters.
         let inner: Vec<Vec<u8>> = vec![
             vec![0x05, 0x03, 0x01, 0x02],
             vec![0x05, 0x03, 0x09, 0x09, 0x09],
@@ -61,9 +59,6 @@ mod tests {
         ];
         let pre = PreEncodedCalls::new(inner.clone()).encode();
 
-        // The native equivalent: SCALE-encoding a `Vec<RawCall>` where
-        // `RawCall(Vec<u8>)` writes its bytes verbatim — which is exactly
-        // `Compact(len) ++ concat(inners)`.
         let mut native = Vec::new();
         Compact(inner.len() as u32).encode_to(&mut native);
         for v in &inner {
@@ -71,7 +66,6 @@ mod tests {
         }
         assert_eq!(pre, native);
 
-        // And the leading length prefix decodes cleanly back.
         let mut cursor = &pre[..];
         let len = <Compact<u32>>::decode(&mut cursor).unwrap();
         assert_eq!(len.0 as usize, inner.len());

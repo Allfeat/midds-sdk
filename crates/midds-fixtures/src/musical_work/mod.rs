@@ -54,10 +54,6 @@ impl MiddsFixtures for MusicalWorkFixtures {
 
     #[cfg(feature = "corpus")]
     fn corpus() -> Vec<Self::Item> {
-        // V1 ships per-identifier corpora (ISWC / IPI / ISNI in
-        // `data/*.json`) but no full-payload `MusicalWork` corpus — synthesise
-        // a small, deterministic one so generic harnesses get something
-        // non-empty to iterate over.
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0xC0DE_C0DE_C0DE_C0DE);
         (0..32u32)
             .map(|i| random_with_iswc_index(&mut rng, i))

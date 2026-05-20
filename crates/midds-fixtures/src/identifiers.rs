@@ -175,7 +175,7 @@ fn gtin_check_digit(data: &[u8]) -> u8 {
 /// `Release` analogue of [`isrc_for_index`]. EAN-13 (the longer of the two
 /// accepted lengths) is generated so corpora exercise the wider bound.
 pub fn upc_for_index(index: u32) -> Upc {
-    let body = (index as u64) % 1_000_000_000_000; // 12 decimal digits
+    let body = (index as u64) % 1_000_000_000_000;
     let mut digits = [0u8; 12];
     let mut n = body;
     for slot in digits.iter_mut().rev() {
@@ -221,7 +221,6 @@ mod tests {
 
     #[test]
     fn iswc_from_work_code_known_check_digit() {
-        // Known case from midds-validate: T0345246802 (work code 034524680, check 2).
         let iswc = iswc_from_work_code(34_524_680);
         assert_eq!(iswc.as_slice(), b"T0345246802");
     }
@@ -245,9 +244,6 @@ mod tests {
 
     #[test]
     fn ipi_known_check_digit() {
-        // `ipi_from_stem` overwrites the last digit with the computed check.
-        // For len=9, the leading 8 digits of the stem feed the mod-10 sum:
-        // sum(1..=8 * digits) = 1+4+9+16+25+36+49+64 = 204 ⇒ check 6.
         let ipi = ipi_from_stem(123_456_789, 9);
         assert_eq!(ipi.as_slice(), b"123456786");
     }
@@ -261,7 +257,6 @@ mod tests {
 
     #[test]
     fn isni_known_value() {
-        // Lou Reed: 0000000121032683 → check digit 3.
         let isni = isni_from_body([0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 3, 2, 6, 8]);
         assert_eq!(isni.as_slice(), b"0000000121032683");
     }
@@ -296,10 +291,7 @@ mod tests {
 
     #[test]
     fn upc_known_check_digit() {
-        // Classic GS1 worked example: EAN-13 4006381333931 — the 12 data
-        // digits 400638133393 yield check digit 1.
         assert_eq!(gtin_check_digit(&[4, 0, 0, 6, 3, 8, 1, 3, 3, 3, 9, 3]), 1,);
-        // And a known index round-trips through structural validation.
         let upc = upc_for_index(12_345);
         assert_eq!(&upc[..12], b"000000012345");
         assert!(validate_upc_format(upc.as_slice()).is_ok());

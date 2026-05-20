@@ -179,20 +179,12 @@ pub async fn run_progress_consumer<E, S>(
     progress_of: impl Fn(&S) -> (u32, u32, u32),
 ) -> S {
     let mut progress = ProgressPrinter::new(total);
-    // Render once immediately so the user sees `0/N` instead of a blank
-    // terminal during the ~6 s it takes the first block to finalise.
     progress.tick(0, 0, 0);
     let mut heartbeat = interval(Duration::from_millis(500));
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    // Tokio intervals fire immediately on first poll; consume that so the
-    // first scheduled tick happens 500 ms from now, not at t=0 (we already
-    // covered t=0 with the manual render above).
     heartbeat.tick().await;
     loop {
         tokio::select! {
-            // `biased` so events drain ahead of timer ticks under load —
-            // we'd rather be slightly late on a refresh than starve the
-            // channel and let it grow unbounded.
             biased;
             maybe_event = rx.recv() => {
                 let Some(event) = maybe_event else { break };

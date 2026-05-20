@@ -258,18 +258,12 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                     work: WorkRef::Iswc(iswc_from_work_code(work_code)),
                     genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
                         .expect("genres at bound"),
-                    // `record_year` / `bpm` are bounded by `validate_format`
-                    // (`1..=2999`, `20..=300`); `u16` encodes to a fixed size
-                    // regardless of value, so the max-encoded-len saturation
-                    // this strategy targets is unaffected by the cap.
                     record_year: Some(YEAR_MAX),
                     version_type: Some(RecordingVersion::Original),
                     performers: BoundedVec::try_from(performers).expect("performers at bound"),
                     producers: BoundedVec::try_from(producers).expect("producers at bound"),
                     duration: Some(u32::MAX),
                     bpm: Some(BPM_MAX),
-                    // `MusicalKey` carries no length-bearing field, so any
-                    // concrete value encodes to the same size — pin one.
                     key: Some(midds_types::MusicalKey {
                         pitch: midds_types::PitchClass::C,
                         mode: midds_types::Mode::Major,
@@ -293,31 +287,26 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
 /// can assert exact-error matches.
 pub fn arb_recording_invalid() -> impl Strategy<Value = (Recording, MiddsFormatError)> {
     prop_oneof![
-        // Bad ISRC charset: lowercase country code.
         arb_recording_v1().prop_map(|mut v1| {
             let mut bad = v1.isrc.to_vec();
             bad[0] = b'f';
             v1.isrc = BoundedVec::try_from(bad).expect("12 bytes");
             (Recording::V1(v1), MiddsFormatError::InvalidCharset)
         }),
-        // ISRC too short ⇒ length check fires before charset.
         arb_recording_v1().prop_map(|mut v1| {
             let mut bad = v1.isrc.to_vec();
             bad.truncate(11);
             v1.isrc = BoundedVec::try_from(bad).expect("11 bytes ≤ 12");
             (Recording::V1(v1), MiddsFormatError::OutOfBounds)
         }),
-        // Empty title.
         arb_recording_v1().prop_map(|mut v1| {
             v1.title = BoundedVec::default();
             (Recording::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Empty title alias.
         arb_recording_v1().prop_map(|mut v1| {
             v1.title_aliases = BoundedVec::try_from(vec![BoundedVec::default()]).expect("1 alias");
             (Recording::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
-        // Bad work ISWC structural prefix: replace `T` with `X`.
         arb_recording_v1().prop_map(|mut v1| {
             v1.work =
                 WorkRef::Iswc(BoundedVec::try_from(b"X1234567890".to_vec()).expect("11 bytes"));
@@ -326,7 +315,6 @@ pub fn arb_recording_invalid() -> impl Strategy<Value = (Recording, MiddsFormatE
                 MiddsFormatError::InvalidIdentifierStructure,
             )
         }),
-        // Empty offchain extension.
         arb_recording_v1().prop_map(|mut v1| {
             v1.offchain_extension = Some(BoundedVec::default());
             (Recording::V1(v1), MiddsFormatError::EmptyMandatoryField)
@@ -356,9 +344,6 @@ mod tests {
         #[test]
         fn arb_recording_max_size_saturates_bound(r in arb_recording_max_size()) {
             let max = <Recording as MaxEncodedLen>::max_encoded_len();
-            // Every bounded field is filled, every Option is Some, and the
-            // worst-case PartyId / WorkRef variants are used — so the encoded
-            // size lands exactly on the bound.
             prop_assert_eq!(r.encoded_size(), max);
         }
 

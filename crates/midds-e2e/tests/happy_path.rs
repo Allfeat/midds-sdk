@@ -26,19 +26,12 @@ async fn deposit_then_lookup_then_get_roundtrips() {
     let work = session::fresh_musical_work();
     let identifier = work.identifier().clone();
 
-    // 1. Deposit → returns the freshly-allocated MiddsId from the
-    //    `Deposited` event. Any codec drift between midds-types and the
-    //    runtime would surface here as a SCALE error before inclusion.
     let id = client
         .musical_works()
         .deposit(&alice, work.clone())
         .await
         .expect("deposit must succeed against a clean dev node");
 
-    // 2. The identifier index now points at our new id. Multi-claim is
-    //    allowed but we just deposited the first claim for this ISWC.
-    //    Polled because `midds-client` waits for inclusion (best block)
-    //    while reads go through the finalised block — see `poll` docs.
     let ids = poll::wait_until_some("identifier index update", || async {
         let v = client
             .musical_works()
@@ -53,8 +46,6 @@ async fn deposit_then_lookup_then_get_roundtrips() {
         "identifier index missing id {id} (got {ids:?})"
     );
 
-    // 3. The stored payload round-trips byte-for-byte — proves the runtime
-    //    API encode/decode matches what midds-types serialized.
     let stored = client
         .musical_works()
         .get(id)

@@ -291,7 +291,6 @@ mod tests {
                 .expect("pathological boundary payload validates");
         }
 
-        // Index-keyed size classes must validate and carry distinct ISRCs.
         let mut rng = seeded_rng(0x5EED);
         let mut ids = Vec::new();
         for i in 0..8u32 {

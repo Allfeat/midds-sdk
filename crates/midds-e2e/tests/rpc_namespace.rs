@@ -31,9 +31,6 @@ async fn musical_works_namespace_responds() {
         return;
     };
 
-    // Deposit something so the `_get` call has a non-`None` answer to
-    // return — that proves the bridge round-trips runtime-API output as
-    // JSON, not just that the method is reachable.
     let alice = signer::alice();
     let work = session::fresh_musical_work();
     let id = client
@@ -42,29 +39,16 @@ async fn musical_works_namespace_responds() {
         .await
         .expect("deposit");
 
-    // Open a raw JSON-RPC channel to the same node. `from_insecure_url`
-    // accepts the plain `ws://` URL we'd point at in dev — TLS isn't part
-    // of the e2e contract.
     let url = env::ws_url();
     let rpc = RpcClient::from_insecure_url(&url)
         .await
         .expect("RpcClient::from_insecure_url");
 
-    // 1. Parameter-less u32 endpoint: weekly target. If the namespace
-    //    prefix is wrong (or the macro stopped emitting symmetric names),
-    //    jsonrpsee responds with `Method not found` and the deserialize
-    //    fails with a serde error from the RPC payload.
     let _: u32 = rpc
         .request(NS_WEEKLY_TARGET, rpc_params![])
         .await
         .expect("midds_musicalWorks_weeklyTarget must be reachable and return u32");
 
-    // 2. `get(id, at=None)` returns `Option<MusicalWork>`. Decoding the
-    //    response as `serde_json::Value` keeps the test agnostic to the
-    //    exact wire shape of `MusicalWork` (which uses bounded vecs whose
-    //    JSON representation we don't pin here). Polled because the RPC
-    //    handler — like `midds-client` — reads at the finalised block, so
-    //    it lags `wait_for_in_block`-style deposits by 1-2 blocks.
     let resp = poll::wait_until_some("RPC get returns the deposited record", || async {
         let v: serde_json::Value = rpc
             .request(NS_GET, rpc_params![id])
@@ -78,8 +62,5 @@ async fn musical_works_namespace_responds() {
         "get(id) must return a MusicalWork right after deposit, got null",
     );
 
-    // Belt-and-braces sync for the next test in the suite — kept now
-    // that `MiddsClient::at_best_block` makes cross-test nonce contention
-    // disappear, but it's cheap and pins the contract.
     client::wait_for_visible_musical_works_deposit(&client, id).await;
 }

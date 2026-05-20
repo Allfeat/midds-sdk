@@ -67,8 +67,5 @@ from_subxt_subkind! {
     subxt_err::StorageError,
     subxt_err::ConstantError,
     subxt_err::RuntimeApiError,
-    // Raised by `chain_getBlockHash` and other raw RPC calls in
-    // `MiddsClient::at_best_block`; routed through `Subxt` via
-    // `subxt::Error::OtherRpcClientError` so callers keep one error arm.
     subxt::rpcs::Error,
 }

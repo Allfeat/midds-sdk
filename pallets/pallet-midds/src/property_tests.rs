@@ -24,10 +24,6 @@ extern crate alloc;
 
 type Instance = ();
 
-// -----------------------------------------------------------------------------
-// Strategies
-// -----------------------------------------------------------------------------
-
 fn arb_mock_id() -> impl Strategy<Value = MockId> {
     proptest::collection::vec(arb_alphanumeric_byte(), 1..=8)
         .prop_map(|v| BoundedVec::try_from(v).expect("len ≤ 8 by construction"))
@@ -86,8 +82,6 @@ enum Action {
 
 fn arb_action() -> impl Strategy<Value = Action> {
     prop_oneof![
-        // Weight `Deposit` highest so the random walk grows storage often
-        // enough to give the other actions something to act on.
         4 => (arb_mock_midds(), 0u8..=2u8).prop_map(|(item, signer)| Action::Deposit { item, signer }),
         2 => (any::<u32>(), arb_mock_payload())
             .prop_map(|(id_pick, new_data)| Action::Update { id_pick, new_data }),
@@ -178,9 +172,6 @@ fn snapshot() -> InvariantSnapshot {
     for (id, item) in pallet_midds::Items::<Test, Instance>::iter() {
         identifiers.insert(id, item.id.clone());
     }
-    // Holds can only exist against depositors — sourcing the candidate set
-    // from `DepositInfo` is exact and avoids depending on the balances
-    // storage layout (which differs depending on `T::AccountStore`).
     let depositors: alloc::collections::BTreeSet<AccountId> =
         pallet_midds::DepositInfo::<Test, Instance>::iter()
             .map(|(_, info)| info.depositor)
@@ -208,10 +199,6 @@ fn proptest_config() -> ProptestConfig {
         ..ProptestConfig::default()
     }
 }
-
-// -----------------------------------------------------------------------------
-// Properties
-// -----------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(proptest_config())]
@@ -257,9 +244,6 @@ proptest! {
             Midds::deposit(RuntimeOrigin::signed(ALICE), initial.clone())
                 .map_err(|e| TestCaseError::fail(format!("deposit failed: {e:?}")))?;
             let updated = MockMidds { id: initial.id.clone(), data: new_data };
-            // Update may legitimately fail (e.g. the new payload byte-collides
-            // with an existing record). We just need the identifier and
-            // counter invariant to hold either way.
             let _ = Midds::update(RuntimeOrigin::signed(ALICE), 0, updated);
 
             let stored_id = pallet_midds::Items::<Test, Instance>::get(0)
@@ -282,10 +266,7 @@ proptest! {
             Midds::deposit(RuntimeOrigin::signed(ALICE), item.clone())
                 .map_err(|e| TestCaseError::fail(format!("deposit failed: {e:?}")))?;
             System::set_block_number(System::block_number() + offset);
-            // Mutate the data so the new payload doesn't equal the original
-            // (which would be a no-op identical update).
             let mut other = item.clone();
-            // flip a byte; if data is empty, push one (Bounded allows ≤ 32)
             if other.data.is_empty() {
                 let mut v: Vec<u8> = other.data.into_inner();
                 v.push(1);
@@ -446,7 +427,6 @@ proptest! {
 
                 let now = snapshot();
 
-                // Invariant 5: NextMiddsId is monotone.
                 prop_assert!(
                     now.next_id >= prev.next_id,
                     "NextMiddsId regressed: {} → {}",
@@ -454,7 +434,6 @@ proptest! {
                     now.next_id,
                 );
 
-                // Invariants 2 + 3: cardinality coupling.
                 let items_count = pallet_midds::Items::<Test, Instance>::iter().count();
                 let deposit_info_count =
                     pallet_midds::DepositInfo::<Test, Instance>::iter().count();
@@ -463,22 +442,12 @@ proptest! {
                 prop_assert_eq!(items_count, deposit_info_count, "Items↔DepositInfo drift");
                 prop_assert_eq!(items_count, hash_count, "Items↔PayloadHashes drift");
 
-                // Invariant 4: identifier immutable per id (over the records
-                // that were already alive before this step).
                 for (id, prev_ident) in &prev.identifiers {
                     if let Some(curr_ident) = now.identifiers.get(id) {
                         prop_assert_eq!(prev_ident, curr_ident, "identifier of id {} mutated", id);
                     }
                 }
 
-                // Invariant 1: bond cumulé per account = Σ layer.amount over
-                // non-finalized records. A layer can legitimately end up
-                // with `amount == 0` after the multipliers crash to their
-                // floor on a quiet chain — `MutateHold::hold(_, 0)` is a
-                // no-op so zero-amount layers don't contribute to the
-                // observed held balance. Each layer settles against its own
-                // payer (sponsor vs owner), so the aggregation walks both
-                // legs.
                 let mut expected: BTreeMap<AccountId, Balance> = BTreeMap::new();
                 for (_id, info) in pallet_midds::DepositInfo::<Test, Instance>::iter() {
                     if info.finalized {

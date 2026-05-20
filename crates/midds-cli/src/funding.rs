@@ -100,9 +100,6 @@ async fn submit_batch(
     targets: &[Keypair],
     amount: u128,
 ) -> Result<()> {
-    // Best-block pin so the funder's auto-nonce reflects pending transfers
-    // — same rationale as `MiddsClient::at_best_block`. Finalised would
-    // reject back-to-back batches as "Transaction is outdated".
     let at_block = client.at_best_block().await?;
     let mut tx_client = at_block.transactions();
 
@@ -114,10 +111,6 @@ async fn submit_batch(
             "transfer_keep_alive",
             EncodedCall::two(&dest, &Compact(amount)),
         );
-        // `call_data` resolves pallet/call indices via metadata and returns
-        // the canonical SCALE-encoded `RuntimeCall` bytes. That's exactly the
-        // wire shape `Vec<RuntimeCall>` expects per element, so we can drop
-        // each blob into [`PreEncodedCalls`] verbatim.
         let bytes = tx_client
             .call_data(&inner)
             .map_err(|e| anyhow!("encode inner transfer: {e}"))?;
@@ -134,10 +127,6 @@ async fn submit_batch(
         .sign_and_submit_then_watch_default(&payload, funder)
         .await
         .map_err(|e| anyhow!("submit batch: {e}"))?;
-    // Inclusion is enough to make the funded balance visible to subsequent
-    // submits — `wait_for_in_block` returns once the transfers are applied.
-    // GRANDPA finality would tack on 2-3 blocks of pure waiting before the
-    // deposit phase even starts, with no behavioural gain on a dev node.
     let in_block = wait_for_in_block(progress)
         .await
         .map_err(|e| anyhow!("batch not included: {e}"))?;
@@ -252,9 +241,6 @@ pub(crate) fn compute_per_signer_funding<M: Midds>(
         .max()
         .unwrap_or(0);
     let max_per_signer_bond = max_per_signer_base.saturating_mul(BOND_SAFETY_FACTOR);
-    // f64 multiplication is fine here: we're scaling by a small factor
-    // (1.0–2.0 typically) and overshooting by a few plancks is preferred
-    // over arithmetic subtlety.
     ((max_per_signer_bond as f64) * margin).ceil() as Balance
 }
 
@@ -271,14 +257,10 @@ mod tests {
     use super::*;
     use midds_fixtures::pathological;
     use midds_types::MusicalWork;
-    // `encoded_size` on the concrete `MusicalWork` needs the trait in scope;
-    // the generic lib code reaches it through the `M: Midds` bound instead.
     use parity_scale_codec::Encode;
 
     #[test]
     fn compute_per_signer_funding_uses_heaviest_signer() {
-        // Two signers, one with 2 records, one with 1 record. The fair
-        // funding is sized by the 2-record signer, not the average.
         let work_a = pathological::min_size_musical_work();
         let work_b = pathological::min_size_musical_work();
         let work_c = pathological::min_size_musical_work();
@@ -286,8 +268,6 @@ mod tests {
 
         let funding = compute_per_signer_funding(&partitions, 10, 1, 1.0);
         let single_bond = 10 + (pathological::min_size_musical_work().encoded_size() as Balance);
-        // Heaviest signer holds two records' worth of bond — × the safety
-        // factor.
         assert_eq!(funding, 2 * single_bond * BOND_SAFETY_FACTOR);
     }
 
@@ -310,11 +290,6 @@ mod tests {
 
     #[test]
     fn safety_factor_matches_spec_ceilings() {
-        // Locks the worst-case factor against the spec values. Anyone
-        // changing `FAST_MULTIPLIER_MAX_FACTOR` / `SLOW_MULTIPLIER_MAX_FACTOR`
-        // (because the runtime ceilings drifted) needs to also adjust this.
-        // Catches accidental edits against the hard-coded values in
-        // `docs/economics.md` §5.
         assert_eq!(FAST_MULTIPLIER_MAX_FACTOR, 20);
         assert_eq!(SLOW_MULTIPLIER_MAX_FACTOR, 50);
         assert_eq!(BOND_SAFETY_FACTOR, 1000);

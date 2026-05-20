@@ -59,7 +59,6 @@ proptest! {
     /// and the warning-only checksum verifier returns `Pass`.
     #[test]
     fn on_chain_iswc_round_trips_off_chain(work in arb_musical_work()) {
-        // Sanity: the strategy promises validate_format() success.
         prop_assume!(work.validate_format().is_ok());
 
         let canonical = work.identifier();

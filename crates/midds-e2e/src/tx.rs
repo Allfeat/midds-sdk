@@ -101,8 +101,6 @@ struct AccountDataPin {
     free: u128,
     _reserved: u128,
     _frozen: u128,
-    // `pallet_balances::types::ExtraFlags` is `#[repr(transparent)] pub
-    // struct ExtraFlags(u128)` — encodes as the inner `u128`.
     _flags: u128,
 }
 

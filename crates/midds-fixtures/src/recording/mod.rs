@@ -52,10 +52,6 @@ impl MiddsFixtures for RecordingFixtures {
 
     #[cfg(feature = "corpus")]
     fn corpus() -> Vec<Self::Item> {
-        // No committed full-payload `Recording` corpus in V1 (the per-identifier
-        // datasets in `data/*.json` are shared, identifier-level) — synthesise
-        // a small deterministic one so generic harnesses get a non-empty
-        // iterator, mirroring `MusicalWorkFixtures::corpus`.
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0xC0DE_C0DE_C0DE_C0DE);
         (0..32u32)
             .map(|i| random_with_isrc_index(&mut rng, i))
@@ -98,7 +94,6 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
 
     let artist = random_party_id(rng);
 
-    // 50/50 between an external ISWC reference and an on-chain MIDDS id.
     let work = if rng.r#gen::<bool>() {
         WorkRef::Iswc(iswc_from_work_code(rng.r#gen::<u32>()))
     } else {

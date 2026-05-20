@@ -70,8 +70,8 @@ fn decode_fee_paid(bytes: &[u8]) -> Option<Balance> {
 fn decode_deposited(bytes: &[u8]) -> Option<(MiddsId, Balance, Balance)> {
     let mut cursor = bytes;
     let id = MiddsId::decode(&mut cursor).ok()?;
-    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?; // depositor
-    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?; // bond_payer
+    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?;
+    <ChainConfig as subxt::Config>::AccountId::decode(&mut cursor).ok()?;
     let bond = Balance::decode(&mut cursor).ok()?;
     let base_bond = Balance::decode(&mut cursor).ok()?;
     Some((id, bond, base_bond))

@@ -13,9 +13,6 @@ use regex::Regex;
 
 use crate::error::ParseError;
 
-// Each regex pattern is a `const &'static str` literal; `Regex::new` over a
-// statically valid pattern cannot fail in practice. The `unwrap` here is
-// the documented escape hatch for compile-time-guaranteed inputs.
 #[allow(clippy::disallowed_methods)]
 static ISWC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^T-?(\d{3})\.?(\d{3})\.?(\d{3})-?(\d)$").unwrap());
@@ -27,8 +24,6 @@ static ISNI_RE: LazyLock<Regex> =
 #[allow(clippy::disallowed_methods)]
 static IPI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:I-)?(\d{9,11})$").unwrap());
 
-// `[A-Z]{2}` country, `[A-Z0-9]{3}` registrant, `\d{2}` year, `\d{5}`
-// designation. Separators are optional dashes between each segment.
 #[allow(clippy::disallowed_methods)]
 static ISRC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Z]{2})-?([A-Z0-9]{3})-?(\d{2})-?(\d{5})$").unwrap());
@@ -201,8 +196,6 @@ mod tests {
         assert_eq!(parse_ipi("12345A789"), Err(ParseError::PatternMismatch));
     }
 
-    // ---- ISRC -------------------------------------------------------------
-
     #[test]
     fn isrc_canonical_round_trips() {
         let v = parse_isrc("USRC17607839").expect("canonical");
@@ -250,19 +243,16 @@ mod tests {
 
     #[test]
     fn isrc_pattern_mismatch_bad_country() {
-        // Country code must be alpha — digits in the first two slots fail.
         assert_eq!(parse_isrc("12RC17607839"), Err(ParseError::PatternMismatch));
     }
 
     #[test]
     fn isrc_pattern_mismatch_bad_year() {
-        // Year segment must be exactly 2 digits.
         assert_eq!(parse_isrc("USRC1A607839"), Err(ParseError::PatternMismatch));
     }
 
     #[test]
     fn isrc_pattern_mismatch_bad_designation() {
-        // Designation must be exactly 5 digits — letters are rejected.
         assert_eq!(parse_isrc("USRC1760783A"), Err(ParseError::PatternMismatch));
     }
 
@@ -270,8 +260,6 @@ mod tests {
     fn isrc_pattern_mismatch_empty() {
         assert_eq!(parse_isrc(""), Err(ParseError::PatternMismatch));
     }
-
-    // ---- UPC / EAN --------------------------------------------------------
 
     #[test]
     fn upc_canonical_round_trips() {

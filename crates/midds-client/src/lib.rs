@@ -1,5 +1,3 @@
-// `subxt::Error` is ~216B; boxing it would change the public Error API.
-// Tracked: revisit when the client error surface is next refactored.
 #![allow(clippy::result_large_err)]
 
 //! High-level Rust client for the Allfeat MIDDS pallets.
@@ -81,9 +79,6 @@ pub struct MiddsClient {
 impl MiddsClient {
     /// Connect to an Allfeat node via WS or HTTP URL.
     pub async fn connect(url: impl AsRef<str>) -> Result<Self, Error> {
-        // Build the raw RPC client first so we can share it between the
-        // typed [`OnlineClient`] and our own best-block helper. The clone
-        // is cheap — `RpcClient` wraps an `Arc<dyn RpcClientT>`.
         let rpc = RpcClient::from_insecure_url(url.as_ref()).await?;
         let inner = OnlineClient::from_rpc_client(rpc.clone()).await?;
         Ok(Self { inner, rpc })
@@ -124,11 +119,6 @@ impl MiddsClient {
         ClientAtBlock<ChainConfig, subxt::client::OnlineClientAtBlockImpl<ChainConfig>>,
         Error,
     > {
-        // `chain_getBlockHash(None)` returns the hash of the latest best
-        // block (see `subxt_rpcs::methods::legacy::chain_get_block_hash`).
-        // We deserialise directly into the chain's hash type and skip the
-        // typed `LegacyRpcMethods` wrapper to avoid pulling in its config
-        // generic at every call site.
         let best_hash: Option<HashFor<ChainConfig>> = self
             .rpc
             .request("chain_getBlockHash", rpc_params![])

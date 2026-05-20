@@ -117,8 +117,6 @@ pub struct Args<'a> {
 pub async fn run<F>(args: Args<'_>, api_of: ApiOf<F::Item>) -> Result<()>
 where
     F: MiddsFixtures,
-    // `Sync` because each worker holds a `&[F::Item]` `chunks()` iterator
-    // across an `.await`, which `JoinSet::spawn` requires to be `Send`.
     F::Item: Send + Sync + 'static,
 {
     let Args {
@@ -138,9 +136,6 @@ where
         assume_yes,
     } = args;
 
-    // Build the config from CLI flags (with `count = 0` as a placeholder when
-    // missing) and only hand off to the wizard if `count` was omitted. Both
-    // paths converge at the destructure below.
     let cfg = interactive::ThroughputConfig {
         count: count.unwrap_or(0),
         duration_secs,
@@ -225,9 +220,6 @@ where
         url,
         base_signer: &base_signer,
         signer_count,
-        // Always derive — `signer_count == 1` means `<base>//1`, never the
-        // base URI verbatim. Multi-signer is the same scheme used by `seed`.
-        // Without auto-fund, even the solo run needs `<base>//1` pre-funded.
         solo_uses_base_uri: false,
         payloads,
         api_of,
@@ -241,9 +233,6 @@ where
     .await?;
 
     let semaphore = Arc::new(Semaphore::new(concurrency as usize));
-    // `stop` is flipped by the wall-clock timer when `--duration-secs` is set.
-    // Workers poll between batches and bail out, so the timer truncates a
-    // long run cleanly without waiting for the in-flight batch to drain.
     let stop = Arc::new(AtomicBool::new(false));
 
     if let Some(secs) = duration_secs {
@@ -266,19 +255,12 @@ where
         let tx = tx.clone();
         let stop = stop.clone();
         let batch_size_usize = batch_size as usize;
-        // Acquire the permit *inside* the spawn so workers can be enqueued
-        // eagerly: outside-the-spawn would serialise on the semaphore when
-        // `concurrency < signer_count`. Same shape as `seed` / `bench fees`.
         set.spawn(async move {
             let _permit = match semaphore.acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => return,
             };
             let api = api_of(&client);
-            // Fall back to subxt's auto-nonce path if the initial RPC fails:
-            // the counter never wraps in practice (a signer would have to
-            // send 2^64 extrinsics before this aliases) so `u64::MAX` is a
-            // safe sentinel. Same trick as `seed`.
             let mut nonce = match fetch_signer_nonce(&client, &signer).await {
                 Ok(n) => n,
                 Err(e) => {
@@ -319,15 +301,6 @@ where
                         });
                     }
                     Err(e) => {
-                        // Mirror `seed`: bail the whole worker on first
-                        // failure. Continuing is hopeless — runtime errors
-                        // (e.g. `BondHoldFailed` when a signer is broke)
-                        // consume the nonce, so the chain advances under
-                        // us. Re-fetching from finalised storage lags 2-3
-                        // blocks behind best, so the next submit picks up a
-                        // stale nonce and rejects as `Transaction is
-                        // outdated`. Surviving signers keep draining their
-                        // partitions.
                         let remaining_records: u32 = chunk_sizes[chunk_idx..].iter().sum();
                         let remaining_chunks = total_chunks - chunk_idx;
                         let _ = tx.send(WorkerEvent::Notice(format!(

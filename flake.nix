@@ -39,6 +39,7 @@
             trunk
             binaryen
             codex
+            cargo-llvm-cov
           ];
         };
       }

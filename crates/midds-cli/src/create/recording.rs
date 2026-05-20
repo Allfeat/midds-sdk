@@ -1,9 +1,7 @@
 //! Interactive builder for `Recording::V1`.
 
 use anyhow::Result;
-use midds_traits::{
-    Isni, Isrc, validate_isni_format, validate_isrc_format, validate_offchain_hash,
-};
+use midds_traits::{Isni, Isrc, validate_isni_format, validate_isrc_format};
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,
@@ -33,11 +31,9 @@ pub fn build() -> Result<Recording> {
 
     ui::step(4, STEPS, "Edition");
     let record_year = prompts::optional_int_in_range::<u16>("Record year", YEAR_MIN, YEAR_MAX)?;
-    let version_type = if prompts::confirm("Set an edition / version type?", false)? {
-        Some(prompts::fuzzy_select("Version type", VERSION_CHOICES)?)
-    } else {
-        None
-    };
+    let version_type = prompts::optional("an edition / version type", || {
+        prompts::fuzzy_select("Version type", VERSION_CHOICES)
+    })?;
 
     ui::step(5, STEPS, "Performers");
     let performers = build_party_collection("performer", PERFORMERS_MAX as usize)?;
@@ -48,17 +44,11 @@ pub fn build() -> Result<Recording> {
     let producers = build_producers()?;
 
     ui::step(7, STEPS, "Tempo & key");
-    let duration = if prompts::confirm("Set the duration (whole seconds)?", false)? {
-        Some(prompts::number::<u32>("Duration (s)", None)?)
-    } else {
-        None
-    };
+    let duration = prompts::optional("the duration (whole seconds)", || {
+        prompts::number::<u32>("Duration (s)", None)
+    })?;
     let bpm = prompts::optional_int_in_range::<u16>("BPM", BPM_MIN, BPM_MAX)?;
-    let key = if prompts::confirm("Set a musical key?", false)? {
-        Some(shared::musical_key("Musical key")?)
-    } else {
-        None
-    };
+    let key = prompts::optional("a musical key", || shared::musical_key("Musical key"))?;
 
     ui::step(8, STEPS, "Production places");
     let places = build_places()?;
@@ -69,15 +59,7 @@ pub fn build() -> Result<Recording> {
         .map_err(|_| anyhow::anyhow!("more than {CONTRIBUTORS_MAX} contributors"))?;
 
     ui::step(10, STEPS, "Off-chain extension");
-    let offchain_extension = if prompts::confirm("Attach an off-chain extension hash?", false)? {
-        Some(prompts::identifier::<64>(
-            "Off-chain hash",
-            validate_offchain_hash,
-            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        )?)
-    } else {
-        None
-    };
+    let offchain_extension = shared::offchain_extension()?;
 
     Ok(Recording::V1(RecordingV1 {
         isrc,

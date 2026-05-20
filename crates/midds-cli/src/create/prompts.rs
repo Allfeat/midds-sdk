@@ -44,12 +44,22 @@ pub fn bounded_string<const N: u32>(label: &str, required: bool) -> Result<Midds
         .map_err(|_| anyhow::anyhow!("`{label}` exceeds its {max}-byte bound"))
 }
 
-/// Optional free-text field: a `set this?` gate, then [`bounded_string`].
-pub fn optional_string<const N: u32>(label: &str) -> Result<Option<MiddsString<N>>> {
+/// Wrap any prompt as `Option<T>` behind a `set this?` gate.
+///
+/// Every optional MIDDS field — language, key, classical metadata, off-chain
+/// hash, … — follows the same shape: a `Confirm`, then the inner prompt only
+/// if the user opted in. Centralising the pattern keeps each builder
+/// declarative (one line per field).
+pub fn optional<T>(label: &str, build: impl FnOnce() -> Result<T>) -> Result<Option<T>> {
     if !confirm(&format!("Set {label}?"), false)? {
         return Ok(None);
     }
-    Ok(Some(bounded_string::<N>(label, true)?))
+    Ok(Some(build()?))
+}
+
+/// Optional free-text field: a `set this?` gate, then [`bounded_string`].
+pub fn optional_string<const N: u32>(label: &str) -> Result<Option<MiddsString<N>>> {
+    optional(label, || bounded_string::<N>(label, true))
 }
 
 /// An industry identifier (ISWC / ISNI / IPI / ISRC / UPC / off-chain hash).
@@ -132,10 +142,7 @@ where
     T: Copy + PartialOrd + Display + FromStr + Clone + 'static,
     <T as FromStr>::Err: Display,
 {
-    if !confirm(&format!("Set {label}?"), false)? {
-        return Ok(None);
-    }
-    Ok(Some(int_in_range(label, min, max, None)?))
+    optional(label, || int_in_range(label, min, max, None))
 }
 
 /// Yes/No prompt with an explicit default.

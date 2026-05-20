@@ -2,9 +2,10 @@
 //!
 //! These mirror the shapes in `midds_types::shared` (and the two ISO
 //! tag-byte enums) that more than one builder needs: party identifiers,
-//! work/recording references, a diatonic key, a country / language code and
-//! a release date. Kept apart from the generic widgets in
-//! [`super::prompts`] — these know the MIDDS domain, those don't.
+//! work/recording references, a diatonic key, a country / language code, a
+//! release date, and the off-chain extension hash. Kept apart from the
+//! generic widgets in [`super::prompts`] — these know the MIDDS domain,
+//! those don't.
 
 use anyhow::{Context, Result};
 use dialoguer::Input;
@@ -12,7 +13,8 @@ use dialoguer::Input;
 // loops call them so a malformed code is rejected before the payload is ever
 // assembled.
 use midds_traits::{
-    validate_ipi_format, validate_isni_format, validate_isrc_format, validate_iswc_format,
+    OffchainHash, validate_ipi_format, validate_isni_format, validate_isrc_format,
+    validate_iswc_format, validate_offchain_hash,
 };
 use midds_types::{
     Country, Language, Mode, MusicalKey, PartyId, PitchClass, RecordingRef, ReleaseDate, WorkRef,
@@ -134,6 +136,19 @@ pub fn language(label: &str) -> Result<Language> {
         .context("read language")?;
     Ok(Language::from_code_ignore_ascii_case(raw.trim().as_bytes())
         .expect("validated by the prompt loop"))
+}
+
+/// The `offchain_extension: Option<OffchainHash>` field present on every V1
+/// root MIDDS type. Prompted identically across `MusicalWork` / `Recording`
+/// / `Release`, so each wizard call site stays a one-liner.
+pub fn offchain_extension() -> Result<Option<OffchainHash>> {
+    prompts::optional("an off-chain extension hash", || {
+        prompts::identifier::<64>(
+            "Off-chain hash",
+            validate_offchain_hash,
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        )
+    })
 }
 
 /// A strict calendar date. `year` is intentionally uncapped (announced /

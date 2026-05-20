@@ -1,7 +1,7 @@
 //! Interactive builder for `Release::V1`.
 
 use anyhow::Result;
-use midds_traits::{Isni, Upc, validate_isni_format, validate_offchain_hash, validate_upc_format};
+use midds_traits::{Isni, Upc, validate_isni_format, validate_upc_format};
 use midds_types::release::{
     self, CATALOG_NUMBER_MAX_LEN as REL_CATALOG_MAX, COVER_CONTRIBUTOR_NAME_MAX_LEN,
     DISTRIBUTOR_NAME_MAX_LEN,
@@ -106,15 +106,7 @@ pub fn build() -> Result<Release> {
     let cover_contributors = build_cover_contributors()?;
 
     ui::step(9, STEPS, "Off-chain extension");
-    let offchain_extension = if prompts::confirm("Attach an off-chain extension hash?", false)? {
-        Some(prompts::identifier::<64>(
-            "Off-chain hash",
-            validate_offchain_hash,
-            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        )?)
-    } else {
-        None
-    };
+    let offchain_extension = shared::offchain_extension()?;
 
     Ok(Release::V1(ReleaseV1 {
         upc,

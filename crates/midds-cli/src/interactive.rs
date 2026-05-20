@@ -179,26 +179,14 @@ pub fn seed_wizard(defaults: SeedConfig) -> Result<SeedConfig> {
         defaults.batch_size.max(1),
     )?;
 
-    let auto_fund: bool = Confirm::with_theme(&theme)
-        .with_prompt("Auto-fund derived signers from funder before seeding?")
-        .default(defaults.auto_fund)
-        .interact()
-        .context("read auto-fund flag")?;
-
-    let (funder, fund_margin, fund_batch_size) = if auto_fund {
-        prompt_fund_details(
-            &theme,
-            &defaults.funder,
-            defaults.fund_margin,
-            defaults.fund_batch_size,
-        )?
-    } else {
-        (
-            defaults.funder.clone(),
-            defaults.fund_margin,
-            defaults.fund_batch_size,
-        )
-    };
+    let (auto_fund, funder, fund_margin, fund_batch_size) = prompt_auto_fund_block(
+        &theme,
+        "Auto-fund derived signers from funder before seeding?",
+        defaults.auto_fund,
+        &defaults.funder,
+        defaults.fund_margin,
+        defaults.fund_batch_size,
+    )?;
 
     let report_path = prompt_optional_path(
         &theme,
@@ -256,31 +244,17 @@ pub fn fees_wizard(defaults: FeesConfig) -> Result<FeesConfig> {
 
     // Funding only makes sense for derived signers — solo `//Alice`-style
     // runs already use a pre-funded account and skip this whole block.
+    // Multi-signer flows on a fresh chain almost always need funding, so the
+    // default is `yes` and the happy path is one Enter press.
     let (auto_fund, funder, fund_margin, fund_batch_size) = if signer_count > 1 {
-        // Multi-signer flows on a fresh chain almost always need funding —
-        // make the default `yes` so the happy path is one Enter press, while
-        // still letting the user opt out for pre-funded environments.
-        let auto_fund: bool = Confirm::with_theme(&theme)
-            .with_prompt("Auto-fund derived signers from funder before measuring?")
-            .default(true)
-            .interact()
-            .context("read auto-fund flag")?;
-        if auto_fund {
-            let (funder, fund_margin, fund_batch_size) = prompt_fund_details(
-                &theme,
-                &defaults.funder,
-                defaults.fund_margin,
-                defaults.fund_batch_size,
-            )?;
-            (true, funder, fund_margin, fund_batch_size)
-        } else {
-            (
-                false,
-                defaults.funder.clone(),
-                defaults.fund_margin,
-                defaults.fund_batch_size,
-            )
-        }
+        prompt_auto_fund_block(
+            &theme,
+            "Auto-fund derived signers from funder before measuring?",
+            true,
+            &defaults.funder,
+            defaults.fund_margin,
+            defaults.fund_batch_size,
+        )?
     } else {
         (
             false,
@@ -355,26 +329,14 @@ pub fn throughput_wizard(defaults: ThroughputConfig) -> Result<ThroughputConfig>
     // `//Alice//1` on a fresh chain need it the most, and a `signer_count == 1`
     // throughput run uses `//Alice//1` (not `//Alice` verbatim, unlike fees) so
     // it benefits from auto-fund just as much as multi-signer.
-    let auto_fund: bool = Confirm::with_theme(&theme)
-        .with_prompt("Auto-fund derived signers from funder before measuring?")
-        .default(defaults.auto_fund)
-        .interact()
-        .context("read auto-fund flag")?;
-
-    let (funder, fund_margin, fund_batch_size) = if auto_fund {
-        prompt_fund_details(
-            &theme,
-            &defaults.funder,
-            defaults.fund_margin,
-            defaults.fund_batch_size,
-        )?
-    } else {
-        (
-            defaults.funder.clone(),
-            defaults.fund_margin,
-            defaults.fund_batch_size,
-        )
-    };
+    let (auto_fund, funder, fund_margin, fund_batch_size) = prompt_auto_fund_block(
+        &theme,
+        "Auto-fund derived signers from funder before measuring?",
+        defaults.auto_fund,
+        &defaults.funder,
+        defaults.fund_margin,
+        defaults.fund_batch_size,
+    )?;
 
     let rng_seed = prompt_u64_seed(&theme, "RNG seed (decimal or 0x..)", defaults.rng_seed)?;
 
@@ -400,10 +362,41 @@ pub fn throughput_wizard(defaults: ThroughputConfig) -> Result<ThroughputConfig>
     })
 }
 
+/// Ask `auto-fund?` and chain into [`prompt_fund_details`] only when the
+/// user opts in; otherwise return the caller's defaults untouched. Centralises
+/// the four-tuple shape `(auto_fund, funder, fund_margin, fund_batch_size)`
+/// every bench/seed wizard ends up assembling.
+fn prompt_auto_fund_block(
+    theme: &ColorfulTheme,
+    prompt: &str,
+    default_auto_fund: bool,
+    funder_default: &str,
+    margin_default: f64,
+    batch_size_default: u32,
+) -> Result<(bool, String, f64, u32)> {
+    let auto_fund: bool = Confirm::with_theme(theme)
+        .with_prompt(prompt)
+        .default(default_auto_fund)
+        .interact()
+        .context("read auto-fund flag")?;
+    if auto_fund {
+        let (funder, fund_margin, fund_batch_size) =
+            prompt_fund_details(theme, funder_default, margin_default, batch_size_default)?;
+        Ok((true, funder, fund_margin, fund_batch_size))
+    } else {
+        Ok((
+            false,
+            funder_default.to_string(),
+            margin_default,
+            batch_size_default,
+        ))
+    }
+}
+
 /// Walk through the three follow-up questions that always come after the
 /// `auto-fund?` toggle: funder URI, safety margin, and batch size for the
-/// funding `batch_all`. Shared between [`seed_wizard`] and [`fees_wizard`]
-/// because both gate funding the same way and ask identical questions.
+/// funding `batch_all`. Called from [`prompt_auto_fund_block`] once the user
+/// has opted in; never asked when `auto_fund` ends up `false`.
 fn prompt_fund_details(
     theme: &ColorfulTheme,
     funder_default: &str,

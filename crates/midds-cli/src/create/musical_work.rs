@@ -6,7 +6,7 @@
 //! never disagree.
 
 use anyhow::Result;
-use midds_traits::{Iswc, validate_iswc_format, validate_offchain_hash};
+use midds_traits::{Iswc, validate_iswc_format};
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorId, CreatorRole, Creators,
@@ -31,19 +31,11 @@ pub fn build() -> Result<MusicalWork> {
     let instrumental = prompts::confirm("Instrumental (no lyrics)?", false)?;
 
     ui::step(3, STEPS, "Language");
-    let language = if prompts::confirm("Set a language?", false)? {
-        Some(shared::language("Language")?)
-    } else {
-        None
-    };
+    let language = prompts::optional("a language", || shared::language("Language"))?;
 
     ui::step(4, STEPS, "Tempo & key");
     let bpm = prompts::optional_int_in_range::<u16>("BPM", BPM_MIN, BPM_MAX)?;
-    let key = if prompts::confirm("Set a musical key?", false)? {
-        Some(shared::musical_key("Musical key")?)
-    } else {
-        None
-    };
+    let key = prompts::optional("a musical key", || shared::musical_key("Musical key"))?;
 
     ui::step(5, STEPS, "Work type");
     let work_type = build_work_type()?;
@@ -55,15 +47,7 @@ pub fn build() -> Result<MusicalWork> {
     let classical_info = build_classical_info()?;
 
     ui::step(8, STEPS, "Off-chain extension");
-    let offchain_extension = if prompts::confirm("Attach an off-chain extension hash?", false)? {
-        Some(prompts::identifier::<64>(
-            "Off-chain hash",
-            validate_offchain_hash,
-            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        )?)
-    } else {
-        None
-    };
+    let offchain_extension = shared::offchain_extension()?;
 
     // Step 9 is the validate + recap pass, driven by `create::finish`.
     Ok(MusicalWork::V1(MusicalWorkV1 {

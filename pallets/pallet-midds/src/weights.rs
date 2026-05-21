@@ -24,6 +24,8 @@ pub trait WeightInfo {
     fn force_remove_refund() -> Weight;
     fn force_remove_slash() -> Weight;
     fn force_remove_many(n: u32) -> Weight;
+    fn force_set_deposit_base() -> Weight;
+    fn force_set_deposit_per_byte() -> Weight;
 }
 
 /// Zero-weight impl, suitable for unit tests and mock runtimes only.
@@ -59,6 +61,12 @@ impl WeightInfo for () {
         Weight::zero()
     }
     fn force_remove_many(_n: u32) -> Weight {
+        Weight::zero()
+    }
+    fn force_set_deposit_base() -> Weight {
+        Weight::zero()
+    }
+    fn force_set_deposit_per_byte() -> Weight {
         Weight::zero()
     }
 }

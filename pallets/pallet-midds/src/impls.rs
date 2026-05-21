@@ -141,9 +141,9 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     }
 
     fn compute_base_bond(size: u32) -> BalanceOf<T, I> {
-        let per_byte = T::DepositPerByte::get();
+        let per_byte = DepositPerByte::<T, I>::get();
         let size_balance: BalanceOf<T, I> = size.into();
-        T::DepositBase::get().saturating_add(per_byte.saturating_mul(size_balance))
+        DepositBase::<T, I>::get().saturating_add(per_byte.saturating_mul(size_balance))
     }
 
     /// `owner_layer.amount` or zero if no owner layer exists.

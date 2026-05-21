@@ -374,5 +374,27 @@ mod benchmarks {
         Ok(())
     }
 
+    #[benchmark]
+    fn force_set_deposit_base() -> Result<(), BenchmarkError> {
+        let new: crate::BalanceOf<T, I> = 1_000u32.into();
+
+        #[extrinsic_call]
+        _(RawOrigin::Root, new);
+
+        assert_eq!(crate::DepositBase::<T, I>::get(), new);
+        Ok(())
+    }
+
+    #[benchmark]
+    fn force_set_deposit_per_byte() -> Result<(), BenchmarkError> {
+        let new: crate::BalanceOf<T, I> = 7u32.into();
+
+        #[extrinsic_call]
+        _(RawOrigin::Root, new);
+
+        assert_eq!(crate::DepositPerByte::<T, I>::get(), new);
+        Ok(())
+    }
+
     impl_benchmark_test_suite!(MiddsPallet, crate::mock::new_test_ext(), crate::mock::Test);
 }

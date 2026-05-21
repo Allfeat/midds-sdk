@@ -137,13 +137,14 @@ pub mod pallet {
         /// never burn — the AFT is recycled via Treasury governance.
         type TreasuryAccount: Get<Self::AccountId>;
 
-        /// Flat part of the (unmultiplied) bond formula.
-        #[pallet::constant]
-        type DepositBase: Get<BalanceOf<Self, I>>;
-
-        /// Per-byte multiplier applied to the SCALE-encoded payload size.
-        #[pallet::constant]
-        type DepositPerByte: Get<BalanceOf<Self, I>>;
+        // Note: the bond formula parameters (`DepositBase` and
+        // `DepositPerByte`) used to live here as `Get<BalanceOf<_>>`. Per
+        // `docs/economics.md` §13.4 they have been moved to runtime-mutable
+        // [`DepositBase`] / [`DepositPerByte`] storage values (initialised
+        // via [`GenesisConfig`], updated via
+        // [`Pallet::force_set_deposit_base`] /
+        // [`Pallet::force_set_deposit_per_byte`]) so the Foundation can
+        // recalibrate the bond without a runtime upgrade.
 
         /// Length of the refundable commitment window, in blocks.
         ///
@@ -323,6 +324,24 @@ pub mod pallet {
     pub type OnBehalfNonce<T: Config<I>, I: 'static = ()> =
         StorageMap<_, Blake2_128Concat, T::AccountId, u64, ValueQuery>;
 
+    /// Flat part of the unmultiplied bond formula. Initialised from
+    /// [`GenesisConfig::deposit_base`] and mutable via
+    /// [`Pallet::force_set_deposit_base`] (`ForceOrigin`). Lives in storage
+    /// rather than as a `Config` constant so the Foundation can recalibrate
+    /// the bond floor without a runtime upgrade — `docs/economics.md` §13.4.
+    #[pallet::storage]
+    pub type DepositBase<T: Config<I>, I: 'static = ()> =
+        StorageValue<_, BalanceOf<T, I>, ValueQuery>;
+
+    /// Per-byte multiplier applied to the SCALE-encoded payload size in the
+    /// unmultiplied bond formula. Sibling of [`DepositBase`] with the same
+    /// governance rationale: initialised from
+    /// [`GenesisConfig::deposit_per_byte`], mutated via
+    /// [`Pallet::force_set_deposit_per_byte`].
+    #[pallet::storage]
+    pub type DepositPerByte<T: Config<I>, I: 'static = ()> =
+        StorageValue<_, BalanceOf<T, I>, ValueQuery>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config<I>, I: 'static = ()> {
@@ -400,6 +419,15 @@ pub mod pallet {
             sponsor: T::AccountId,
             amount_to_treasury: BalanceOf<T, I>,
         },
+        /// `force_set_deposit_base` was called; the flat part of the
+        /// unmultiplied bond formula changed. New deposits and the per-layer
+        /// extension paths price from `new` immediately; existing layers keep
+        /// their banked base (anti-arbitrage `docs/economics.md` §5.5).
+        DepositBaseSet { new: BalanceOf<T, I> },
+        /// `force_set_deposit_per_byte` was called; the per-byte multiplier
+        /// of the unmultiplied bond formula changed. Same per-layer
+        /// stickiness as `DepositBaseSet`.
+        DepositPerByteSet { new: BalanceOf<T, I> },
     }
 
     #[pallet::error]
@@ -453,6 +481,36 @@ pub mod pallet {
         /// `sponsor_layer.payer`). Only the deposit-time sponsor may extend
         /// their own layer.
         WrongSponsor,
+    }
+
+    /// Initial values for the runtime-mutable bond parameters. Both must be
+    /// supplied at chain bootstrap — there is no implicit default, since the
+    /// right calibration depends on the runtime's currency unit and the
+    /// economic targets of the host chain (cf. `docs/economics.md` §6).
+    #[pallet::genesis_config]
+    pub struct GenesisConfig<T: Config<I>, I: 'static = ()> {
+        pub deposit_base: BalanceOf<T, I>,
+        pub deposit_per_byte: BalanceOf<T, I>,
+        #[serde(skip)]
+        pub _config: core::marker::PhantomData<(T, I)>,
+    }
+
+    impl<T: Config<I>, I: 'static> Default for GenesisConfig<T, I> {
+        fn default() -> Self {
+            Self {
+                deposit_base: <BalanceOf<T, I> as sp_runtime::traits::Zero>::zero(),
+                deposit_per_byte: <BalanceOf<T, I> as sp_runtime::traits::Zero>::zero(),
+                _config: core::marker::PhantomData,
+            }
+        }
+    }
+
+    #[pallet::genesis_build]
+    impl<T: Config<I>, I: 'static> BuildGenesisConfig for GenesisConfig<T, I> {
+        fn build(&self) {
+            DepositBase::<T, I>::put(self.deposit_base);
+            DepositPerByte::<T, I>::put(self.deposit_per_byte);
+        }
     }
 
     #[pallet::hooks]
@@ -812,6 +870,41 @@ pub mod pallet {
             })?;
 
             Self::do_remove_own(id, info)
+        }
+
+        /// `ForceOrigin` updates the flat part of the unmultiplied bond
+        /// formula. Per `docs/economics.md` §13.4 this lives in storage
+        /// rather than as a compile-time `Config` constant, so the Foundation
+        /// can recalibrate the bond floor without a runtime upgrade — useful
+        /// when the AFT/USD ratio drifts. Existing layers keep their banked
+        /// base (anti-arbitrage §5.5); the new value applies to subsequent
+        /// deposits and update-time extensions.
+        #[pallet::call_index(11)]
+        #[pallet::weight(T::WeightInfo::force_set_deposit_base())]
+        pub fn force_set_deposit_base(
+            origin: OriginFor<T>,
+            new: BalanceOf<T, I>,
+        ) -> DispatchResult {
+            T::ForceOrigin::ensure_origin(origin)?;
+            DepositBase::<T, I>::put(new);
+            Self::deposit_event(Event::DepositBaseSet { new });
+            Ok(())
+        }
+
+        /// `ForceOrigin` updates the per-byte multiplier of the unmultiplied
+        /// bond formula. Sibling of [`Pallet::force_set_deposit_base`]; same
+        /// governance rationale and same per-layer stickiness on existing
+        /// records.
+        #[pallet::call_index(12)]
+        #[pallet::weight(T::WeightInfo::force_set_deposit_per_byte())]
+        pub fn force_set_deposit_per_byte(
+            origin: OriginFor<T>,
+            new: BalanceOf<T, I>,
+        ) -> DispatchResult {
+            T::ForceOrigin::ensure_origin(origin)?;
+            DepositPerByte::<T, I>::put(new);
+            Self::deposit_event(Event::DepositPerByteSet { new });
+            Ok(())
         }
     }
 }

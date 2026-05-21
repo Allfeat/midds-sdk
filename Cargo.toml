@@ -20,19 +20,24 @@ edition = "2024"
 homepage = "https://allfeat.com"
 license = "GPL-3.0"
 repository = "https://github.com/allfeat/midds-sdk"
-version = "0.1.0"
+# 0.2.0 — breaking change: `pallet-midds::Config` no longer carries
+# `DepositBase` / `DepositPerByte` as compile-time `Get` items. Both are now
+# runtime-mutable `StorageValue`s, initialised from `pallet_midds::GenesisConfig`
+# and tunable post-launch via the new `force_set_deposit_*` extrinsics
+# (`docs/economics.md` §13.4). Pre-1.0 SemVer: any `0.x.0` bump is breaking.
+version = "0.2.0"
 
 [workspace.dependencies]
 # Internal crates
-midds-traits = { path = "crates/midds-traits", version = "0.1.0", default-features = false }
-midds-types = { path = "crates/midds-types", version = "0.1.0", default-features = false }
-midds-validate = { path = "crates/midds-validate", version = "0.1.0" }
-midds-runtime-api = { path = "crates/midds-runtime-api", version = "0.1.0", default-features = false }
-midds-rpc = { path = "crates/midds-rpc", version = "0.1.0" }
-midds-client = { path = "crates/midds-client", version = "0.1.0" }
-midds-codegen = { path = "crates/midds-codegen", version = "0.1.0" }
-midds-fixtures = { path = "crates/midds-fixtures", version = "0.1.0", default-features = false }
-pallet-midds = { path = "pallets/pallet-midds", version = "0.1.0", default-features = false }
+midds-traits = { path = "crates/midds-traits", version = "0.2.0", default-features = false }
+midds-types = { path = "crates/midds-types", version = "0.2.0", default-features = false }
+midds-validate = { path = "crates/midds-validate", version = "0.2.0" }
+midds-runtime-api = { path = "crates/midds-runtime-api", version = "0.2.0", default-features = false }
+midds-rpc = { path = "crates/midds-rpc", version = "0.2.0" }
+midds-client = { path = "crates/midds-client", version = "0.2.0" }
+midds-codegen = { path = "crates/midds-codegen", version = "0.2.0" }
+midds-fixtures = { path = "crates/midds-fixtures", version = "0.2.0", default-features = false }
+pallet-midds = { path = "pallets/pallet-midds", version = "0.2.0", default-features = false }
 
 # Polkadot SDK (no_std-capable) — aligned with stable2503
 frame-support = { version = "46.0.0", default-features = false }

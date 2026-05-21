@@ -77,8 +77,9 @@ pub enum Command {
     /// exact bond requirement from the chain's `DepositBase` /
     /// `DepositPerByte` constants. One self-contained command end-to-end.
     Seed {
-        /// MIDDS payload type to seed. V1 only accepts `musical-work`.
-        #[arg(long = "midds-type", value_enum, default_value_t = MiddsKind::default())]
+        /// MIDDS payload type to seed. Defaults to `all`, which spreads the
+        /// `--count` total round-robin across every V1 MIDDS type.
+        #[arg(long = "midds-type", value_enum, default_value_t = MiddsKind::All)]
         midds_type: MiddsKind,
         /// Number of records to deposit. Omit to be prompted interactively.
         #[arg(long)]
@@ -271,6 +272,10 @@ pub enum BenchArgs {
 /// dispatch sites in `main.rs`; the whole bench harness is generic over the
 /// MIDDS type so adding `Release` later is a one-variant change here plus the
 /// two dispatch arms.
+///
+/// [`MiddsKind::All`] is `seed`-only: it splits the requested count round-robin
+/// across every V1 type and runs the three sub-runs back-to-back. The benches
+/// reject `all` explicitly — their reports are per-type by construction.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, Default)]
 pub enum MiddsKind {
     /// `MusicalWork::V1`, deposited against the `MusicalWorks` instance.
@@ -289,6 +294,14 @@ pub enum MiddsKind {
     /// are fully functional offline.
     #[value(name = "release")]
     Release,
+    /// Round-robin across every V1 MIDDS type. `seed`-only — picked by default
+    /// for `seed` so `midds seed --count N` produces a mix without flags. Each
+    /// type runs as its own back-to-back sub-run with `count / 3` records
+    /// (remainder lands on the first types); the per-type sub-reports are
+    /// aggregated into a single `SeedAllReport`. The `bench` subcommands
+    /// reject this variant — their reports stay per-type.
+    #[value(name = "all")]
+    All,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]

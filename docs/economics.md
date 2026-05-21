@@ -170,22 +170,40 @@ honnête avec 1 wallet sont traités exactement pareil.
 
 ### 5.3 Profils de coût attendus
 
-Bond effectif pour un MusicalWork typique (~150 B encodés) :
+Bond effectif pour un MusicalWork typique (~150 B encodés) avec la
+calibration **hybride payload-aware** (base 100 mAFT, per-byte 250 µAFT/B,
+cf §6) :
 
 | Profil | M_fast | M_slow | Bond payé |
 |---|---|---|---|
-| Régime nominal | 1× | 1× | ~500 mAFT (~$0.01) |
-| Artiste indé, 5 deposits étalés | 1× | 1× | ~500 mAFT |
-| Label, 10K records sur 1 mois | 1× moy | ~1× | ~500 mAFT moy |
-| Mass ingest CMO, 1M sur 60j | 1× | ~1.5× | ~750 mAFT moy |
-| Burst 1 bloc plein | ~10× | 1× | ~5 AFT (sur ce bloc) |
-| Flood patient 1M en 7j | 1× moy | ~10× | ~5 AFT pendant 7j |
-| Flood très patient 1M en 60j | 1× | ~1.5× | ~750 mAFT (≈ honnête) |
+| Régime nominal | 1× | 1× | ~138 mAFT (~$0.003) |
+| Artiste indé, 5 deposits étalés | 1× | 1× | ~138 mAFT |
+| Label, 10K records sur 1 mois | 1× moy | ~1× | ~138 mAFT moy |
+| Mass ingest CMO, 1M sur 60j | 1× | ~1.5× | ~207 mAFT moy |
+| Burst 1 bloc plein | ~10× | 1× | ~1,4 AFT (sur ce bloc) |
+| Flood patient 1M en 7j | 1× moy | ~10× | ~1,4 AFT pendant 7j |
+| Flood très patient 1M en 60j | 1× | ~1,5× | ~207 mAFT (≈ honnête) |
 
 Le dernier cas est intéressant : un attaquant **vraiment patient**
 finit par ressembler à un user légitime, économiquement parlant. À ce
 moment-là, la défense bascule sur le filtrage qualité (off-chain, ou
 PoM future). C'est le bon transfert de problème.
+
+### 5.3.1 Effet payload-aware
+
+Contrairement à un bond flat, la calibration B fait diverger sensiblement
+le coût en fonction de la taille du payload. Pour un même multiplicateur
+1×, à $0.02/AFT :
+
+| Type | Encoded typique | Encoded max | Bond typique | Bond max |
+|---|---:|---:|---:|---:|
+| MusicalWork | 137 B | 1 416 B | ~$0.003 | ~$0.009 |
+| Recording | 222 B | 4 722 B | ~$0.003 | ~$0.026 |
+| Release | 197 B | 9 030 B | ~$0.003 | ~$0.047 |
+
+Un Release saturé (tracklist longue, métadonnées riches) paye ~17× le
+prix d'un MusicalWork typique — c'est l'anti-stuffing incentive. Les
+MIDDS sains restent autour de $0.003, indépendamment du type.
 
 ### 5.4 Pourquoi 7 jours
 
@@ -257,14 +275,28 @@ miroite la pré-stratification.
 
 ## 6. Constants runtime
 
+> **Note** — `MiddsDepositBase` et `MiddsDepositPerByte` sont en cours de
+> migration vers des `StorageValue` ajustables par sudo (cf §13.4). Les
+> valeurs ci-dessous restent celles initialisées en genesis sur Melodie ;
+> une fois §13.4 livré, elles deviennent paramètres mutables sans runtime
+> upgrade. La structure du Config trait du pallet `parameter_types!`
+> change en conséquence (breaking change `0.1 → 0.2`).
+
+### 6.1 Calibration hybride payload-aware (variante B)
+
 ```rust
-// runtime/melodie/src/pallets/midds.rs
+// runtime/melodie/src/pallets/midds.rs (valeurs initialisées en genesis)
 
 parameter_types! {
-    // Bond nominal (base) — calibré pour anti-spam communautaire
-    // ~0.5 AFT par MIDDS en régime nominal (~$0.01 @ $0.02/AFT)
-    pub const MiddsBondBase: Balance = 500 * MILLIAFT;
-    pub const MiddsBondPerByte: Balance = 10 * MICROAFT;
+    // Bond formula (unmultiplied) — hybrid payload-aware: `DepositBase`
+    // pinned to the ExistentialDeposit (0.1 AFT) for minimal anti-sybil
+    // cost, weight shifted onto `DepositPerByte` so saturated payloads
+    // pay materially more than minimal ones. At $0.02/AFT a typical
+    // MusicalWork (~137 B) costs ~$0.003, a maxed-out Release (~9 KB)
+    // ~$0.05 — 17× ratio that creates the anti-stuffing incentive
+    // absent from the prior flat 0.5 AFT calibration.
+    pub const MiddsDepositBase: Balance = 100 * MILLIAFT;
+    pub const MiddsDepositPerByte: Balance = 250 * MICROAFT;
 
     // Fenêtre refundable
     pub const MiddsCommitmentWindow: BlockNumber = 7 * DAYS;
@@ -523,14 +555,16 @@ initiale, et financer significativement la R&D / opérations Foundation.
 ### 12.1 Pitch externe
 
 > *"Le réseau Allfeat ingère jusqu'à ~200 000 MIDDS par semaine au prix
-> plancher (~500 mAFT, ~$0.01). Au-delà, le prix monte progressivement
-> pour réguler la charge — conseil : enregistrez vos métadonnées en début
-> de semaine pour le tarif optimal, comme pour préparer votre setlist
-> avant le concert. Vous avez 7 jours après le deposit pour corriger ou
-> annuler avec remboursement intégral."*
+> plancher (~140 mAFT, ~$0.003 pour un titre standard). Le tarif augmente
+> avec la taille du payload — un single typique coûte ~$0.003, un album
+> complet avec tracklist fournie peut atteindre ~$0.05. Le prix monte
+> aussi avec la charge réseau ; conseil : enregistrez vos métadonnées en
+> début de semaine pour le tarif optimal, comme pour préparer votre
+> setlist avant le concert. Vous avez 7 jours après le deposit pour
+> corriger ou annuler avec remboursement intégral."*
 
-Volontairement non-technique. Aucune mention de "EIP-1559" ou
-"multiplicateur" dans la com publique.
+Volontairement non-technique. Aucune mention de "EIP-1559",
+"multiplicateur" ou "payload-aware" dans la com publique.
 
 ### 12.2 RPC à exposer
 
@@ -593,12 +627,26 @@ du pallet), les constantes économiques peuvent diverger :
 
 L'architecture multi-instance le permet sans refacto.
 
-### 13.4 Auto-calibrage du `MiddsBondBase`
+### 13.4 Auto-calibrage du `MiddsDepositBase` *(in progress)*
 
-Plutôt que de figer `MiddsBondBase` dans le runtime, le passer en
-`StorageValue` ajustable selon des observations long-terme (mois,
-trimestres). Permet de reculer la cible par gouvernance sans runtime
-upgrade — utile si le ratio AFT/USD bouge significativement.
+Plutôt que de figer `MiddsDepositBase` et `MiddsDepositPerByte` dans le
+runtime, les passer en `StorageValue` ajustables par sudo selon des
+observations long-terme (mois, trimestres). Permet de recaler la cible
+par gouvernance sans runtime upgrade — utile si le ratio AFT/USD bouge
+significativement.
+
+**Statut** : implémentation en cours sur `pallet-midds` v0.2.0. Le Config
+trait perd `type DepositBase` / `type DepositPerByte` (breaking change
+pré-1.0), remplacés par deux `StorageValue<BalanceOf<T, I>>` initialisés
+via `GenesisConfig` et mutables via deux extrinsics sudo
+(`force_set_deposit_base`, `force_set_deposit_per_byte`). La formule de
+bond et les RPC pricing lisent maintenant les storages au lieu d'appeler
+`T::DepositBase::get()`.
+
+**Pourquoi maintenant** : à $0.02/AFT la calibration B est saine, mais un
+mouvement de prix AFT de 5× (très plausible sur testnet → mainnet) forcerait
+sinon un runtime upgrade juste pour rétablir le pricing cible. Mieux vaut
+poser le rail gouvernable avant que le besoin devienne urgent.
 
 ---
 

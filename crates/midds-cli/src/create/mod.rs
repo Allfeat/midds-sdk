@@ -11,7 +11,7 @@ mod shared;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use midds_traits::Midds;
 
 use crate::cli::{CreateFormat, MiddsKind};
@@ -47,6 +47,12 @@ pub fn run(kind: Option<MiddsKind>, out: Option<PathBuf>, fmt: CreateFormat) -> 
         MiddsKind::MusicalWork => finish(build_validated(musical_work::build)?, &out, fmt),
         MiddsKind::Recording => finish(build_validated(recording::build)?, &out, fmt),
         MiddsKind::Release => finish(build_validated(release::build)?, &out, fmt),
+        // `create` is offline and emits a single payload; `all` only makes
+        // sense on `seed`, which deposits many records across instances.
+        MiddsKind::All => bail!(
+            "`--type all` is not supported by `create` — pick `musical-work`, \
+             `recording`, or `release` for a single payload"
+        ),
     }
 }
 

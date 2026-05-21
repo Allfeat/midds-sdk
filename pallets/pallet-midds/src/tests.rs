@@ -2073,3 +2073,74 @@ fn remove_own_on_behalf_rejects_finalized_record() {
         );
     });
 }
+
+#[test]
+fn force_set_deposit_base_requires_root() {
+    new_test_ext().execute_with(|| {
+        assert_noop!(
+            Midds::force_set_deposit_base(RuntimeOrigin::signed(ALICE), 999),
+            sp_runtime::DispatchError::BadOrigin,
+        );
+        assert_eq!(
+            pallet_midds::DepositBase::<Test, Instance>::get(),
+            DEPOSIT_BASE
+        );
+    });
+}
+
+#[test]
+fn force_set_deposit_base_updates_storage_and_next_bond() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"abc", 5);
+        let bond_before = expected_total_bond_for(&item);
+
+        let new_base = DEPOSIT_BASE * 4;
+        assert_ok!(Midds::force_set_deposit_base(
+            RuntimeOrigin::root(),
+            new_base
+        ));
+        assert_eq!(
+            pallet_midds::DepositBase::<Test, Instance>::get(),
+            new_base
+        );
+
+        let bond_after = expected_total_bond_for(&item);
+        assert_eq!(bond_after, bond_before + (new_base - DEPOSIT_BASE));
+    });
+}
+
+#[test]
+fn force_set_deposit_per_byte_requires_root() {
+    new_test_ext().execute_with(|| {
+        assert_noop!(
+            Midds::force_set_deposit_per_byte(RuntimeOrigin::signed(ALICE), 99),
+            sp_runtime::DispatchError::BadOrigin,
+        );
+        assert_eq!(
+            pallet_midds::DepositPerByte::<Test, Instance>::get(),
+            DEPOSIT_PER_BYTE
+        );
+    });
+}
+
+#[test]
+fn force_set_deposit_per_byte_updates_storage_and_next_bond() {
+    new_test_ext().execute_with(|| {
+        let item = mock_midds(b"data", 5);
+        let bond_before = expected_total_bond_for(&item);
+        let size = item.encoded_size() as Balance;
+
+        let new_per_byte = DEPOSIT_PER_BYTE + 7;
+        assert_ok!(Midds::force_set_deposit_per_byte(
+            RuntimeOrigin::root(),
+            new_per_byte
+        ));
+        assert_eq!(
+            pallet_midds::DepositPerByte::<Test, Instance>::get(),
+            new_per_byte
+        );
+
+        let bond_after = expected_total_bond_for(&item);
+        assert_eq!(bond_after, bond_before + (new_per_byte - DEPOSIT_PER_BYTE) * size);
+    });
+}

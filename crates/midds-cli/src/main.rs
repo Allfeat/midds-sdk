@@ -32,6 +32,11 @@ fn main() -> Result<()> {
 /// `midds-client` pallet-instance accessor. Adding a new MIDDS kind later is
 /// one variant on [`MiddsKind`] and one arm here — the rest of the harness
 /// stays generic.
+///
+/// [`MiddsKind::All`] is handled outside this macro: `seed` routes it to
+/// [`bench::seed::run_all`], and `bench fees` / `bench throughput` reject it
+/// upfront because their reports are per-type by construction. The macro
+/// itself returns a clear error if `All` ever reaches it.
 macro_rules! dispatch_kind {
     ($module:ident, $kind:expr, $args:expr) => {
         match $kind {
@@ -44,6 +49,10 @@ macro_rules! dispatch_kind {
             MiddsKind::Release => {
                 bench::$module::run::<ReleaseFixtures>($args, MiddsClient::releases).await
             }
+            MiddsKind::All => Err(anyhow!(
+                "`--midds-type all` is only supported by `seed`; \
+                 pick `musical-work`, `recording`, or `release` for the bench commands"
+            )),
         }
     };
 }
@@ -89,7 +98,10 @@ async fn run(cli: Cli) -> Result<()> {
                 report_path: report.as_deref(),
                 assume_yes: yes,
             };
-            dispatch_kind!(seed, midds_type, args)
+            match midds_type {
+                MiddsKind::All => bench::seed::run_all(args).await,
+                other => dispatch_kind!(seed, other, args),
+            }
         }
         Command::Bench { kind } => match kind {
             Some(BenchArgs::Fees {

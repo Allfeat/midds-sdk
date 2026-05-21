@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "midds-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "midds-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "midds-runtime-api",
  "midds-traits",
@@ -3058,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "midds-codegen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3069,7 +3069,7 @@ dependencies = [
 
 [[package]]
 name = "midds-e2e"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "midds-client",
@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "midds-fixtures"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "frame-support",
  "midds-traits",
@@ -3102,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "midds-rpc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jsonrpsee",
  "midds-fixtures",
@@ -3119,7 +3119,7 @@ dependencies = [
 
 [[package]]
 name = "midds-runtime-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "midds-traits",
  "parity-scale-codec",
@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "midds-traits"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bounded-collections",
  "parity-scale-codec",
@@ -3141,7 +3141,7 @@ dependencies = [
 
 [[package]]
 name = "midds-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bounded-collections",
  "midds-fixtures",
@@ -3155,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "midds-validate"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bounded-collections",
  "midds-fixtures",
@@ -3359,7 +3359,7 @@ dependencies = [
 
 [[package]]
 name = "pallet-midds"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "frame-benchmarking",
  "frame-support",

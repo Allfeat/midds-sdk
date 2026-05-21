@@ -2099,10 +2099,7 @@ fn force_set_deposit_base_updates_storage_and_next_bond() {
             RuntimeOrigin::root(),
             new_base
         ));
-        assert_eq!(
-            pallet_midds::DepositBase::<Test, Instance>::get(),
-            new_base
-        );
+        assert_eq!(pallet_midds::DepositBase::<Test, Instance>::get(), new_base);
 
         let bond_after = expected_total_bond_for(&item);
         assert_eq!(bond_after, bond_before + (new_base - DEPOSIT_BASE));
@@ -2141,6 +2138,9 @@ fn force_set_deposit_per_byte_updates_storage_and_next_bond() {
         );
 
         let bond_after = expected_total_bond_for(&item);
-        assert_eq!(bond_after, bond_before + (new_per_byte - DEPOSIT_PER_BYTE) * size);
+        assert_eq!(
+            bond_after,
+            bond_before + (new_per_byte - DEPOSIT_PER_BYTE) * size
+        );
     });
 }

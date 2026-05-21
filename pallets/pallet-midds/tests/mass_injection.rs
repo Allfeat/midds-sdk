@@ -156,8 +156,6 @@ impl pallet_midds::Config for Test {
     type OffchainSignature = StubSignature;
     type Signer = StubSigner;
     type TreasuryAccount = TreasuryAccount;
-    type DepositBase = ConstU128<DEPOSIT_BASE>;
-    type DepositPerByte = ConstU128<DEPOSIT_PER_BYTE>;
     type CommitmentWindow = ConstU64<COMMITMENT_WINDOW>;
     type MaxFinalizationsPerBlock = ConstU32<100>;
     type MaxRemovalsPerCall = ConstU32<32>;
@@ -187,6 +185,13 @@ fn build_ext(account_count: u64, balance_each: Balance) -> sp_io::TestExternalit
     }
     .assimilate_storage(&mut t)
     .expect("balances genesis");
+    pallet_midds::GenesisConfig::<Test> {
+        deposit_base: DEPOSIT_BASE,
+        deposit_per_byte: DEPOSIT_PER_BYTE,
+        _config: core::marker::PhantomData,
+    }
+    .assimilate_storage(&mut t)
+    .expect("midds genesis");
     let mut ext = sp_io::TestExternalities::new(t);
     ext.execute_with(|| System::set_block_number(1));
     ext

@@ -73,7 +73,7 @@ n'est **pas** vérifié on-chain. Vérificateurs warning-only :
 | Type | Définition canonique | Validation |
 |---|---|---|
 | `Title` | `MiddsString<256>` (`TITLE_MAX_LEN = 256`) | non-vide quand obligatoire ; longueur **S** |
-| `PartyId` | `enum { Ipi(Ipi) \| Isni(Isni) }` — **exactement un** des deux | structure de l'identifiant choisi. Le variant `Both{ipi,isni}` de l'ancien modèle est **supprimé** (décision V1) |
+| `PartyId` | `enum { Ipi(Ipi) \| Isni(Isni) \| Both { ipi: Ipi, isni: Isni } }` — au moins l'un des deux identifiants | structure de chaque identifiant présent (les deux pour `Both`). Le variant `Both` a été **réintroduit** (cf. §7 — un même intervenant peut porter IPI et ISNI simultanément ; représentation native plus fidèle que deux entrées dupliquées) |
 | `MusicalKey` | `{ pitch: PitchClass(12), mode: Mode(2) }` = 24 combinaisons | appartenance **S**. Remplace la liste plate de 42 clés enharmoniques de l'ancien front (`Asm`,`Cb`,`Es`,`Fb`…) — décision V1 |
 | `WorkRef` | `enum { Midds(u64) \| Iswc(Iswc) }` | si `Iswc` ⇒ structure ISWC |
 | `RecordingRef` | `enum { Midds(u64) \| Isrc(Isrc) }` | si `Isrc` ⇒ structure ISRC |
@@ -97,7 +97,7 @@ identique à l'ancien front).
 | `bpm` | `Option<u16>` | non | — | si `Some` ⇒ **`20..=300`** | **N** |
 | `key` | `Option<MusicalKey>` | non | — | appartenance | S |
 | `work_type` | `WorkType` | oui | — | voir ci-dessous | |
-| `creators` | `Creators` | oui | ≤ 32 (`CREATORS_MAX`) | **non-vide** ; chaque `id` : structure | = |
+| `creators` | `Creators` | oui | ≤ 32 (`CREATORS_MAX`) | **non-vide** ; chaque entrée : voir `Creator` ci-dessous | = |
 | `classical_info` | `Option<ClassicalInfo>` | non | — | voir ci-dessous | |
 | `offchain_extension` | `Option<OffchainHash>` | non | ≤ 64 | si `Some` ⇒ non-vide | = |
 
@@ -117,9 +117,17 @@ identique à l'ancien front).
 | `catalog_number` | `Option<MiddsString<32>>` (`CATALOG_NUMBER_MAX_LEN = 32`) | ≤ 32 | si `Some` ⇒ non-vide | = |
 | `number_of_voices` | `Option<u16>` | — | si `Some` ⇒ **`>= 1`** | **N** |
 
-`CreatorRole` : 5 valeurs (cf. §3). Plusieurs rôles pour une même partie =
-plusieurs entrées `Creator` partageant le même `PartyId` (l'ancien front
-fusionnait par `PartyId` ; côté on-chain c'est une liste plate).
+**`Creator`** : `{ roles: BoundedBTreeSet<CreatorRole, 5> (CREATOR_ROLES_MAX),
+party: PartyId }`. `roles` est un **ensemble borné** (`BoundedBTreeSet`) :
+les doublons sont impossibles à construire, le SCALE itère en ordre canonique
+(`Ord` sur les discriminants), la cardinalité maximale est exactement le
+nombre de variants `CreatorRole` (5). Validation on-chain : `roles` non-vide
+(`EmptyMandatoryField`) ; `party` valide selon `PartyId` (`Ipi`, `Isni`, ou
+`Both` — chaque identifiant présent doit passer sa propre structure). **Note
+de réconciliation** : l'ancien front fusionnait les rôles par `PartyId` ; le
+SDK V1 initial avait inverti ce choix en aplatissant la liste (plusieurs
+entrées `Creator` pour le même `PartyId`) — la version stabilisée ci-dessus
+revient à la fusion, plus économique en SCALE et plus fidèle au modèle métier.
 
 > Convention *builder-side uniquement* (non bloquante on-chain, à surfacer en
 > warning dans `midds-validate`) : `instrumental == true` ⇒ `language` devrait
@@ -219,24 +227,35 @@ Décisions explicites, figées, à ne pas « corriger » sans bump de version :
 2. **`Recording.duration` sans plafond** : `Option<u32>` en secondes
    (≈ 136 ans). L'ancien front plafonnait à 65535 s (18:12:15). Le SDK
    conserve `u32` délibérément — pas de plafond on-chain.
-3. **`PartyId` sans variant `Both`** : l'ancien modèle permettait
-   `Both{ipi,isni}`. V1 = `Ipi | Isni` strictement. Une partie identifiée à
-   la fois par IPI et ISNI n'expose qu'un identifiant on-chain.
-4. **`MusicalKey` structuré** (`PitchClass × Mode`, 24) au lieu des 42 clés
+3. **`PartyId` avec variant `Both`** : V1 stabilisée = `Ipi | Isni | Both {
+   ipi, isni }`. Le variant `Both` avait initialement été supprimé de la V1
+   draft (par symétrie avec d'autres choix slimmés), puis **réintroduit** :
+   un même intervenant porte fréquemment IPI (CISAC) et ISNI (ISO) ; les
+   fusionner dans une seule structure on-chain économise du SCALE par
+   rapport à deux `Creator` dupliqués pointant la même personne, et restitue
+   la sémantique du domaine. Validation : chaque sous-identifiant présent
+   passe son `validate_*_format`.
+4. **`Creator` fusionne les rôles dans un `BoundedBTreeSet`** : la V1 draft
+   représentait « plusieurs rôles pour la même partie » via une liste plate
+   de `Creator` partageant le même `PartyId`. V1 stabilisée = un seul
+   `Creator { roles: Set, party }` par intervenant — encodage plus compact,
+   pas de doublons à valider, ordre canonique stable côté SCALE.
+5. **`MusicalKey` structuré** (`PitchClass × Mode`, 24) au lieu des 42 clés
    plates avec enharmonies de l'ancien front (`Asm`, `Cb`, `Es`, `Fb`…).
-5. **Enums slimmés** : `Genre` 25 (vs ≈160), `RecordingVersion` 13 (vs 21),
+6. **Enums slimmés** : `Genre` 25 (vs ≈160), `RecordingVersion` 13 (vs 21),
    `ReleaseFormat` 11 (vs 63), `ReleasePackaging` 9 (vs 17), `ReleaseStatus`
    7 (vs 10), `ReleaseType` 11 (vs 6, redéfini). Granularité fine =
    version payload future, pas un arbre de sous-types.
-6. **Bornes de cardinalité/longueur serrées** : l'ancien front était très
+7. **Bornes de cardinalité/longueur serrées** : l'ancien front était très
    permissif (souvent 512 pour les listes de parties, 128–256 pour les
    chaînes libres). Le SDK retient des bornes optimisées pour le coût
-   on-chain (`CREATORS_MAX = 32`, `PERFORMERS_MAX = 64`,
-   `PRODUCERS_MAX = 8/16`, `CONTRIBUTORS_MAX = 32`, `OPUS/CATALOG = 32`,
-   `PLACE = 128`, `DISTRIBUTOR/COVER_NAME = 128`, `TITLE_ALIASES = 8`,
-   `GENRES = 8`, `TRACKS = 256`, `COVER_CONTRIBUTORS = 16`). Ces valeurs
-   sont la référence ; les chiffres de l'ancien front (UI-only) sont obsolètes.
-7. **Convention `instrumental ⇒ language = None`** : non bloquante on-chain
+   on-chain (`CREATORS_MAX = 32`, `CREATOR_ROLES_MAX = 5`,
+   `PERFORMERS_MAX = 64`, `PRODUCERS_MAX = 8/16`, `CONTRIBUTORS_MAX = 32`,
+   `OPUS/CATALOG = 32`, `PLACE = 128`, `DISTRIBUTOR/COVER_NAME = 128`,
+   `TITLE_ALIASES = 8`, `GENRES = 8`, `TRACKS = 256`,
+   `COVER_CONTRIBUTORS = 16`). Ces valeurs sont la référence ; les chiffres
+   de l'ancien front (UI-only) sont obsolètes.
+8. **Convention `instrumental ⇒ language = None`** : non bloquante on-chain
    (le validateur ne la teste pas), à exposer en warning côté
    `midds-validate`.
 

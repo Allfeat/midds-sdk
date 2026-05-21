@@ -105,10 +105,18 @@ pub struct MusicalKey {
     pub mode: Mode,
 }
 
-/// External identifier of a natural or legal person: either an IPI or an
-/// ISNI code. Generalises what `MusicalWork` historically called
-/// `CreatorId` (kept as a type alias for source compatibility) and backs
-/// `Recording`'s artist / performers / contributors.
+/// External identifier of a natural or legal person: an IPI, an ISNI, or
+/// **both** when the same party is referenced under the two registries
+/// simultaneously (a composer with a CISAC IPI *and* an ISO ISNI is the
+/// common case). Backs `MusicalWork.creators[*].party`, `Recording`'s
+/// artist / performers / contributors, and `Release.artist`.
+///
+/// The `Both` variant was deliberately *re-introduced* relative to the
+/// initial V1 draft: the on-chain representation is the place where the
+/// two identifiers can be linked in a single registration, so collapsing
+/// them into a single `PartyId` is more faithful to the underlying party
+/// than two duplicated entries across a creators list. See
+/// `docs/validation.md` §3 / §7.
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
@@ -116,6 +124,12 @@ pub struct MusicalKey {
 pub enum PartyId {
     Ipi(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipi),
     Isni(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Isni),
+    Both {
+        #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
+        ipi: Ipi,
+        #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
+        isni: Isni,
+    },
 }
 
 impl PartyId {
@@ -123,6 +137,10 @@ impl PartyId {
         match self {
             Self::Ipi(v) => validate_ipi_format(v),
             Self::Isni(v) => validate_isni_format(v),
+            Self::Both { ipi, isni } => {
+                validate_ipi_format(ipi)?;
+                validate_isni_format(isni)
+            }
         }
     }
 }

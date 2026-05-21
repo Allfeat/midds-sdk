@@ -9,8 +9,8 @@
 use frame_support::BoundedVec;
 use midds_traits::{Iswc, OffchainHash};
 use midds_types::{
-    CatalogNumber, ClassicalInfo, Creator, Creators, Language, MusicalKey, MusicalWork,
-    MusicalWorkV1, Opus, Title, WorkType,
+    CatalogNumber, ClassicalInfo, Creator, CreatorRoles, Creators, Language, MusicalKey,
+    MusicalWork, MusicalWorkV1, Opus, Title, WorkType,
 };
 
 /// Fluent builder over already-canonical inputs.
@@ -38,9 +38,13 @@ impl MusicalWorkBuilder {
     /// `Midds::validate_format` accepts.
     pub fn new() -> Self {
         let default_iswc = crate::identifiers::iswc_for_index(0);
+        let mut default_roles = CreatorRoles::new();
+        default_roles
+            .try_insert(midds_types::CreatorRole::Composer)
+            .expect("1 role < CREATOR_ROLES_MAX");
         let default_creator = Creator {
-            role: midds_types::CreatorRole::Composer,
-            id: midds_types::CreatorId::Ipi(crate::identifiers::ipi_from_stem(123_456_789, 9)),
+            roles: default_roles,
+            party: midds_types::PartyId::Ipi(crate::identifiers::ipi_from_stem(123_456_789, 9)),
         };
         Self {
             iswc: default_iswc,
@@ -169,7 +173,15 @@ impl Default for MusicalWorkBuilder {
 mod tests {
     use super::*;
     use midds_traits::Midds as _;
-    use midds_types::{CreatorId, CreatorRole};
+    use midds_types::{CreatorRole, CreatorRoles, PartyId};
+
+    fn roles<const N: usize>(rs: [CreatorRole; N]) -> CreatorRoles {
+        let mut set = CreatorRoles::new();
+        for r in rs {
+            set.try_insert(r).expect("role within bound");
+        }
+        set
+    }
 
     #[test]
     fn default_builder_validates() {
@@ -202,8 +214,8 @@ mod tests {
     #[test]
     fn add_creator_appends() {
         let extra = Creator {
-            role: CreatorRole::Author,
-            id: CreatorId::Ipi(crate::identifiers::ipi_from_stem(987_654_321, 10)),
+            roles: roles([CreatorRole::Author]),
+            party: PartyId::Ipi(crate::identifiers::ipi_from_stem(987_654_321, 10)),
         };
         let work = MusicalWorkBuilder::new().add_creator(extra).build();
         let MusicalWork::V1(v) = work;

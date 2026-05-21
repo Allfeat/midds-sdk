@@ -20,12 +20,18 @@ use midds_types::{
 use crate::create::prompts;
 use crate::ui;
 
-/// A party identifier (IPI or ISNI). Backs `artist`, every `creator`,
-/// `performers`, `contributors`.
+/// A party identifier — IPI, ISNI, or both. Backs `artist`, every `creator`,
+/// `performers`, `contributors`. The `Both` choice gets two consecutive
+/// identifier prompts and yields `PartyId::Both { ipi, isni }`; the single-id
+/// choices stay one-prompt wide for the fast path.
 pub fn party_id(label: &str) -> Result<PartyId> {
     match prompts::select(
         label,
-        &[("IPI — 9–11 digits", 0u8), ("ISNI — 16 chars", 1u8)],
+        &[
+            ("IPI — 9–11 digits", 0u8),
+            ("ISNI — 16 chars", 1u8),
+            ("Both — IPI + ISNI", 2u8),
+        ],
         0,
     )? {
         0 => Ok(PartyId::Ipi(prompts::identifier::<11>(
@@ -33,11 +39,15 @@ pub fn party_id(label: &str) -> Result<PartyId> {
             validate_ipi_format,
             "00052210040",
         )?)),
-        _ => Ok(PartyId::Isni(prompts::identifier::<16>(
+        1 => Ok(PartyId::Isni(prompts::identifier::<16>(
             "ISNI",
             validate_isni_format,
             "0000000121032683",
         )?)),
+        _ => Ok(PartyId::Both {
+            ipi: prompts::identifier::<11>("IPI", validate_ipi_format, "00052210040")?,
+            isni: prompts::identifier::<16>("ISNI", validate_isni_format, "0000000121032683")?,
+        }),
     }
 }
 

@@ -1,4 +1,4 @@
-use bounded_collections::{BoundedVec, ConstU32};
+use bounded_collections::{BoundedBTreeSet, BoundedVec, ConstU32};
 use midds_traits::{
     Iswc, MiddsFormatError, MiddsString, OffchainHash, validate_iswc_format, validate_offchain_hash,
 };
@@ -6,13 +6,16 @@ use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 use crate::language::Language;
-use crate::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
+use crate::shared::{BPM_MAX, BPM_MIN, PartyId, YEAR_MAX, YEAR_MIN};
 
-pub use crate::shared::PartyId as CreatorId;
 pub use crate::shared::{Mode, MusicalKey, PitchClass, TITLE_MAX_LEN, Title};
 
 /// Maximum number of creators attached to a work.
 pub const CREATORS_MAX: u32 = 32;
+/// Maximum number of distinct roles attributable to a single creator. Equal
+/// to the cardinality of [`CreatorRole`] — a creator cannot hold the same
+/// role twice, and there are five role variants.
+pub const CREATOR_ROLES_MAX: u32 = 5;
 /// Maximum byte length of an opus designation (e.g. "Op. 27 No. 2").
 pub const OPUS_MAX_LEN: u32 = 32;
 /// Maximum byte length of a thematic catalogue number (e.g. "BWV 565", "K. 545").
@@ -21,6 +24,7 @@ pub const CATALOG_NUMBER_MAX_LEN: u32 = 32;
 pub const WORK_REFERENCES_MAX: u32 = 32;
 
 pub type Creators = BoundedVec<Creator, ConstU32<CREATORS_MAX>>;
+pub type CreatorRoles = BoundedBTreeSet<CreatorRole, ConstU32<CREATOR_ROLES_MAX>>;
 pub type Opus = MiddsString<OPUS_MAX_LEN>;
 pub type CatalogNumber = MiddsString<CATALOG_NUMBER_MAX_LEN>;
 pub type WorkReferences = BoundedVec<Iswc, ConstU32<WORK_REFERENCES_MAX>>;
@@ -56,7 +60,9 @@ pub enum WorkType {
     ),
 }
 
-/// Role attributed to a creator within a work.
+/// Role attributed to a creator within a work. Derives `Ord` on the
+/// declaration order so [`CreatorRoles`] (the bounded BTreeSet wrapping
+/// these) iterates and SCALE-serialises in a canonical order.
 #[derive(
     Encode,
     Decode,
@@ -67,6 +73,8 @@ pub enum WorkType {
     Copy,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -78,19 +86,30 @@ pub enum CreatorRole {
     Publisher,
 }
 
-/// A creator attached to a work, with their role and external identifier.
+/// A creator attached to a work: the party (one or both of IPI / ISNI)
+/// and the set of roles that party holds for this work.
+///
+/// `roles` is a [`BoundedBTreeSet`] rather than a plain list — a same
+/// creator cannot legitimately hold the same role twice, and the set
+/// shape removes the cross-validation we would otherwise need to forbid
+/// duplicates. The set is also iterated in canonical order (the `Ord`
+/// derivation on `CreatorRole`), so two semantically-equal `Creator`s
+/// always encode identically.
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Creator {
-    pub role: CreatorRole,
-    pub id: CreatorId,
+    pub roles: CreatorRoles,
+    pub party: PartyId,
 }
 
 impl Creator {
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
-        self.id.validate_format()
+        if self.roles.is_empty() {
+            return Err(MiddsFormatError::EmptyMandatoryField);
+        }
+        self.party.validate_format()
     }
 }
 
@@ -214,6 +233,17 @@ mod tests {
         BoundedVec::try_from(b"T0000000000".to_vec()).expect("11-byte ISWC")
     }
 
+    /// Builds a [`CreatorRoles`] from a static set of roles. Tests stay
+    /// readable with `roles_set([CreatorRole::Composer])` instead of the
+    /// raw `BoundedBTreeSet::try_insert` plumbing.
+    fn roles_set<const N: usize>(roles: [CreatorRole; N]) -> CreatorRoles {
+        let mut set = CreatorRoles::new();
+        for r in roles {
+            set.try_insert(r).expect("role within bound");
+        }
+        set
+    }
+
     /// Minimal payload that passes `validate_format` — each test mutates one
     /// field to probe a single rule.
     fn base() -> MusicalWorkV1 {
@@ -227,8 +257,8 @@ mod tests {
             key: None,
             work_type: WorkType::Original,
             creators: BoundedVec::try_from(vec![Creator {
-                role: CreatorRole::Composer,
-                id: CreatorId::Ipi(
+                roles: roles_set([CreatorRole::Composer]),
+                party: PartyId::Ipi(
                     BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI"),
                 ),
             }])

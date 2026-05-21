@@ -1,9 +1,9 @@
 pub mod v1;
 
 pub use v1::{
-    CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, CatalogNumber, ClassicalInfo, Creator, CreatorId,
-    CreatorRole, Creators, Mode, MusicalKey, MusicalWorkV1, OPUS_MAX_LEN, Opus, PitchClass,
-    TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
+    CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, CatalogNumber, ClassicalInfo, Creator,
+    CreatorRole, CreatorRoles, Creators, Mode, MusicalKey, MusicalWorkV1, OPUS_MAX_LEN, Opus,
+    PitchClass, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
 };
 
 use midds_traits::{Iswc, Midds, MiddsFormatError};
@@ -48,23 +48,32 @@ impl Midds for MusicalWork {
 mod tests {
     use super::*;
     use crate::language::Language;
+    use crate::shared::PartyId;
     use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
         BoundedVec::try_from(s.to_vec()).expect("bounded vec build")
     }
 
+    fn roles_set<const N: usize>(roles: [CreatorRole; N]) -> CreatorRoles {
+        let mut set = CreatorRoles::new();
+        for r in roles {
+            set.try_insert(r).expect("role within bound");
+        }
+        set
+    }
+
     fn ipi_creator(ipi: &[u8]) -> Creator {
         Creator {
-            role: CreatorRole::Composer,
-            id: CreatorId::Ipi(bv::<11>(ipi)),
+            roles: roles_set([CreatorRole::Composer]),
+            party: PartyId::Ipi(bv::<11>(ipi)),
         }
     }
 
     fn isni_creator(isni: &[u8]) -> Creator {
         Creator {
-            role: CreatorRole::Author,
-            id: CreatorId::Isni(bv::<16>(isni)),
+            roles: roles_set([CreatorRole::Author]),
+            party: PartyId::Isni(bv::<16>(isni)),
         }
     }
 
@@ -284,10 +293,19 @@ mod json_tests {
 
     use super::*;
     use crate::language::Language;
+    use crate::shared::PartyId;
     use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
         BoundedVec::try_from(s.to_vec()).expect("bounded vec build")
+    }
+
+    fn roles_set<const N: usize>(roles: [CreatorRole; N]) -> CreatorRoles {
+        let mut set = CreatorRoles::new();
+        for r in roles {
+            set.try_insert(r).expect("role within bound");
+        }
+        set
     }
 
     fn minimal_v1() -> MusicalWorkV1 {
@@ -304,8 +322,8 @@ mod json_tests {
             }),
             work_type: WorkType::Original,
             creators: BoundedVec::try_from(vec![Creator {
-                role: CreatorRole::Composer,
-                id: CreatorId::Ipi(bv(b"123456789")),
+                roles: roles_set([CreatorRole::Composer]),
+                party: PartyId::Ipi(bv(b"123456789")),
             }])
             .unwrap(),
             classical_info: None,
@@ -327,8 +345,11 @@ mod json_tests {
         assert_eq!(json["key"]["pitch"], "C");
         assert_eq!(json["key"]["mode"], "Major");
         assert_eq!(json["work_type"], "Original");
-        assert_eq!(json["creators"][0]["role"], "Composer");
-        assert_eq!(json["creators"][0]["id"]["Ipi"], "123456789");
+        assert_eq!(
+            json["creators"][0]["roles"],
+            serde_json::json!(["Composer"])
+        );
+        assert_eq!(json["creators"][0]["party"]["Ipi"], "123456789");
         assert!(json["classical_info"].is_null());
         assert!(json["offchain_extension"].is_null());
     }
@@ -355,12 +376,17 @@ mod json_tests {
         v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
         v.creators = BoundedVec::try_from(vec![
             Creator {
-                role: CreatorRole::Author,
-                id: CreatorId::Isni(bv(b"0000000121032683")),
+                roles: roles_set([CreatorRole::Author]),
+                party: PartyId::Isni(bv(b"0000000121032683")),
             },
             Creator {
-                role: CreatorRole::Composer,
-                id: CreatorId::Ipi(bv(b"123456789")),
+                // Two roles + both identifiers — exercises the V1-breaking
+                // shape (multi-role set + Both variant) in the JSON snapshot.
+                roles: roles_set([CreatorRole::Composer, CreatorRole::Arranger]),
+                party: PartyId::Both {
+                    ipi: bv(b"123456789"),
+                    isni: bv(b"0000000121032683"),
+                },
             },
         ])
         .unwrap();
@@ -374,8 +400,18 @@ mod json_tests {
         assert_eq!(json["classical_info"]["catalog_number"], "K. 545");
         assert_eq!(json["classical_info"]["number_of_voices"], 4);
         assert_eq!(json["offchain_extension"], "bafkreigh2akiscaildc");
-        assert_eq!(json["creators"][0]["id"]["Isni"], "0000000121032683");
-        assert_eq!(json["creators"][1]["id"]["Ipi"], "123456789");
+        assert_eq!(json["creators"][0]["party"]["Isni"], "0000000121032683");
+        // BoundedBTreeSet serialises in `Ord` order — `Composer` < `Arranger`
+        // by declaration index (1 < 2), so the JSON array reflects that.
+        assert_eq!(
+            json["creators"][1]["roles"],
+            serde_json::json!(["Composer", "Arranger"])
+        );
+        assert_eq!(json["creators"][1]["party"]["Both"]["ipi"], "123456789");
+        assert_eq!(
+            json["creators"][1]["party"]["Both"]["isni"],
+            "0000000121032683"
+        );
     }
 
     #[test]
@@ -404,7 +440,7 @@ mod json_tests {
             "creation_year":2024,
             "instrumental":false,
             "work_type":"Original",
-            "creators":[{"role":"Composer","id":{"Ipi":"123456789"}}]
+            "creators":[{"roles":["Composer"],"party":{"Ipi":"123456789"}}]
         }"#;
         let r: Result<MusicalWork, _> = serde_json::from_str(bad);
         assert!(r.is_err(), "expected length-bound rejection");
@@ -419,7 +455,7 @@ mod json_tests {
             "creation_year":2024,
             "instrumental":false,
             "work_type":"Original",
-            "creators":[{"role":"Composer","id":{"Ipi":"123456789"}}]
+            "creators":[{"roles":["Composer"],"party":{"Ipi":"123456789"}}]
         }"#;
         let r: Result<MusicalWork, _> = serde_json::from_str(bad);
         assert!(r.is_err(), "unknown version must be rejected");

@@ -24,7 +24,7 @@ use midds_types::{
 };
 use proptest::prelude::*;
 
-use crate::identifiers::{isni_from_body, isrc_for_index};
+use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index};
 use crate::musical_work::strategy::{arb_isni, arb_offchain_hash, arb_title};
 use crate::recording::strategy::arb_party_id;
 
@@ -261,7 +261,7 @@ pub fn arb_release() -> impl Strategy<Value = Release> {
 ///
 /// Every bounded field is filled to its bound and every `Option` is `Some`,
 /// using the larger enum variant wherever a choice exists: `artist` as
-/// `PartyId::Isni` (17 bytes vs 12 for IPI), every track as
+/// `PartyId::Both` (30 bytes vs ≤ 18 for single-id), every track as
 /// `RecordingRef::Isrc` (14 bytes vs 9 for the MIDDS id). The byte content is
 /// randomised so shrinking still has work to do.
 pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
@@ -273,6 +273,7 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
             TITLE_ALIASES_MAX as usize,
         ),
         any::<[u8; 15]>(),
+        any::<u64>(),
         proptest::collection::vec(any::<u32>(), TRACKS_MAX as usize),
         proptest::collection::vec(
             (
@@ -294,6 +295,7 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                 title,
                 aliases,
                 artist_body,
+                artist_stem,
                 track_idxs,
                 producer_bodies,
                 distributor,
@@ -325,7 +327,10 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                     upc: BoundedVec::try_from(upc).expect("13-byte upc at bound"),
                     title,
                     title_aliases: BoundedVec::try_from(title_aliases).expect("aliases at bound"),
-                    artist: PartyId::Isni(isni_from_body(artist_body)),
+                    artist: PartyId::Both {
+                        ipi: ipi_from_stem(artist_stem, 11),
+                        isni: isni_from_body(artist_body),
+                    },
                     tracks: BoundedVec::try_from(tracks).expect("tracks at bound"),
                     producers: BoundedVec::try_from(producers).expect("producers at bound"),
                     status: ReleaseStatus::Official,

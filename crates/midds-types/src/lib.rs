@@ -10,9 +10,10 @@ pub mod shared;
 pub use country::Country;
 pub use language::Language;
 pub use musical_work::{
-    CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, CatalogNumber, ClassicalInfo, Creator, CreatorId,
-    CreatorRole, Creators, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, Opus,
-    PitchClass, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
+    CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, CatalogNumber, ClassicalInfo, Creator,
+    CreatorRole, CreatorRoles, Creators, Mode, MusicalKey, MusicalWork, MusicalWorkV1,
+    OPUS_MAX_LEN, Opus, PitchClass, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences,
+    WorkType,
 };
 pub use recording::{
     CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,

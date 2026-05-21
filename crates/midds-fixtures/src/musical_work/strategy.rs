@@ -13,13 +13,14 @@ use frame_support::BoundedVec;
 use midds_traits::{Isrc, Iswc, MiddsFormatError, OffchainHash};
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
-    CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorId, CreatorRole, Creators,
-    Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, PitchClass,
-    TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
+    CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole,
+    CreatorRoles, Creators, Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN,
+    PartyId, PitchClass, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
 };
 use proptest::prelude::*;
 
 use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code};
+use crate::recording::strategy::arb_party_id;
 
 /// Strategy producing checksum-correct ISWCs.
 pub fn arb_iswc() -> impl Strategy<Value = Iswc> {
@@ -138,15 +139,29 @@ pub fn arb_creator_role() -> impl Strategy<Value = CreatorRole> {
     ]
 }
 
-pub fn arb_creator_id() -> impl Strategy<Value = CreatorId> {
-    prop_oneof![
-        arb_ipi().prop_map(CreatorId::Ipi),
-        arb_isni().prop_map(CreatorId::Isni),
-    ]
+/// Strategy producing a non-empty [`CreatorRoles`] set (1..=`CREATOR_ROLES_MAX`
+/// distinct roles). The bounded BTreeSet rejects duplicates by construction,
+/// so the input vector is deduplicated via the set rather than via a
+/// `prop_filter` (which would slow shrinking).
+pub fn arb_creator_roles() -> impl Strategy<Value = CreatorRoles> {
+    proptest::collection::vec(arb_creator_role(), 1..=(CREATOR_ROLES_MAX as usize)).prop_map(
+        |roles| {
+            let mut set = CreatorRoles::new();
+            for r in roles {
+                // Ignore failure: a duplicate insert returns `Ok(false)`,
+                // a full-set insert returns `Err(value)`. Either way the
+                // resulting set has between 1 and CREATOR_ROLES_MAX entries.
+                let _ = set.try_insert(r);
+            }
+            // Vec was non-empty, all branches above retain at least one role.
+            debug_assert!(!set.is_empty());
+            set
+        },
+    )
 }
 
 pub fn arb_creator() -> impl Strategy<Value = Creator> {
-    (arb_creator_role(), arb_creator_id()).prop_map(|(role, id)| Creator { role, id })
+    (arb_creator_roles(), arb_party_id()).prop_map(|(roles, party)| Creator { roles, party })
 }
 
 /// Strategy producing 1..=`CREATORS_MAX` creators (always non-empty so
@@ -246,30 +261,50 @@ pub fn arb_musical_work() -> impl Strategy<Value = MusicalWork> {
 
 /// Strategy producing payloads saturated to `MaxEncodedLen`.
 ///
-/// Every bounded field is filled to its bound: `title` to `TITLE_MAX_LEN`,
-/// `creators` to `CREATORS_MAX` ISNI entries (the larger `CreatorId` variant —
-/// 17 bytes vs 12 for IPI), `classical_info` populated with max-size `opus`
-/// and `catalog_number`, off-chain hash at 64 bytes, work type set to Medley
-/// with `WORK_REFERENCES_MAX` refs (the largest variant). The byte content
-/// is randomised so shrinking still has work to do.
+/// Every bounded field is filled to its bound: `title` to `TITLE_MAX_LEN`;
+/// `creators` to `CREATORS_MAX` entries, each carrying the full
+/// `CREATOR_ROLES_MAX` (= 5) distinct roles and the `PartyId::Both` variant
+/// (the largest of the three — full 11-byte IPI + 16-byte ISNI ≈ 30 bytes
+/// vs ≤ 18 for the single-id variants); `classical_info` populated with
+/// max-size `opus` and `catalog_number`; off-chain hash at 64 bytes; work
+/// type set to Medley with `WORK_REFERENCES_MAX` refs (the largest variant).
+/// The byte content is randomised so shrinking still has work to do.
 pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
     (
         arb_iswc(),
         proptest::collection::vec(printable_ascii(), TITLE_MAX_LEN as usize),
         proptest::collection::vec(any::<[u8; 15]>(), CREATORS_MAX as usize),
+        proptest::collection::vec(any::<u64>(), CREATORS_MAX as usize),
         proptest::collection::vec(printable_ascii(), OPUS_MAX_LEN as usize),
         proptest::collection::vec(printable_ascii(), CATALOG_NUMBER_MAX_LEN as usize),
         proptest::collection::vec(printable_ascii(), 64usize),
         proptest::collection::vec(0u32..1_000_000_000u32, WORK_REFERENCES_MAX as usize),
     )
         .prop_map(
-            |(iswc, title, isni_bodies, opus, catalog, hash, work_codes)| {
+            |(iswc, title, isni_bodies, ipi_stems, opus, catalog, hash, work_codes)| {
                 let title = BoundedVec::try_from(title).expect("title at bound");
+                let all_roles = {
+                    let mut set = CreatorRoles::new();
+                    for r in [
+                        CreatorRole::Author,
+                        CreatorRole::Composer,
+                        CreatorRole::Arranger,
+                        CreatorRole::Adapter,
+                        CreatorRole::Publisher,
+                    ] {
+                        set.try_insert(r).expect("role within CREATOR_ROLES_MAX");
+                    }
+                    set
+                };
                 let creators: Vec<Creator> = isni_bodies
                     .into_iter()
-                    .map(|body| Creator {
-                        role: CreatorRole::Composer,
-                        id: CreatorId::Isni(isni_from_body(body)),
+                    .zip(ipi_stems)
+                    .map(|(body, stem)| Creator {
+                        roles: all_roles.clone(),
+                        party: PartyId::Both {
+                            ipi: ipi_from_stem(stem, 11),
+                            isni: isni_from_body(body),
+                        },
                     })
                     .collect();
                 let creators = BoundedVec::try_from(creators).expect("creators at bound");

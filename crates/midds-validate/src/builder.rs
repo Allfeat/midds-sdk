@@ -16,8 +16,8 @@ use std::sync::LazyLock;
 use bounded_collections::BoundedVec;
 use midds_traits::{Iswc, OffchainHash};
 use midds_types::{
-    CREATORS_MAX, Creator, CreatorId, CreatorRole, Language, MusicalKey, MusicalWork,
-    MusicalWorkV1, TITLE_MAX_LEN, WorkType,
+    CREATORS_MAX, Creator, CreatorRole, CreatorRoles, Language, MusicalKey, MusicalWork,
+    MusicalWorkV1, PartyId, TITLE_MAX_LEN, WorkType,
 };
 
 use crate::error::{BuildError, FieldError};
@@ -57,18 +57,19 @@ pub struct MusicalWorkBuilder {
     offchain_extension_raw: Option<String>,
 }
 
+/// A creator the user is composing for a `MusicalWork`. Holds the roles
+/// they intend to attribute plus the raw identifier inputs (IPI, ISNI, or
+/// both) — each parsed/validated only at build time so that every failure
+/// surfaces in one [`BuildError::Fields`] pass.
 #[derive(Debug, Clone)]
 struct CreatorInput {
-    role: CreatorRole,
-    /// Raw IPI / ISNI as typed by the user.
-    id: String,
-    kind: CreatorIdKind,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum CreatorIdKind {
-    Ipi,
-    Isni,
+    /// Roles attributed to the creator. Must be non-empty at build time;
+    /// duplicates are silently deduplicated by the [`CreatorRoles`] set.
+    roles: Vec<CreatorRole>,
+    /// Raw IPI input, if any.
+    ipi_raw: Option<String>,
+    /// Raw ISNI input, if any.
+    isni_raw: Option<String>,
 }
 
 impl MusicalWorkBuilder {
@@ -122,7 +123,8 @@ impl MusicalWorkBuilder {
     }
 
     /// Append a creator with explicit IPI input (any [`parse_ipi`]-accepted
-    /// format).
+    /// format) and a single `Composer` role — convenience for the most
+    /// common case.
     pub fn add_creator(self, ipi: &str) -> Self {
         self.add_creator_with_role(CreatorRole::Composer, ipi)
     }
@@ -130,19 +132,37 @@ impl MusicalWorkBuilder {
     /// Append a creator with an explicit role and IPI input.
     pub fn add_creator_with_role(mut self, role: CreatorRole, ipi: &str) -> Self {
         self.creators_raw.push(CreatorInput {
-            role,
-            id: ipi.to_string(),
-            kind: CreatorIdKind::Ipi,
+            roles: vec![role],
+            ipi_raw: Some(ipi.to_string()),
+            isni_raw: None,
         });
         self
     }
 
-    /// Append a creator identified by an ISNI.
+    /// Append a creator identified by an ISNI with a single role.
     pub fn add_creator_isni(mut self, role: CreatorRole, isni: &str) -> Self {
         self.creators_raw.push(CreatorInput {
-            role,
-            id: isni.to_string(),
-            kind: CreatorIdKind::Isni,
+            roles: vec![role],
+            ipi_raw: None,
+            isni_raw: Some(isni.to_string()),
+        });
+        self
+    }
+
+    /// Append a creator carrying any combination of roles and either or both
+    /// identifiers. At build time the roles list must be non-empty and at
+    /// least one of `ipi` / `isni` must be supplied; otherwise the call
+    /// surfaces as a `creators[i]` field error.
+    pub fn add_creator_full(
+        mut self,
+        roles: Vec<CreatorRole>,
+        ipi: Option<&str>,
+        isni: Option<&str>,
+    ) -> Self {
+        self.creators_raw.push(CreatorInput {
+            roles,
+            ipi_raw: ipi.map(str::to_string),
+            isni_raw: isni.map(str::to_string),
         });
         self
     }
@@ -212,19 +232,83 @@ impl MusicalWorkBuilder {
 
         let mut creators = Vec::with_capacity(self.creators_raw.len());
         for (i, input) in self.creators_raw.iter().enumerate() {
-            let parsed = match input.kind {
-                CreatorIdKind::Ipi => parse_ipi(&input.id).map(CreatorId::Ipi),
-                CreatorIdKind::Isni => parse_isni(&input.id).map(CreatorId::Isni),
+            let field = creator_field_name(i);
+            // Parse each supplied identifier independently so the user gets
+            // every failure surfaced in one pass, then assemble the PartyId
+            // from whichever of the two parsed cleanly.
+            let ipi = match input.ipi_raw.as_deref() {
+                Some(raw) => match parse_ipi(raw) {
+                    Ok(v) => Some(Some(v)),
+                    Err(e) => {
+                        errors.push(FieldError {
+                            field,
+                            message: format!("ipi `{raw}`: {e}"),
+                        });
+                        None
+                    }
+                },
+                None => Some(None),
             };
-            match parsed {
-                Ok(id) => creators.push(Creator {
-                    role: input.role,
-                    id,
-                }),
-                Err(e) => errors.push(FieldError {
-                    field: creator_field_name(i),
-                    message: format!("`{}`: {e}", input.id),
-                }),
+            let isni = match input.isni_raw.as_deref() {
+                Some(raw) => match parse_isni(raw) {
+                    Ok(v) => Some(Some(v)),
+                    Err(e) => {
+                        errors.push(FieldError {
+                            field,
+                            message: format!("isni `{raw}`: {e}"),
+                        });
+                        None
+                    }
+                },
+                None => Some(None),
+            };
+            let mut role_set = CreatorRoles::new();
+            if input.roles.is_empty() {
+                errors.push(FieldError {
+                    field,
+                    message: "no role supplied — a creator needs at least one role".into(),
+                });
+            } else {
+                let mut overflowed = false;
+                for r in &input.roles {
+                    match role_set.try_insert(*r) {
+                        Ok(_) => {}
+                        Err(_) => overflowed = true,
+                    }
+                }
+                if overflowed {
+                    errors.push(FieldError {
+                        field,
+                        message: format!(
+                            "more than {} distinct roles supplied",
+                            midds_types::CREATOR_ROLES_MAX
+                        ),
+                    });
+                }
+            }
+            let party = match (ipi, isni) {
+                (Some(Some(ipi)), Some(Some(isni))) => Some(PartyId::Both { ipi, isni }),
+                (Some(Some(ipi)), Some(None)) => Some(PartyId::Ipi(ipi)),
+                (Some(None), Some(Some(isni))) => Some(PartyId::Isni(isni)),
+                (Some(None), Some(None)) => {
+                    errors.push(FieldError {
+                        field,
+                        message: "neither ipi nor isni supplied — a creator needs at least one"
+                            .into(),
+                    });
+                    None
+                }
+                // One of the two failed to parse — the FieldError is already
+                // recorded; nothing more to do for this creator.
+                _ => None,
+            };
+            if let Some(party) = party
+                && !role_set.is_empty()
+            {
+                creators.push(Creator {
+                    roles: role_set,
+                    party,
+                });
             }
         }
         let creators_bv = if creators.len() > CREATORS_MAX as usize {
@@ -364,8 +448,8 @@ mod tests {
 
 use midds_traits::Isni;
 use midds_types::{
-    CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId,
-    Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, WorkRef,
+    CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Place,
+    ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, WorkRef,
 };
 
 use crate::parse::parse_isrc;

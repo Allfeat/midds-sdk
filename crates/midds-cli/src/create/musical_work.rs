@@ -9,9 +9,9 @@ use anyhow::Result;
 use midds_traits::{Iswc, validate_iswc_format};
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
-    CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorId, CreatorRole, Creators,
-    MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkReferences,
-    WorkType,
+    CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole, CreatorRoles,
+    Creators, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, TITLE_MAX_LEN, WORK_REFERENCES_MAX,
+    WorkReferences, WorkType,
 };
 
 use crate::create::{prompts, shared};
@@ -111,8 +111,8 @@ fn build_creators() -> Result<Creators> {
         1,
         CREATORS_MAX as usize,
         |_| -> Result<Creator> {
-            let role = prompts::select(
-                "Role",
+            let chosen_roles = prompts::multi_select(
+                "Roles (space to toggle, enter to confirm — pick at least one)",
                 &[
                     ("Author", CreatorRole::Author),
                     ("Composer", CreatorRole::Composer),
@@ -122,8 +122,16 @@ fn build_creators() -> Result<Creators> {
                 ],
                 1,
             )?;
-            let id: CreatorId = shared::party_id("Creator identifier")?;
-            Ok(Creator { role, id })
+            let mut roles = CreatorRoles::new();
+            for r in chosen_roles {
+                // multi_select returns each variant at most once (one toggle
+                // per menu item), so try_insert can only ever fail on a bound
+                // overflow — and there are exactly CREATOR_ROLES_MAX (= 5)
+                // menu entries, so the bound holds.
+                roles.try_insert(r).expect("role within CREATOR_ROLES_MAX");
+            }
+            let party = shared::party_id("Creator identifier")?;
+            Ok(Creator { roles, party })
         },
     )?;
     Creators::try_from(creators).map_err(|_| anyhow::anyhow!("more than {CREATORS_MAX} creators"))

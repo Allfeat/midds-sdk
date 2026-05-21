@@ -10,7 +10,8 @@ pub mod strategy;
 pub use builder::MusicalWorkBuilder;
 
 use midds_types::{
-    Creator, CreatorId, CreatorRole, Language, Mode, MusicalKey, MusicalWork, PitchClass, WorkType,
+    Creator, CreatorRole, CreatorRoles, Language, Mode, MusicalKey, MusicalWork, PartyId,
+    PitchClass, WorkType,
 };
 use rand::Rng;
 #[cfg(feature = "corpus")]
@@ -87,13 +88,26 @@ pub fn random_with_iswc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Music
     let creators_count = rng.gen_range(1..=3usize);
     let mut creators = Vec::with_capacity(creators_count);
     for _ in 0..creators_count {
-        let role = pick_role(rng);
-        let id = if rng.r#gen::<bool>() {
-            CreatorId::Ipi(ipi_random(rng))
-        } else {
-            CreatorId::Isni(isni_random(rng))
+        // 1..=3 roles per creator — most parties hold a single role, but a
+        // minority hold two or three. Keeps determinism (uses the passed RNG)
+        // and exercises the BoundedBTreeSet encoding under a non-trivial size.
+        let roles_count = rng.gen_range(1..=3usize);
+        let mut roles = CreatorRoles::new();
+        // try_insert deduplicates by construction — we may end up with fewer
+        // distinct roles than requested, which is fine (the validator only
+        // forbids the empty set).
+        for _ in 0..roles_count {
+            let _ = roles.try_insert(pick_role(rng));
+        }
+        let party = match rng.gen_range(0..3u8) {
+            0 => PartyId::Ipi(ipi_random(rng)),
+            1 => PartyId::Isni(isni_random(rng)),
+            _ => PartyId::Both {
+                ipi: ipi_random(rng),
+                isni: isni_random(rng),
+            },
         };
-        creators.push(Creator { role, id });
+        creators.push(Creator { roles, party });
     }
 
     MusicalWorkBuilder::new()

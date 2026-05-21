@@ -14,7 +14,7 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use dialoguer::{Confirm, FuzzySelect, Input, Select};
+use dialoguer::{Confirm, FuzzySelect, Input, MultiSelect, Select};
 use midds_traits::{MiddsFormatError, MiddsString};
 
 use crate::ui;
@@ -161,6 +161,25 @@ pub fn select<T: Clone>(label: &str, choices: &[(&str, T)], default: usize) -> R
         .interact()
         .with_context(|| format!("pick `{label}`"))?;
     Ok(choices[idx].1.clone())
+}
+
+/// Multi-choice picker over labelled variants. Returns the chosen `T`s in
+/// menu order. Re-prompts until the user picks at least `min` entries —
+/// mandatory collections (e.g. a creator's roles) refuse to be empty.
+pub fn multi_select<T: Clone>(label: &str, choices: &[(&str, T)], min: usize) -> Result<Vec<T>> {
+    let labels: Vec<&str> = choices.iter().map(|(l, _)| *l).collect();
+    loop {
+        let picks: Vec<usize> = MultiSelect::with_theme(&ui::theme())
+            .with_prompt(label)
+            .items(&labels)
+            .interact()
+            .with_context(|| format!("pick `{label}`"))?;
+        if picks.len() < min {
+            ui::info(&format!("at least {min} item(s) required"));
+            continue;
+        }
+        return Ok(picks.into_iter().map(|i| choices[i].1.clone()).collect());
+    }
 }
 
 /// Type-to-filter picker for the longer closed enums (Genre, …). Same

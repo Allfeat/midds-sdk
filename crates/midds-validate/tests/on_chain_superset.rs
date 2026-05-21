@@ -22,7 +22,7 @@
 
 use midds_fixtures::musical_work::strategy::arb_musical_work;
 use midds_traits::Midds as _;
-use midds_types::{CreatorId, MusicalWork, WorkType};
+use midds_types::{MusicalWork, PartyId, WorkType};
 use midds_validate::{
     CheckResult, parse_ipi, parse_isni, parse_iswc, verify_ipi_checksum, verify_isni_checksum,
     verify_iswc_checksum,
@@ -52,6 +52,38 @@ fn assert_iswc_round_trips(bytes: &[u8]) -> Result<(), TestCaseError> {
     Ok(())
 }
 
+/// Each component identifier of a `PartyId` must parse cleanly through the
+/// matching tolerant parser and pass its checksum verifier. Factored out so
+/// the three variants (`Ipi`, `Isni`, `Both`) share the same assertions.
+fn assert_party_round_trips(party: &PartyId) -> Result<(), TestCaseError> {
+    let check_ipi = |bytes: &[u8]| -> Result<(), TestCaseError> {
+        let s = std::str::from_utf8(bytes)
+            .map_err(|e| TestCaseError::fail(format!("IPI not utf-8: {e}")))?;
+        let parsed = parse_ipi(s)
+            .map_err(|e| TestCaseError::fail(format!("canonical IPI `{s}` rejected: {e}")))?;
+        prop_assert_eq!(parsed.as_slice(), bytes);
+        prop_assert_eq!(verify_ipi_checksum(&parsed), CheckResult::Pass);
+        Ok(())
+    };
+    let check_isni = |bytes: &[u8]| -> Result<(), TestCaseError> {
+        let s = std::str::from_utf8(bytes)
+            .map_err(|e| TestCaseError::fail(format!("ISNI not utf-8: {e}")))?;
+        let parsed = parse_isni(s)
+            .map_err(|e| TestCaseError::fail(format!("canonical ISNI `{s}` rejected: {e}")))?;
+        prop_assert_eq!(parsed.as_slice(), bytes);
+        prop_assert_eq!(verify_isni_checksum(&parsed), CheckResult::Pass);
+        Ok(())
+    };
+    match party {
+        PartyId::Ipi(ipi) => check_ipi(ipi.as_slice()),
+        PartyId::Isni(isni) => check_isni(isni.as_slice()),
+        PartyId::Both { ipi, isni } => {
+            check_ipi(ipi.as_slice())?;
+            check_isni(isni.as_slice())
+        }
+    }
+}
+
 proptest! {
     #![proptest_config(proptest_config())]
 
@@ -68,35 +100,15 @@ proptest! {
     /// Every creator identifier carried by an on-chain-valid payload is also
     /// off-chain canonical — the parser accepts it as-is and the warning-only
     /// checksum verifier returns `Pass` (fixture identifiers are
-    /// checksum-correct by construction).
+    /// checksum-correct by construction). The `PartyId::Both` variant is
+    /// exercised by checking each sub-identifier independently.
     #[test]
     fn on_chain_creator_ids_round_trip_off_chain(work in arb_musical_work()) {
         prop_assume!(work.validate_format().is_ok());
 
         let MusicalWork::V1(v1) = work;
         for creator in &v1.creators {
-            match &creator.id {
-                CreatorId::Ipi(ipi) => {
-                    let s = std::str::from_utf8(ipi.as_slice())
-                        .map_err(|e| TestCaseError::fail(format!("IPI not utf-8: {e}")))?;
-                    let parsed = parse_ipi(s)
-                        .map_err(|e| TestCaseError::fail(
-                            format!("canonical IPI `{s}` rejected: {e}")
-                        ))?;
-                    prop_assert_eq!(parsed.as_slice(), ipi.as_slice());
-                    prop_assert_eq!(verify_ipi_checksum(&parsed), CheckResult::Pass);
-                }
-                CreatorId::Isni(isni) => {
-                    let s = std::str::from_utf8(isni.as_slice())
-                        .map_err(|e| TestCaseError::fail(format!("ISNI not utf-8: {e}")))?;
-                    let parsed = parse_isni(s)
-                        .map_err(|e| TestCaseError::fail(
-                            format!("canonical ISNI `{s}` rejected: {e}")
-                        ))?;
-                    prop_assert_eq!(parsed.as_slice(), isni.as_slice());
-                    prop_assert_eq!(verify_isni_checksum(&parsed), CheckResult::Pass);
-                }
-            }
+            assert_party_round_trips(&creator.party)?;
         }
     }
 

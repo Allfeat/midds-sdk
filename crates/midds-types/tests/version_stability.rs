@@ -24,17 +24,27 @@ use std::{fs, path::PathBuf};
 use bounded_collections::BoundedVec;
 use midds_traits::Midds as _;
 use midds_types::{
-    ClassicalInfo, Creator, CreatorId, CreatorRole, Language, Mode, MusicalKey, MusicalWork,
-    MusicalWorkV1, PitchClass, WorkType,
+    ClassicalInfo, Creator, CreatorRole, CreatorRoles, Language, Mode, MusicalKey, MusicalWork,
+    MusicalWorkV1, PartyId, PitchClass, WorkType,
 };
 use parity_scale_codec::{Decode, Encode};
 
 const FIXTURE_RELATIVE: &str = "tests/fixtures/musical_work_v1.scale";
 
+fn roles<const N: usize>(rs: [CreatorRole; N]) -> CreatorRoles {
+    let mut set = CreatorRoles::new();
+    for r in rs {
+        set.try_insert(r).expect("role within bound");
+    }
+    set
+}
+
 /// Construct the canonical reference `MusicalWork::V1` used by the fixture.
 ///
 /// Hits enough variants to make accidental wire reshuffles visible:
-/// - Both `CreatorId` variants (IPI + ISNI).
+/// - All three `PartyId` shapes (`Ipi`, `Isni`, `Both`).
+/// - A multi-role `Creator` (BoundedBTreeSet with two entries — exercises the
+///   set length-prefix and canonical role ordering).
 /// - A non-`Original` `WorkType` (Adaptation references one ISWC).
 /// - `Some(...)` on every `Option` field except `bpm` (kept `None`) — covers
 ///   both presence and absence in the SCALE Option discriminator.
@@ -44,17 +54,24 @@ fn reference_v1() -> MusicalWorkV1 {
     let iswc = BoundedVec::try_from(b"T0345246802".to_vec()).expect("11-byte ISWC");
     let title = BoundedVec::try_from(b"Walk on the Wild Side".to_vec()).expect("title bound");
     let composer = Creator {
-        role: CreatorRole::Composer,
-        id: CreatorId::Ipi(BoundedVec::try_from(b"123456786".to_vec()).expect("9-byte IPI")),
+        roles: roles([CreatorRole::Composer]),
+        party: PartyId::Ipi(BoundedVec::try_from(b"123456786".to_vec()).expect("9-byte IPI")),
     };
     let author = Creator {
-        role: CreatorRole::Author,
-        id: CreatorId::Isni(
+        roles: roles([CreatorRole::Author]),
+        party: PartyId::Isni(
             BoundedVec::try_from(b"0000000121032683".to_vec()).expect("16-byte ISNI"),
         ),
     };
-    let creators =
-        BoundedVec::try_from(vec![composer, author]).expect("2 creators within CREATORS_MAX");
+    let arranger_publisher = Creator {
+        roles: roles([CreatorRole::Arranger, CreatorRole::Publisher]),
+        party: PartyId::Both {
+            ipi: BoundedVec::try_from(b"987654321".to_vec()).expect("9-byte IPI"),
+            isni: BoundedVec::try_from(b"0000000368275869".to_vec()).expect("16-byte ISNI"),
+        },
+    };
+    let creators = BoundedVec::try_from(vec![composer, author, arranger_publisher])
+        .expect("3 creators within CREATORS_MAX");
     let classical_info = Some(ClassicalInfo {
         opus: Some(BoundedVec::try_from(b"Op. 27 No. 2".to_vec()).expect("opus bound")),
         catalog_number: Some(BoundedVec::try_from(b"K. 545".to_vec()).expect("catalog bound")),

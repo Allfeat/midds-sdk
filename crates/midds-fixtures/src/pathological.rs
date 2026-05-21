@@ -11,7 +11,7 @@ use midds_types::release as rel;
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Country, Creator,
-    CreatorId, CreatorRole, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
+    CreatorRole, CreatorRoles, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
     MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PitchClass,
     Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion, Release,
     ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
@@ -23,8 +23,35 @@ use crate::identifiers::{
     upc_for_index,
 };
 
+/// Helper: a single-role `CreatorRoles` for the *min-size* path. One role +
+/// the compact length prefix gives the smallest non-empty BoundedBTreeSet
+/// encoding.
+fn single_role(role: CreatorRole) -> CreatorRoles {
+    let mut set = CreatorRoles::new();
+    set.try_insert(role).expect("1 role within bound");
+    set
+}
+
+/// Helper: a `CreatorRoles` containing every variant — the worst case for
+/// SCALE encoding (CREATOR_ROLES_MAX entries + length prefix). Used by the
+/// max-size payload constructors below.
+fn all_roles() -> CreatorRoles {
+    let mut set = CreatorRoles::new();
+    for r in [
+        CreatorRole::Author,
+        CreatorRole::Composer,
+        CreatorRole::Arranger,
+        CreatorRole::Adapter,
+        CreatorRole::Publisher,
+    ] {
+        set.try_insert(r).expect("role within CREATOR_ROLES_MAX");
+    }
+    set
+}
+
 /// Minimum-size valid `MusicalWork`: smallest non-empty title, single
-/// 9-digit-IPI creator, no optional fields, `Original` work type.
+/// 9-digit-IPI creator with a single role, no optional fields, `Original`
+/// work type.
 pub fn min_size_musical_work() -> MusicalWork {
     let v1 = MusicalWorkV1 {
         iswc: iswc_for_index(0),
@@ -36,8 +63,8 @@ pub fn min_size_musical_work() -> MusicalWork {
         key: None,
         work_type: WorkType::Original,
         creators: BoundedVec::try_from(vec![Creator {
-            role: CreatorRole::Composer,
-            id: CreatorId::Ipi(ipi_from_stem(0, 9)),
+            roles: single_role(CreatorRole::Composer),
+            party: PartyId::Ipi(ipi_from_stem(0, 9)),
         }])
         .expect("1 creator"),
         classical_info: None,
@@ -47,17 +74,22 @@ pub fn min_size_musical_work() -> MusicalWork {
 }
 
 /// Maximum-size valid `MusicalWork`: every bounded field at capacity, every
-/// optional field present, ISNI creators (the larger `CreatorId` variant) and
-/// `Medley` work type (the only one that carries refs). Useful as a stable
-/// worst-case baseline for fee benchmarks and SCALE-encoding tests.
+/// optional field present, every creator carrying `CREATOR_ROLES_MAX` roles
+/// and the `PartyId::Both` variant (the largest of the three — full 11-byte
+/// IPI + 16-byte ISNI), and a `Medley` work type with the maximum number of
+/// source refs. Stable worst-case baseline for fee benchmarks and
+/// SCALE-encoding tests.
 pub fn max_size_musical_work() -> MusicalWork {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let creators: Vec<Creator> = (0..CREATORS_MAX)
         .map(|i| {
             let body: [u8; 15] = core::array::from_fn(|j| ((i + j as u32 + 1) % 10) as u8);
             Creator {
-                role: CreatorRole::Composer,
-                id: CreatorId::Isni(isni_from_body(body)),
+                roles: all_roles(),
+                party: PartyId::Both {
+                    ipi: ipi_from_stem(u64::from(i) * 1_000_000_007, 11),
+                    isni: isni_from_body(body),
+                },
             }
         })
         .collect();
@@ -162,9 +194,10 @@ pub fn min_size_recording() -> Recording {
 }
 
 /// Maximum-size valid `Recording`: every bounded field at capacity, every
-/// optional field present, `PartyId::Isni` everywhere (the larger identity
-/// variant) and `WorkRef::Iswc` (larger than the MIDDS id). Stable worst-case
-/// baseline for fee benchmarks and SCALE-encoding tests.
+/// optional field present, `PartyId::Both` everywhere (the larger identity
+/// variant now that IPI+ISNI can be carried together — 30 bytes vs ≤ 18 for
+/// single-id) and `WorkRef::Iswc` (larger than the MIDDS id). Stable
+/// worst-case baseline for fee benchmarks and SCALE-encoding tests.
 pub fn max_size_recording() -> Recording {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let aliases: Vec<_> = (0..TITLE_ALIASES_MAX)
@@ -174,20 +207,20 @@ pub fn max_size_recording() -> Recording {
         let body: [u8; 15] = core::array::from_fn(|j| ((i + j as u32 + 1) % 10) as u8);
         isni_from_body(body)
     };
-    let performers: Vec<PartyId> = (0..PERFORMERS_MAX)
-        .map(|i| PartyId::Isni(isni_at(i)))
-        .collect();
+    let party_both_at = |i: u32| PartyId::Both {
+        ipi: ipi_from_stem(u64::from(i) * 1_000_000_007 + 1, 11),
+        isni: isni_at(i),
+    };
+    let performers: Vec<PartyId> = (0..PERFORMERS_MAX).map(party_both_at).collect();
     let producers: Vec<Isni> = (0..PRODUCERS_MAX).map(isni_at).collect();
-    let contributors: Vec<PartyId> = (0..CONTRIBUTORS_MAX)
-        .map(|i| PartyId::Isni(isni_at(i)))
-        .collect();
+    let contributors: Vec<PartyId> = (0..CONTRIBUTORS_MAX).map(party_both_at).collect();
     let place = BoundedVec::try_from(vec![b'p'; PLACE_MAX_LEN as usize]).expect("place at bound");
     let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = RecordingV1 {
         isrc: isrc_for_index(0),
         title,
         title_aliases: BoundedVec::try_from(aliases).expect("aliases at bound"),
-        artist: PartyId::Isni(isni_at(99)),
+        artist: party_both_at(99),
         work: WorkRef::Iswc(iswc_from_work_code(1)),
         genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
             .expect("genres at bound"),
@@ -275,9 +308,10 @@ pub fn min_size_release() -> Release {
 }
 
 /// Maximum-size valid `Release`: every bounded field at capacity, every
-/// optional field present, `PartyId::Isni` and `RecordingRef::Isrc`
-/// everywhere (the larger variants). Stable worst-case baseline for fee
-/// benchmarks and SCALE-encoding tests.
+/// optional field present, `PartyId::Both` for the artist (the larger
+/// identity variant now that IPI+ISNI can be carried together) and
+/// `RecordingRef::Isrc` everywhere for tracks (the larger variant). Stable
+/// worst-case baseline for fee benchmarks and SCALE-encoding tests.
 pub fn max_size_release() -> Release {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let aliases: Vec<_> = (0..rel::TITLE_ALIASES_MAX)
@@ -308,7 +342,10 @@ pub fn max_size_release() -> Release {
         upc: upc_for_index(0),
         title,
         title_aliases: BoundedVec::try_from(aliases).expect("aliases at bound"),
-        artist: PartyId::Isni(isni_at(99)),
+        artist: PartyId::Both {
+            ipi: ipi_from_stem(99 * 1_000_000_007, 11),
+            isni: isni_at(99),
+        },
         tracks: BoundedVec::try_from(tracks).expect("tracks at bound"),
         producers: BoundedVec::try_from(producers).expect("producers at bound"),
         status: ReleaseStatus::Official,

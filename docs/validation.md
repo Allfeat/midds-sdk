@@ -74,7 +74,7 @@ n'est **pas** vérifié on-chain. Vérificateurs warning-only :
 |---|---|---|
 | `Title` | `MiddsString<256>` (`TITLE_MAX_LEN = 256`) | non-vide quand obligatoire ; longueur **S** |
 | `PartyId` | `enum { Ipi(Ipi) \| Isni(Isni) \| Both { ipi: Ipi, isni: Isni } }` — au moins l'un des deux identifiants | structure de chaque identifiant présent (les deux pour `Both`). Le variant `Both` a été **réintroduit** (cf. §7 — un même intervenant peut porter IPI et ISNI simultanément ; représentation native plus fidèle que deux entrées dupliquées) |
-| `MusicalKey` | `{ pitch: PitchClass(12), mode: Mode(2) }` = 24 combinaisons | appartenance **S**. Remplace la liste plate de 42 clés enharmoniques de l'ancien front (`Asm`,`Cb`,`Es`,`Fb`…) — décision V1 |
+| `MusicalKey` | `{ pitch: PitchClass(17), mode: Mode(2) }` = 34 combinaisons | appartenance **S**. `PitchClass` couvre les 12 positions chromatiques avec les orthographes dièse et bémol les plus courantes (`D♭`/`E♭`/`G♭`/`A♭`/`B♭` en plus de `C♯`/`D♯`/`F♯`/`G♯`/`A♯`) ; les enharmoniques théoriques rares (`B♯`,`E♯`,`C♭`,`F♭`) restent hors V1 |
 | `WorkRef` | `enum { Midds(u64) \| Iswc(Iswc) }` | si `Iswc` ⇒ structure ISWC |
 | `RecordingRef` | `enum { Midds(u64) \| Isrc(Isrc) }` | si `Isrc` ⇒ structure ISRC |
 | `Country` | enum fermé ISO 3166-1 alpha-2 (complet, JSON majuscule) | appartenance **S** — superset des 249 codes de l'ancien front |
@@ -241,8 +241,14 @@ Décisions explicites, figées, à ne pas « corriger » sans bump de version :
    de `Creator` partageant le même `PartyId`. V1 stabilisée = un seul
    `Creator { roles: Set, party }` par intervenant — encodage plus compact,
    pas de doublons à valider, ordre canonique stable côté SCALE.
-5. **`MusicalKey` structuré** (`PitchClass × Mode`, 24) au lieu des 42 clés
-   plates avec enharmonies de l'ancien front (`Asm`, `Cb`, `Es`, `Fb`…).
+5. **`MusicalKey` structuré** (`PitchClass × Mode`, 34) au lieu des 42 clés
+   plates de l'ancien front. Le `PitchClass` porte les 12 positions
+   chromatiques avec leurs orthographes dièse et bémol usuelles (17 variantes
+   au total) : `D♭` et `C♯` sont distincts sur le wire — décision motivée par
+   la fidélité aux registres (CWR/DDEX transportent l'orthographe). Seules
+   les enharmonies théoriques marginales (`B♯`, `E♯`, `C♭`, `F♭`) restent
+   non modélisées et pourront entrer via une future version de payload si un
+   usage concret apparaît.
 6. **Enums slimmés** : `Genre` 25 (vs ≈160), `RecordingVersion` 13 (vs 21),
    `ReleaseFormat` 11 (vs 63), `ReleasePackaging` 9 (vs 17), `ReleaseStatus`
    7 (vs 10), `ReleaseType` 11 (vs 6, redéfini). Granularité fine =

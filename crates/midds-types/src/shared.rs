@@ -36,7 +36,22 @@ pub const BPM_MIN: u16 = 20;
 /// Inclusive upper bound for `bpm`, shared by `MusicalWork` and `Recording`.
 pub const BPM_MAX: u16 = 300;
 
-/// One of the 12 chromatic pitch classes.
+/// Pitch class with explicit accidental spelling.
+///
+/// The 12 chromatic positions are represented with both their sharp and the
+/// most common flat spellings (17 variants total). `CSharp` and `DFlat` share
+/// the same sounding pitch but are *not* equivalent for notation or
+/// publishing: a piece registered as `E♭ major` must round-trip as `E♭`, not
+/// as `D♯`. CWR and DDEX both carry the spelling, and the on-chain payload
+/// preserves it.
+///
+/// Theoretical enharmonics (`B♯`, `E♯`, `C♭`, `F♭`) are deliberately not
+/// modelled — they are vanishingly rare in commercial catalogues and can be
+/// added in a future payload version if a real use case appears.
+///
+/// SCALE layout: the original 12 sharp / natural variants keep their V1 tag
+/// bytes (0..=11). The five flat variants are appended at tags 12..=16, so
+/// records encoded before the extension decode unchanged.
 #[derive(
     Encode,
     Decode,
@@ -63,6 +78,11 @@ pub enum PitchClass {
     A,
     ASharp,
     B,
+    DFlat,
+    EFlat,
+    GFlat,
+    AFlat,
+    BFlat,
 }
 
 /// Diatonic mode. Kept minimal; modal music (Dorian, Phrygian, …) can be

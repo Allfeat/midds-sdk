@@ -105,20 +105,28 @@ pub fn arb_language() -> impl Strategy<Value = Language> {
 }
 
 pub fn arb_pitch_class() -> impl Strategy<Value = PitchClass> {
-    prop_oneof![
-        Just(PitchClass::C),
-        Just(PitchClass::CSharp),
-        Just(PitchClass::D),
-        Just(PitchClass::DSharp),
-        Just(PitchClass::E),
-        Just(PitchClass::F),
-        Just(PitchClass::FSharp),
-        Just(PitchClass::G),
-        Just(PitchClass::GSharp),
-        Just(PitchClass::A),
-        Just(PitchClass::ASharp),
-        Just(PitchClass::B),
-    ]
+    proptest::sample::select(
+        [
+            PitchClass::C,
+            PitchClass::CSharp,
+            PitchClass::DFlat,
+            PitchClass::D,
+            PitchClass::DSharp,
+            PitchClass::EFlat,
+            PitchClass::E,
+            PitchClass::F,
+            PitchClass::FSharp,
+            PitchClass::GFlat,
+            PitchClass::G,
+            PitchClass::GSharp,
+            PitchClass::AFlat,
+            PitchClass::A,
+            PitchClass::ASharp,
+            PitchClass::BFlat,
+            PitchClass::B,
+        ]
+        .as_slice(),
+    )
 }
 
 pub fn arb_mode() -> impl Strategy<Value = Mode> {

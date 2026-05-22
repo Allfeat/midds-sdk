@@ -91,7 +91,7 @@ identique à l'ancien front).
 |---|---|---|---|---|---|
 | `iswc` | `Iswc` | oui | 11 | structure ISWC | = |
 | `title` | `Title` | oui | ≤ 256 | non-vide | = |
-| `creation_year` | `u16` | oui | — | **`1..=2999`** | **N** |
+| `creation_year` | `Option<u16>` | non | — | si `Some` ⇒ **`1..=2999`** | **N** |
 | `instrumental` | `bool` | oui | — | aucune (défaut `false`) | = |
 | `language` | `Option<Language>` | non | — | appartenance | S |
 | `bpm` | `Option<u16>` | non | — | si `Some` ⇒ **`20..=300`** | **N** |
@@ -217,9 +217,10 @@ Enums fermés :
 Décisions explicites, figées, à ne pas « corriger » sans bump de version :
 
 1. **`Release.release_date.year` non contraint** (`1..=u16::MAX`), alors que
-   `MusicalWork.creation_year` et `Recording.record_year` sont bornés
-   `1..=2999`. Justification : une sortie peut être *annoncée pour le futur*
-   (date prévisionnelle) ; l'ancien front n'imposait d'ailleurs aucune borne
+   `MusicalWork.creation_year` et `Recording.record_year` — tous deux
+   `Option<u16>` — sont bornés `1..=2999` lorsqu'ils sont renseignés.
+   Justification : une sortie peut être *annoncée pour le futur* (date
+   prévisionnelle) ; l'ancien front n'imposait d'ailleurs aucune borne
    d'année sur la date de sortie (`z.date()` libre). Seuls `month`/`day` sont
    contrôlés (contrôle structurel, pas calendaire : 30 février est accepté
    on-chain ; le contrôle calendaire strict est du ressort de

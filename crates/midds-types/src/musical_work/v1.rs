@@ -165,7 +165,7 @@ pub struct MusicalWorkV1 {
     pub iswc: Iswc,
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub title: Title,
-    pub creation_year: u16,
+    pub creation_year: Option<u16>,
     pub instrumental: bool,
     pub language: Option<Language>,
     pub bpm: Option<u16>,
@@ -186,7 +186,9 @@ impl MusicalWorkV1 {
         if self.title.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
-        if !(YEAR_MIN..=YEAR_MAX).contains(&self.creation_year) {
+        if let Some(year) = self.creation_year
+            && !(YEAR_MIN..=YEAR_MAX).contains(&year)
+        {
             return Err(MiddsFormatError::OutOfBounds);
         }
         if let Some(bpm) = self.bpm
@@ -250,7 +252,7 @@ mod tests {
         MusicalWorkV1 {
             iswc: iswc(),
             title: BoundedVec::try_from(b"x".to_vec()).expect("1-byte title"),
-            creation_year: 2000,
+            creation_year: Some(2000),
             instrumental: false,
             language: None,
             bpm: None,
@@ -274,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn creation_year_bounds() {
+    fn creation_year_bounds_when_present() {
         for (year, ok) in [
             (0u16, false),
             (1, true),
@@ -283,7 +285,7 @@ mod tests {
             (3000, false),
         ] {
             let mut w = base();
-            w.creation_year = year;
+            w.creation_year = Some(year);
             assert_eq!(
                 w.validate_format().is_ok(),
                 ok,
@@ -293,6 +295,14 @@ mod tests {
                 assert_eq!(w.validate_format(), Err(MiddsFormatError::OutOfBounds));
             }
         }
+    }
+
+    #[test]
+    fn creation_year_is_optional() {
+        let mut w = base();
+        w.creation_year = None;
+        w.validate_format()
+            .expect("None creation_year validates — field is optional");
     }
 
     #[test]

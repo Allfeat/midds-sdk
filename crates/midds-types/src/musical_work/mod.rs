@@ -81,7 +81,7 @@ mod tests {
         MusicalWorkV1 {
             iswc: bv(b"T1234567890"),
             title: bv(b"My Work Title"),
-            creation_year: 2024,
+            creation_year: Some(2024),
             instrumental: false,
             language: Some(Language::En),
             bpm: Some(120),
@@ -312,7 +312,7 @@ mod json_tests {
         MusicalWorkV1 {
             iswc: bv(b"T1234567890"),
             title: bv(b"My Work Title"),
-            creation_year: 2024,
+            creation_year: Some(2024),
             instrumental: false,
             language: Some(Language::En),
             bpm: Some(120),

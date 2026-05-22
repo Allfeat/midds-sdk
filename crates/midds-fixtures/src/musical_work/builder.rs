@@ -18,7 +18,7 @@ use midds_types::{
 pub struct MusicalWorkBuilder {
     iswc: Iswc,
     title: Title,
-    creation_year: u16,
+    creation_year: Option<u16>,
     instrumental: bool,
     language: Option<Language>,
     bpm: Option<u16>,
@@ -49,7 +49,7 @@ impl MusicalWorkBuilder {
         Self {
             iswc: default_iswc,
             title: BoundedVec::try_from(b"Untitled".to_vec()).expect("8 bytes < 256"),
-            creation_year: 2024,
+            creation_year: Some(2024),
             instrumental: false,
             language: None,
             bpm: None,
@@ -74,7 +74,7 @@ impl MusicalWorkBuilder {
     }
 
     pub fn creation_year(mut self, year: u16) -> Self {
-        self.creation_year = year;
+        self.creation_year = Some(year);
         self
     }
 
@@ -205,7 +205,7 @@ mod tests {
             .build();
         let MusicalWork::V1(v) = work;
         assert_eq!(v.title.as_slice(), b"My Work");
-        assert_eq!(v.creation_year, 1972);
+        assert_eq!(v.creation_year, Some(1972));
         assert!(v.instrumental);
         assert_eq!(v.bpm, Some(120));
         assert!(v.offchain_extension.is_some());

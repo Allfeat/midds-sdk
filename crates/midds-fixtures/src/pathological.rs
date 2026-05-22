@@ -56,7 +56,7 @@ pub fn min_size_musical_work() -> MusicalWork {
     let v1 = MusicalWorkV1 {
         iswc: iswc_for_index(0),
         title: BoundedVec::try_from(b"x".to_vec()).expect("1 byte"),
-        creation_year: 1900,
+        creation_year: None,
         instrumental: true,
         language: None,
         bpm: None,
@@ -105,7 +105,7 @@ pub fn max_size_musical_work() -> MusicalWork {
     let v1 = MusicalWorkV1 {
         iswc: iswc_from_work_code(0),
         title,
-        creation_year: YEAR_MAX,
+        creation_year: Some(YEAR_MAX),
         instrumental: false,
         language: Some(Language::En),
         bpm: Some(BPM_MAX),

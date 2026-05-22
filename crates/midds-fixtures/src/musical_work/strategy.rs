@@ -11,7 +11,7 @@
 
 use frame_support::BoundedVec;
 use midds_traits::{Isrc, Iswc, MiddsFormatError, OffchainHash};
-use midds_types::shared::{BPM_MAX, YEAR_MAX};
+use midds_types::shared::{BPM_MAX, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole,
     CreatorRoles, Creators, Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN,
@@ -214,7 +214,7 @@ pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
     (
         arb_iswc(),
         arb_title(),
-        1900u16..=2025u16,
+        proptest::option::of(YEAR_MIN..=YEAR_MAX),
         any::<bool>(),
         proptest::option::of(arb_language()),
         proptest::option::of(40u16..=240u16),
@@ -320,7 +320,7 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                 let v1 = MusicalWorkV1 {
                     iswc,
                     title,
-                    creation_year: YEAR_MAX,
+                    creation_year: Some(YEAR_MAX),
                     instrumental: false,
                     language: Some(Language::En),
                     bpm: Some(BPM_MAX),

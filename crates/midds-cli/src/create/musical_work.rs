@@ -27,7 +27,7 @@ pub fn build() -> Result<MusicalWork> {
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
 
     ui::step(2, STEPS, "Creation");
-    let creation_year = prompts::int_in_range::<u16>("Creation year", YEAR_MIN, YEAR_MAX, None)?;
+    let creation_year = prompts::optional_int_in_range::<u16>("Creation year", YEAR_MIN, YEAR_MAX)?;
     let instrumental = prompts::confirm("Instrumental (no lyrics)?", false)?;
 
     ui::step(3, STEPS, "Language");

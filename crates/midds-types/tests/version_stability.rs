@@ -83,7 +83,7 @@ fn reference_v1() -> MusicalWorkV1 {
     MusicalWorkV1 {
         iswc,
         title,
-        creation_year: 1972,
+        creation_year: Some(1972),
         instrumental: false,
         language: Some(Language::En),
         bpm: None,

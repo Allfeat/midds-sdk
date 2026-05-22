@@ -73,8 +73,9 @@ struct CreatorInput {
 }
 
 impl MusicalWorkBuilder {
-    /// Empty builder. `iswc`, `title`, `creation_year`, and at least one
-    /// creator must be set before [`build`](Self::build).
+    /// Empty builder. `iswc`, `title`, and at least one creator must be set
+    /// before [`build`](Self::build); `creation_year` is optional and left
+    /// unset translates to `None` on the payload.
     pub fn new() -> Self {
         Self::default()
     }
@@ -187,9 +188,6 @@ impl MusicalWorkBuilder {
             .title_raw
             .as_deref()
             .ok_or(BuildError::Missing("title"))?;
-        let creation_year = self
-            .creation_year
-            .ok_or(BuildError::Missing("creation_year"))?;
         if self.creators_raw.is_empty() {
             return Err(BuildError::Missing("creators"));
         }
@@ -350,7 +348,7 @@ impl MusicalWorkBuilder {
         let v1 = MusicalWorkV1 {
             iswc,
             title,
-            creation_year,
+            creation_year: self.creation_year,
             instrumental: self.instrumental,
             language: self.language,
             bpm: self.bpm,
@@ -383,8 +381,20 @@ mod tests {
         let MusicalWork::V1(v) = work;
         assert_eq!(v.iswc.as_slice(), b"T0345246802");
         assert_eq!(v.title.as_slice(), b"My Work");
-        assert_eq!(v.creation_year, 1972);
+        assert_eq!(v.creation_year, Some(1972));
         assert_eq!(v.creators.len(), 2);
+    }
+
+    #[test]
+    fn creation_year_is_optional() {
+        let work = MusicalWorkBuilder::new()
+            .iswc("T0345246802")
+            .title("My Work")
+            .add_creator("123456789")
+            .build()
+            .expect("creation_year omitted ⇒ Option=None ⇒ builds");
+        let MusicalWork::V1(v) = work;
+        assert_eq!(v.creation_year, None);
     }
 
     #[test]

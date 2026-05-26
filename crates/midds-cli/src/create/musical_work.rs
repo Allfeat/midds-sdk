@@ -6,7 +6,7 @@
 //! never disagree.
 
 use anyhow::Result;
-use midds_traits::{Iswc, validate_iswc_format};
+use midds_traits::Iswc;
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole, CreatorRoles,
@@ -23,7 +23,7 @@ pub fn build() -> Result<MusicalWork> {
     ui::section("MusicalWork · V1");
 
     ui::step(1, STEPS, "Identification");
-    let iswc: Iswc = prompts::identifier::<11>("ISWC", validate_iswc_format, "T0345246801")?;
+    let iswc: Iswc = prompts::identifier("ISWC", shared::parse_iswc_msg, "T0345246801")?;
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
 
     ui::step(2, STEPS, "Creation");
@@ -87,7 +87,7 @@ fn build_work_type() -> Result<WorkType> {
         Kind::Medley | Kind::Mashup => {
             let refs =
                 prompts::collect_bounded("source ISWC", 2, WORK_REFERENCES_MAX as usize, |_| {
-                    prompts::identifier::<11>("Source ISWC", validate_iswc_format, "T0345246801")
+                    prompts::identifier("Source ISWC", shared::parse_iswc_msg, "T0345246801")
                 })?;
             let refs = WorkReferences::try_from(refs)
                 .map_err(|_| anyhow::anyhow!("more than {WORK_REFERENCES_MAX} source works"))?;
@@ -97,9 +97,9 @@ fn build_work_type() -> Result<WorkType> {
                 WorkType::Mashup(refs)
             }
         }
-        Kind::Adaptation => WorkType::Adaptation(prompts::identifier::<11>(
+        Kind::Adaptation => WorkType::Adaptation(prompts::identifier(
             "Source ISWC",
-            validate_iswc_format,
+            shared::parse_iswc_msg,
             "T0345246801",
         )?),
     })

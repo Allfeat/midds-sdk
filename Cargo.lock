@@ -3034,6 +3034,7 @@ dependencies = [
  "midds-fixtures",
  "midds-traits",
  "midds-types",
+ "midds-validate",
  "parity-scale-codec",
  "rand 0.8.6",
  "serde",

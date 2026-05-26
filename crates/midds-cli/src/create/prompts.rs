@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, FuzzySelect, Input, MultiSelect, Select};
-use midds_traits::{MiddsFormatError, MiddsString};
+use midds_traits::MiddsString;
 
 use crate::ui;
 
@@ -64,23 +64,30 @@ pub fn optional_string<const N: u32>(label: &str) -> Result<Option<MiddsString<N
 
 /// An industry identifier (ISWC / ISNI / IPI / ISRC / UPC / off-chain hash).
 ///
-/// `validate` is the matching `midds_traits::validate_*_format`; the prompt
-/// loops until it accepts the input, so a built MIDDS never carries a
-/// structurally invalid identifier. `example` is shown as a hint.
-pub fn identifier<const N: u32>(
+/// `parse` is the matching tolerant parser from `midds-validate`, wrapped to
+/// emit a human-readable rule on rejection (e.g. `"ISNI must be 16 characters
+/// — 15 digits + a final digit or X"`). The prompt loops until the parser
+/// accepts the input, so a built MIDDS never carries a structurally invalid
+/// identifier *and* the user sees what shape the field expects instead of
+/// the raw `MiddsFormatError` variant. `example` is shown as a hint.
+///
+/// Returning the parser's normalised output (not the raw `MiddsString<N>`
+/// bytes) is what lets the IPI prompt accept `"1"` and submit `"00000000001"`
+/// without the call site needing to know about padding.
+pub fn identifier<T>(
     label: &str,
-    validate: fn(&[u8]) -> Result<(), MiddsFormatError>,
+    parse: impl Fn(&str) -> Result<T, String> + Clone + 'static,
     example: &str,
-) -> Result<MiddsString<N>> {
+) -> Result<T> {
+    let parse_for_validate = parse.clone();
     let raw = Input::<String>::with_theme(&ui::theme())
         .with_prompt(format!("{label} (e.g. {example})"))
         .validate_with(move |s: &String| -> Result<(), String> {
-            validate(s.trim().as_bytes()).map_err(|e| format!("{e:?}"))
+            parse_for_validate(s.as_str()).map(|_| ())
         })
         .interact_text()
         .with_context(|| format!("read `{label}`"))?;
-    MiddsString::<N>::try_from(raw.trim().as_bytes().to_vec())
-        .map_err(|_| anyhow::anyhow!("`{label}` exceeds its {N}-byte bound"))
+    parse(&raw).map_err(|e| anyhow::anyhow!("`{label}`: {e}"))
 }
 
 /// A number constrained to an inclusive `[min, max]` range. Used for every

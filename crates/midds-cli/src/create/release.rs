@@ -1,7 +1,7 @@
 //! Interactive builder for `Release::V1`.
 
 use anyhow::Result;
-use midds_traits::{Isni, Upc, validate_isni_format, validate_upc_format};
+use midds_traits::{Isni, Upc};
 use midds_types::release::{
     self, CATALOG_NUMBER_MAX_LEN as REL_CATALOG_MAX, COVER_CONTRIBUTOR_NAME_MAX_LEN,
     DISTRIBUTOR_NAME_MAX_LEN,
@@ -20,7 +20,7 @@ pub fn build() -> Result<Release> {
     ui::section("Release · V1");
 
     ui::step(1, STEPS, "Identification");
-    let upc: Upc = prompts::identifier::<13>("UPC / EAN", validate_upc_format, "0123456789012")?;
+    let upc: Upc = prompts::identifier("UPC / EAN", shared::parse_upc_msg, "0123456789012")?;
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
     let title_aliases = build_title_aliases()?;
 
@@ -152,9 +152,9 @@ fn build_producers() -> Result<release::Producers> {
         0,
         release::PRODUCERS_MAX as usize,
         |_| -> Result<Producer> {
-            let isni: Isni = prompts::identifier::<16>(
+            let isni: Isni = prompts::identifier(
                 "Producer ISNI",
-                validate_isni_format,
+                shared::parse_isni_msg,
                 "0000000121032683",
             )?;
             let catalog_number =

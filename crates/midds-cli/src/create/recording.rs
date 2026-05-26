@@ -1,7 +1,7 @@
 //! Interactive builder for `Recording::V1`.
 
 use anyhow::Result;
-use midds_traits::{Isni, Isrc, validate_isni_format, validate_isrc_format};
+use midds_traits::{Isni, Isrc};
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,
@@ -18,7 +18,7 @@ pub fn build() -> Result<Recording> {
     ui::section("Recording · V1");
 
     ui::step(1, STEPS, "Identification");
-    let isrc: Isrc = prompts::identifier::<12>("ISRC", validate_isrc_format, "USRC17607839")?;
+    let isrc: Isrc = prompts::identifier("ISRC", shared::parse_isrc_msg, "USRC17607839")?;
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
     let title_aliases = build_title_aliases()?;
 
@@ -151,7 +151,7 @@ fn build_party_collection(noun: &str, max: usize) -> Result<Vec<midds_types::Par
 fn build_producers() -> Result<Producers> {
     let producers =
         prompts::collect_bounded("producer", 0, PRODUCERS_MAX as usize, |_| -> Result<Isni> {
-            prompts::identifier::<16>("Producer ISNI", validate_isni_format, "0000000121032683")
+            prompts::identifier("Producer ISNI", shared::parse_isni_msg, "0000000121032683")
         })?;
     Producers::try_from(producers)
         .map_err(|_| anyhow::anyhow!("more than {PRODUCERS_MAX} producers"))

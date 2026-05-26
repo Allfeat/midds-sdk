@@ -27,6 +27,11 @@ midds-traits = { workspace = true, features = ["std"] }
 # `serde` is required (on top of `std`) so the offline `create` wizard can emit
 # the built payload as canonical JSON alongside the SCALE hex.
 midds-types = { workspace = true, features = ["std", "serde"] }
+# Tolerant identifier parsers (`parse_iswc`, `parse_isni`, …) backing the
+# `create` wizard's prompts: they normalise common shapes (grouped/dashed
+# forms, lowercase, short IPIs) into the canonical byte form so the prompt
+# accepts what a user actually pastes.
+midds-validate = { workspace = true }
 parity-scale-codec = { workspace = true, features = ["std"] }
 rand = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }

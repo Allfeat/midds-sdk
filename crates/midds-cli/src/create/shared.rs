@@ -9,16 +9,67 @@
 
 use anyhow::{Context, Result};
 use dialoguer::Input;
-use midds_traits::{
-    OffchainHash, validate_ipi_format, validate_isni_format, validate_isrc_format,
-    validate_iswc_format, validate_offchain_hash,
-};
+use midds_traits::{Ipi, Isni, Isrc, Iswc, OffchainHash, Upc};
 use midds_types::{
     Country, Language, Mode, MusicalKey, PartyId, PitchClass, RecordingRef, ReleaseDate, WorkRef,
 };
+use midds_validate::{parse_ipi, parse_isni, parse_isrc, parse_iswc, parse_upc};
 
 use crate::create::prompts;
 use crate::ui;
+
+/// Human-readable rule shown when [`parse_iswc`] rejects a typed ISWC. Returned
+/// as `Result<_, String>` so [`prompts::identifier`] can surface the rule
+/// verbatim instead of the raw `ParseError` debug name.
+pub fn parse_iswc_msg(s: &str) -> Result<Iswc, String> {
+    parse_iswc(s).map_err(|_| {
+        "ISWC must be 'T' + 10 digits (e.g. T0345246801); dots and dashes are accepted".into()
+    })
+}
+
+/// Human-readable rule shown when [`parse_isni`] rejects a typed ISNI.
+pub fn parse_isni_msg(s: &str) -> Result<Isni, String> {
+    parse_isni(s).map_err(|_| {
+        "ISNI must be 16 characters: 15 digits + a final digit or X (spaces / dashes accepted)"
+            .into()
+    })
+}
+
+/// Human-readable rule shown when [`parse_ipi`] rejects a typed IPI. A short
+/// input is left-padded with zeros to 11 digits, so a user can paste either
+/// `00052210040` or `52210040` and get the same canonical IPI.
+pub fn parse_ipi_msg(s: &str) -> Result<Ipi, String> {
+    parse_ipi(s)
+        .map_err(|_| "IPI must be 1–11 digits (auto-padded with leading zeros to 11)".into())
+}
+
+/// Human-readable rule shown when [`parse_isrc`] rejects a typed ISRC.
+pub fn parse_isrc_msg(s: &str) -> Result<Isrc, String> {
+    parse_isrc(s).map_err(|_| {
+        "ISRC must be 12 chars: 2 alpha country + 3 alphanumeric registrant + 2-digit year + \
+         5 digits (dashes accepted)"
+            .into()
+    })
+}
+
+/// Human-readable rule shown when [`parse_upc`] rejects a typed UPC/EAN.
+pub fn parse_upc_msg(s: &str) -> Result<Upc, String> {
+    parse_upc(s)
+        .map_err(|_| "UPC / EAN must be 12 or 13 digits (spaces / dashes accepted)".into())
+}
+
+/// Tiny non-empty check for the off-chain extension hash. There is no
+/// `midds-validate` parser for this field — it is opaque on-chain — so the
+/// prompt only enforces what `validate_offchain_hash` enforces (non-empty,
+/// within the 64-byte bound).
+pub fn parse_offchain_hash_msg(s: &str) -> Result<OffchainHash, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err("off-chain hash must not be empty".into());
+    }
+    OffchainHash::try_from(trimmed.as_bytes().to_vec())
+        .map_err(|_| "off-chain hash exceeds its 64-byte bound".into())
+}
 
 /// A party identifier — IPI, ISNI, or both. Backs `artist`, every `creator`,
 /// `performers`, `contributors`. The `Both` choice gets two consecutive
@@ -34,19 +85,19 @@ pub fn party_id(label: &str) -> Result<PartyId> {
         ],
         0,
     )? {
-        0 => Ok(PartyId::Ipi(prompts::identifier::<11>(
+        0 => Ok(PartyId::Ipi(prompts::identifier(
             "IPI",
-            validate_ipi_format,
+            parse_ipi_msg,
             "00052210040",
         )?)),
-        1 => Ok(PartyId::Isni(prompts::identifier::<16>(
+        1 => Ok(PartyId::Isni(prompts::identifier(
             "ISNI",
-            validate_isni_format,
+            parse_isni_msg,
             "0000000121032683",
         )?)),
         _ => Ok(PartyId::Both {
-            ipi: prompts::identifier::<11>("IPI", validate_ipi_format, "00052210040")?,
-            isni: prompts::identifier::<16>("ISNI", validate_isni_format, "0000000121032683")?,
+            ipi: prompts::identifier("IPI", parse_ipi_msg, "00052210040")?,
+            isni: prompts::identifier("ISNI", parse_isni_msg, "0000000121032683")?,
         }),
     }
 }
@@ -59,9 +110,9 @@ pub fn work_ref(label: &str) -> Result<WorkRef> {
         &[("External ISWC", 0u8), ("On-chain MusicalWork id", 1u8)],
         0,
     )? {
-        0 => Ok(WorkRef::Iswc(prompts::identifier::<11>(
+        0 => Ok(WorkRef::Iswc(prompts::identifier(
             "ISWC",
-            validate_iswc_format,
+            parse_iswc_msg,
             "T0345246801",
         )?)),
         _ => Ok(WorkRef::Midds(prompts::midds_id("MusicalWork MIDDS id")?)),
@@ -75,9 +126,9 @@ pub fn recording_ref(label: &str) -> Result<RecordingRef> {
         &[("External ISRC", 0u8), ("On-chain Recording id", 1u8)],
         0,
     )? {
-        0 => Ok(RecordingRef::Isrc(prompts::identifier::<12>(
+        0 => Ok(RecordingRef::Isrc(prompts::identifier(
             "ISRC",
-            validate_isrc_format,
+            parse_isrc_msg,
             "USRC17607839",
         )?)),
         _ => Ok(RecordingRef::Midds(prompts::midds_id(
@@ -155,9 +206,9 @@ pub fn language(label: &str) -> Result<Language> {
 /// / `Release`, so each wizard call site stays a one-liner.
 pub fn offchain_extension() -> Result<Option<OffchainHash>> {
     prompts::optional("an off-chain extension hash", || {
-        prompts::identifier::<64>(
+        prompts::identifier(
             "Off-chain hash",
-            validate_offchain_hash,
+            parse_offchain_hash_msg,
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         )
     })

@@ -22,7 +22,7 @@ static ISNI_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{4})[\s-]?(\d{4})[\s-]?(\d{4})[\s-]?(\d{3}[\dX])$").unwrap());
 
 #[allow(clippy::disallowed_methods)]
-static IPI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:I-)?(\d{9,11})$").unwrap());
+static IPI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:I-)?(\d{1,11})$").unwrap());
 
 #[allow(clippy::disallowed_methods)]
 static ISRC_RE: LazyLock<Regex> =
@@ -56,11 +56,26 @@ pub fn parse_isni(s: &str) -> Result<Isni, ParseError> {
     Isni::try_from(out.into_bytes()).map_err(|_| ParseError::OutOfBounds)
 }
 
-/// Parse a tolerant IPI Name Number into 9–11 digits.
+/// Parse a tolerant IPI Name Number.
+///
+/// Accepts 1 to 11 ASCII digits, optionally prefixed with `I-`. Inputs shorter
+/// than the on-chain canonical range (≥ 9 digits per
+/// [`validate_ipi_format`](midds_traits::validate_ipi_format)) are left-padded
+/// with `'0'` to 11 digits so a user-typed `"1"` or `"12345"` becomes a
+/// well-formed `Ipi`. Inputs already 9–11 digits are returned verbatim — they
+/// are already canonical on-chain and we must not silently rewrite them, since
+/// `IdentifierIndex` keys IPIs by exact bytes.
 pub fn parse_ipi(s: &str) -> Result<Ipi, ParseError> {
     let upper = s.trim().to_ascii_uppercase();
     let caps = IPI_RE.captures(&upper).ok_or(ParseError::PatternMismatch)?;
-    let digits = caps[1].as_bytes().to_vec();
+    let raw = caps[1].as_bytes();
+    let digits = if raw.len() < 9 {
+        let mut padded = vec![b'0'; 11 - raw.len()];
+        padded.extend_from_slice(raw);
+        padded
+    } else {
+        raw.to_vec()
+    };
     Ipi::try_from(digits).map_err(|_| ParseError::OutOfBounds)
 }
 
@@ -183,15 +198,31 @@ mod tests {
     }
 
     #[test]
-    fn ipi_accepts_lengths() {
+    fn ipi_accepts_canonical_lengths() {
         for raw in ["123456789", "1234567890", "12345678901"] {
             assert_eq!(parse_ipi(raw).unwrap().as_slice(), raw.as_bytes(), "{raw}");
         }
     }
 
     #[test]
+    fn ipi_pads_short_input_to_eleven() {
+        for (input, expected) in [
+            ("1", "00000000001"),
+            ("12", "00000000012"),
+            ("12345678", "00012345678"),
+            ("I-1", "00000000001"),
+        ] {
+            assert_eq!(
+                parse_ipi(input).unwrap().as_slice(),
+                expected.as_bytes(),
+                "{input}",
+            );
+        }
+    }
+
+    #[test]
     fn ipi_pattern_mismatch() {
-        assert_eq!(parse_ipi("12345678"), Err(ParseError::PatternMismatch));
+        assert_eq!(parse_ipi(""), Err(ParseError::PatternMismatch));
         assert_eq!(parse_ipi("123456789012"), Err(ParseError::PatternMismatch));
         assert_eq!(parse_ipi("12345A789"), Err(ParseError::PatternMismatch));
     }

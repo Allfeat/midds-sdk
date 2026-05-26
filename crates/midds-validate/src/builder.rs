@@ -1621,7 +1621,7 @@ mod release_tests {
         let res = ReleaseBuilder::new()
             .upc("not-a-upc")
             .title("   ")
-            .artist_ipi("12345")
+            .artist_ipi("not-an-ipi")
             .add_track_isrc("bad-isrc")
             .status(ReleaseStatus::Official)
             .release_date(2024, 1, 1)

@@ -9,8 +9,8 @@
 //! `midds_types` re-exports keep the public names stable.
 
 use midds_traits::{
-    Ipi, Isni, Isrc, Iswc, MiddsFormatError, MiddsId, MiddsString, validate_ipi_format,
-    validate_isni_format, validate_isrc_format, validate_iswc_format,
+    Ipi, Ipn, Isni, Isrc, Iswc, MiddsFormatError, MiddsId, MiddsString, validate_ipi_format,
+    validate_ipn_format, validate_isni_format, validate_isrc_format, validate_iswc_format,
 };
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -161,6 +161,39 @@ impl PartyId {
                 validate_ipi_format(ipi)?;
                 validate_isni_format(isni)
             }
+        }
+    }
+}
+
+/// External identifier of a performer. A performer declared at a performer
+/// CMO (SCAPR / SPEDIDAM / ADAMI / GVL / …) carries an IPN (International
+/// Performer Number) from the IPD registry; performers not declared at such
+/// a CMO usually only have an IPI (CISAC) or an ISNI (ISO) — typical of
+/// session musicians or featured artists who are also songwriters and were
+/// first registered through a publishing-side workflow.
+///
+/// Distinct from [`PartyId`] on purpose: a composer / publisher / artist
+/// without a CMO interpreter side has no IPN, so widening `PartyId` with an
+/// `Ipn` variant would let creators / contributors claim an identifier they
+/// can't actually own. The on-chain wire shape is a tag byte (0 = IPN,
+/// 1 = IPI, 2 = ISNI) followed by the bounded identifier; the variant order
+/// is frozen (V1).
+#[derive(
+    Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PerformerId {
+    Ipn(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipn),
+    Ipi(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipi),
+    Isni(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Isni),
+}
+
+impl PerformerId {
+    pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
+        match self {
+            Self::Ipn(v) => validate_ipn_format(v),
+            Self::Ipi(v) => validate_ipi_format(v),
+            Self::Isni(v) => validate_isni_format(v),
         }
     }
 }

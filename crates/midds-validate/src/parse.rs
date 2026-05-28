@@ -8,7 +8,7 @@
 
 use std::sync::LazyLock;
 
-use midds_traits::{Ipi, Isni, Isrc, Iswc, Upc};
+use midds_traits::{Ipi, Ipn, Isni, Isrc, Iswc, Upc};
 use regex::Regex;
 
 use crate::error::ParseError;
@@ -23,6 +23,9 @@ static ISNI_RE: LazyLock<Regex> =
 
 #[allow(clippy::disallowed_methods)]
 static IPI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:I-)?(\d{1,11})$").unwrap());
+
+#[allow(clippy::disallowed_methods)]
+static IPN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{1,11})$").unwrap());
 
 #[allow(clippy::disallowed_methods)]
 static ISRC_RE: LazyLock<Regex> =
@@ -77,6 +80,30 @@ pub fn parse_ipi(s: &str) -> Result<Ipi, ParseError> {
         raw.to_vec()
     };
     Ipi::try_from(digits).map_err(|_| ParseError::OutOfBounds)
+}
+
+/// Parse a tolerant IPN (International Performer Number).
+///
+/// Accepts 1 to 11 ASCII digits, with leading-zero padding to the canonical
+/// 11-digit form so a user-typed `"1"` or `"12345"` becomes a well-formed
+/// `Ipn`. Mirrors [`parse_ipi`]'s padding behaviour — same UX for the same
+/// operator workflow (pasting a shorter raw IPN typed by a performer CMO
+/// without thinking about zero-padding). No `I-` prefix is accepted: the
+/// `I-` convention is specific to IPI Name Numbers.
+pub fn parse_ipn(s: &str) -> Result<Ipn, ParseError> {
+    let trimmed = s.trim();
+    let caps = IPN_RE
+        .captures(trimmed)
+        .ok_or(ParseError::PatternMismatch)?;
+    let raw = caps[1].as_bytes();
+    let digits = if raw.len() < 11 {
+        let mut padded = vec![b'0'; 11 - raw.len()];
+        padded.extend_from_slice(raw);
+        padded
+    } else {
+        raw.to_vec()
+    };
+    Ipn::try_from(digits).map_err(|_| ParseError::OutOfBounds)
 }
 
 /// Parse a tolerant ISRC string into the canonical 12-byte form
@@ -225,6 +252,45 @@ mod tests {
         assert_eq!(parse_ipi(""), Err(ParseError::PatternMismatch));
         assert_eq!(parse_ipi("123456789012"), Err(ParseError::PatternMismatch));
         assert_eq!(parse_ipi("12345A789"), Err(ParseError::PatternMismatch));
+    }
+
+    #[test]
+    fn ipn_canonical_round_trips() {
+        let v = parse_ipn("12345678901").expect("canonical 11 digits");
+        assert_eq!(v.as_slice(), b"12345678901");
+    }
+
+    #[test]
+    fn ipn_pads_short_input_to_eleven() {
+        for (input, expected) in [
+            ("1", "00000000001"),
+            ("12", "00000000012"),
+            ("12345678", "00012345678"),
+        ] {
+            assert_eq!(
+                parse_ipn(input).unwrap().as_slice(),
+                expected.as_bytes(),
+                "{input}",
+            );
+        }
+    }
+
+    #[test]
+    fn ipn_trim() {
+        let v = parse_ipn("  12345678901  ").expect("padded with whitespace");
+        assert_eq!(v.as_slice(), b"12345678901");
+    }
+
+    #[test]
+    fn ipn_rejects_ipi_prefix() {
+        assert_eq!(parse_ipn("I-12345678901"), Err(ParseError::PatternMismatch));
+    }
+
+    #[test]
+    fn ipn_pattern_mismatch() {
+        assert_eq!(parse_ipn(""), Err(ParseError::PatternMismatch));
+        assert_eq!(parse_ipn("123456789012"), Err(ParseError::PatternMismatch));
+        assert_eq!(parse_ipn("12345A789"), Err(ParseError::PatternMismatch));
     }
 
     #[test]

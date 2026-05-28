@@ -10,7 +10,8 @@
 use frame_support::BoundedVec;
 use midds_traits::{Isni, Isrc, OffchainHash};
 use midds_types::{
-    Genre, MusicalKey, PartyId, Place, Recording, RecordingV1, RecordingVersion, Title, WorkRef,
+    Genre, MusicalKey, PartyId, PerformerId, Place, Recording, RecordingV1, RecordingVersion,
+    Title, WorkRef,
 };
 
 /// Fluent builder over already-canonical inputs.
@@ -24,7 +25,7 @@ pub struct RecordingBuilder {
     genres: Vec<Genre>,
     record_year: Option<u16>,
     version_type: Option<RecordingVersion>,
-    performers: Vec<PartyId>,
+    performers: Vec<PerformerId>,
     producers: Vec<Isni>,
     duration: Option<u32>,
     bpm: Option<u16>,
@@ -111,7 +112,7 @@ impl RecordingBuilder {
     }
 
     /// Replace the performers list. Panics if `performers.len() > PERFORMERS_MAX`.
-    pub fn performers_unchecked(mut self, performers: Vec<PartyId>) -> Self {
+    pub fn performers_unchecked(mut self, performers: Vec<PerformerId>) -> Self {
         self.performers = performers;
         self
     }

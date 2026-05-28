@@ -36,7 +36,7 @@ pub fn build() -> Result<Recording> {
     })?;
 
     ui::step(5, STEPS, "Performers");
-    let performers = build_party_collection("performer", PERFORMERS_MAX as usize)?;
+    let performers = build_performer_collection(PERFORMERS_MAX as usize)?;
     let performers = Performers::try_from(performers)
         .map_err(|_| anyhow::anyhow!("more than {PERFORMERS_MAX} performers"))?;
 
@@ -140,11 +140,21 @@ fn build_genres() -> Result<Genres> {
     Genres::try_from(genres).map_err(|_| anyhow::anyhow!("more than {GENRES_MAX} genres"))
 }
 
-/// Shared `Vec<PartyId>` collector for `performers` / `contributors` — both
-/// are IPI-or-ISNI lists differing only in their cap and noun.
+/// `Vec<PartyId>` collector for `contributors`. The performer collector is
+/// separate ([`build_performer_collection`]) because performers use the wider
+/// [`midds_types::PerformerId`] enum (IPN / IPI / ISNI).
 fn build_party_collection(noun: &str, max: usize) -> Result<Vec<midds_types::PartyId>> {
     prompts::collect_bounded(noun, 0, max, |_| {
         shared::party_id(&format!("{noun} identifier"))
+    })
+}
+
+/// `Vec<PerformerId>` collector for the `performers` list. Distinct from
+/// [`build_party_collection`] because the performer identifier set carries
+/// IPN as its primary code.
+fn build_performer_collection(max: usize) -> Result<Vec<midds_types::PerformerId>> {
+    prompts::collect_bounded("performer", 0, max, |_| {
+        shared::performer_id("performer identifier")
     })
 }
 

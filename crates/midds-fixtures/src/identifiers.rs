@@ -12,7 +12,7 @@
 //! is injective over the relevant ranges, so a `Vec<MusicalWork>` of size
 //! `N` produced by indices `0..N` is guaranteed to have unique ISWCs.
 
-use midds_traits::{Ipi, Isni, Isrc, Iswc, Upc};
+use midds_traits::{Ipi, Ipn, Isni, Isrc, Iswc, Upc};
 use rand::Rng;
 
 /// Build an ISWC from a 9-digit work code with the correct CISAC mod-10
@@ -78,6 +78,27 @@ pub fn ipi_from_stem(stem: u64, len: usize) -> Ipi {
 pub fn ipi_random<R: Rng + ?Sized>(rng: &mut R) -> Ipi {
     let len = rng.gen_range(9..=11);
     ipi_from_stem(rng.r#gen::<u64>(), len)
+}
+
+/// Build an IPN (exactly 11 decimal digits) from a numeric stem. IPN has no
+/// public check digit specification on the IPD side, so the body is taken
+/// modulo `10^11` and emitted verbatim — that's the strongest structural
+/// guarantee `validate_ipn_format` needs.
+pub fn ipn_from_stem(stem: u64) -> Ipn {
+    let body = stem % 100_000_000_000;
+    let mut digits = [0u8; 11];
+    let mut n = body;
+    for slot in digits.iter_mut().rev() {
+        *slot = (n % 10) as u8;
+        n /= 10;
+    }
+    let bytes: Vec<u8> = digits.iter().map(|d| b'0' + d).collect();
+    Ipn::try_from(bytes).expect("11-byte IPN fits the bound")
+}
+
+/// Random 11-digit IPN.
+pub fn ipn_random<R: Rng + ?Sized>(rng: &mut R) -> Ipn {
+    ipn_from_stem(rng.r#gen::<u64>())
 }
 
 /// Build an ISNI from 15 raw decimal digits. The check char (digit or `X`)
@@ -206,8 +227,8 @@ pub fn upc_random<R: Rng + ?Sized>(rng: &mut R) -> Upc {
 mod tests {
     use super::*;
     use midds_traits::{
-        validate_ipi_format, validate_isni_format, validate_isrc_format, validate_iswc_format,
-        validate_upc_format,
+        validate_ipi_format, validate_ipn_format, validate_isni_format, validate_isrc_format,
+        validate_iswc_format, validate_upc_format,
     };
 
     #[test]
@@ -266,9 +287,19 @@ mod tests {
         let mut rng = crate::rng::seeded_rng(0xDEAD_BEEF);
         for _ in 0..32 {
             assert!(validate_ipi_format(ipi_random(&mut rng).as_slice()).is_ok());
+            assert!(validate_ipn_format(ipn_random(&mut rng).as_slice()).is_ok());
             assert!(validate_isni_format(isni_random(&mut rng).as_slice()).is_ok());
             assert!(validate_isrc_format(isrc_random(&mut rng).as_slice()).is_ok());
             assert!(validate_upc_format(upc_random(&mut rng).as_slice()).is_ok());
+        }
+    }
+
+    #[test]
+    fn ipn_from_stem_is_structurally_valid() {
+        for stem in [0u64, 1, 12_345, 99_999_999_999, u64::MAX] {
+            let ipn = ipn_from_stem(stem);
+            assert_eq!(ipn.len(), 11);
+            assert!(validate_ipn_format(ipn.as_slice()).is_ok());
         }
     }
 

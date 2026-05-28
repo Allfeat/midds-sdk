@@ -16,14 +16,15 @@ use midds_traits::{Isni, MiddsFormatError};
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,
-    PRODUCERS_MAX, PartyId, Performers, Place, Producers, ProductionPlaces, Recording, RecordingV1,
-    RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN, TitleAliases, WorkRef,
+    PRODUCERS_MAX, PartyId, PerformerId, Performers, Place, Producers, ProductionPlaces, Recording,
+    RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN, TitleAliases, WorkRef,
 };
 use proptest::prelude::*;
 
 use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code};
 use crate::musical_work::strategy::{
-    arb_ipi, arb_isni, arb_isrc_valid, arb_iswc, arb_musical_key, arb_offchain_hash, arb_title,
+    arb_ipi, arb_ipn, arb_isni, arb_isrc_valid, arb_iswc, arb_musical_key, arb_offchain_hash,
+    arb_title,
 };
 
 fn printable_ascii() -> impl Strategy<Value = u8> {
@@ -80,16 +81,27 @@ pub fn arb_recording_version() -> impl Strategy<Value = RecordingVersion> {
     ]
 }
 
-/// Party identifier (artist / performer / contributor / creator): IPI,
-/// ISNI, or both — each sub-identifier well-formed by construction.
-/// The `Both` variant is sampled with a lower weight (one-third) than each
-/// single-identifier variant; that bias keeps single-id payloads dominant
-/// in random workloads while still exercising the multi-id case.
+/// Party identifier (artist / contributor / creator): IPI, ISNI, or both —
+/// each sub-identifier well-formed by construction. The `Both` variant is
+/// sampled with a lower weight (one-third) than each single-identifier
+/// variant; that bias keeps single-id payloads dominant in random workloads
+/// while still exercising the multi-id case.
 pub fn arb_party_id() -> impl Strategy<Value = PartyId> {
     prop_oneof![
         2 => arb_ipi().prop_map(PartyId::Ipi),
         2 => arb_isni().prop_map(PartyId::Isni),
         1 => (arb_ipi(), arb_isni()).prop_map(|(ipi, isni)| PartyId::Both { ipi, isni }),
+    ]
+}
+
+/// Performer identifier: IPN, IPI or ISNI. IPN is sampled at a higher weight
+/// because the IPD is the primary registry for declared performers — the
+/// other two are the fallback path for performers not declared at a CMO.
+pub fn arb_performer_id() -> impl Strategy<Value = PerformerId> {
+    prop_oneof![
+        2 => arb_ipn().prop_map(PerformerId::Ipn),
+        1 => arb_ipi().prop_map(PerformerId::Ipi),
+        1 => arb_isni().prop_map(PerformerId::Isni),
     ]
 }
 
@@ -133,7 +145,7 @@ fn arb_genres() -> impl Strategy<Value = Genres> {
 }
 
 fn arb_performers() -> impl Strategy<Value = Performers> {
-    proptest::collection::vec(arb_party_id(), 0..=(PERFORMERS_MAX as usize))
+    proptest::collection::vec(arb_performer_id(), 0..=(PERFORMERS_MAX as usize))
         .prop_map(|v| BoundedVec::try_from(v).expect("performers within bound"))
 }
 
@@ -208,8 +220,9 @@ pub fn arb_recording() -> impl Strategy<Value = Recording> {
 ///
 /// Every bounded field is filled to its bound and every `Option` is `Some`,
 /// using the larger enum variant wherever a choice exists: `artist` /
-/// `performers` / `contributors` as `PartyId::Both` (the larger identity
-/// variant — 30 bytes vs ≤ 18 for single-id), `work` as `WorkRef::Iswc`
+/// `contributors` as `PartyId::Both` (the larger identity variant — 30 bytes
+/// vs ≤ 18 for single-id), `performers` as `PerformerId::Isni` (the larger
+/// variant — 17 bytes vs 12 for `Ipn` / `Ipi`), `work` as `WorkRef::Iswc`
 /// (12 bytes vs 8 for the MIDDS id), all three production places present at
 /// `PLACE_MAX_LEN`. The byte content is randomised so shrinking still has
 /// work to do.
@@ -224,7 +237,7 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
             proptest::collection::vec(printable_ascii(), TITLE_MAX_LEN as usize),
             TITLE_ALIASES_MAX as usize,
         ),
-        proptest::collection::vec((any::<[u8; 15]>(), any::<u64>()), PERFORMERS_MAX as usize),
+        proptest::collection::vec(any::<[u8; 15]>(), PERFORMERS_MAX as usize),
         proptest::collection::vec(any::<[u8; 15]>(), PRODUCERS_MAX as usize),
         proptest::collection::vec((any::<[u8; 15]>(), any::<u64>()), CONTRIBUTORS_MAX as usize),
         (any::<[u8; 15]>(), any::<u64>()),
@@ -237,7 +250,7 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                 isrc_idx,
                 title,
                 aliases,
-                performer_pairs,
+                performer_bodies,
                 producer_bodies,
                 contributor_pairs,
                 (artist_body, artist_stem),
@@ -254,7 +267,10 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                     ipi: ipi_from_stem(stem, 11),
                     isni: isni_from_body(body),
                 };
-                let performers: Vec<PartyId> = performer_pairs.into_iter().map(to_both).collect();
+                let performers: Vec<PerformerId> = performer_bodies
+                    .into_iter()
+                    .map(|body| PerformerId::Isni(isni_from_body(body)))
+                    .collect();
                 let producers: Vec<Isni> =
                     producer_bodies.into_iter().map(isni_from_body).collect();
                 let contributors: Vec<PartyId> =

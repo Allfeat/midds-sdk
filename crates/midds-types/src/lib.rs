@@ -25,4 +25,4 @@ pub use release::{
     Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
     TRACKS_MAX, Tracks,
 };
-pub use shared::{PartyId, RecordingRef, WorkRef};
+pub use shared::{PartyId, PerformerId, RecordingRef, WorkRef};

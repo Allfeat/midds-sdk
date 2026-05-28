@@ -9,11 +9,12 @@
 
 use anyhow::{Context, Result};
 use dialoguer::Input;
-use midds_traits::{Ipi, Isni, Isrc, Iswc, OffchainHash, Upc};
+use midds_traits::{Ipi, Ipn, Isni, Isrc, Iswc, OffchainHash, Upc};
 use midds_types::{
-    Country, Language, Mode, MusicalKey, PartyId, PitchClass, RecordingRef, ReleaseDate, WorkRef,
+    Country, Language, Mode, MusicalKey, PartyId, PerformerId, PitchClass, RecordingRef,
+    ReleaseDate, WorkRef,
 };
-use midds_validate::{parse_ipi, parse_isni, parse_isrc, parse_iswc, parse_upc};
+use midds_validate::{parse_ipi, parse_ipn, parse_isni, parse_isrc, parse_iswc, parse_upc};
 
 use crate::create::prompts;
 use crate::ui;
@@ -41,6 +42,14 @@ pub fn parse_isni_msg(s: &str) -> Result<Isni, String> {
 pub fn parse_ipi_msg(s: &str) -> Result<Ipi, String> {
     parse_ipi(s)
         .map_err(|_| "IPI must be 1–11 digits (auto-padded with leading zeros to 11)".into())
+}
+
+/// Human-readable rule shown when [`parse_ipn`] rejects a typed IPN. A short
+/// input is left-padded with zeros to the canonical 11 digits — same UX as
+/// IPI; the `I-` prefix is **not** accepted (IPN is a separate registry).
+pub fn parse_ipn_msg(s: &str) -> Result<Ipn, String> {
+    parse_ipn(s)
+        .map_err(|_| "IPN must be 1–11 digits (auto-padded with leading zeros to 11)".into())
 }
 
 /// Human-readable rule shown when [`parse_isrc`] rejects a typed ISRC.
@@ -72,9 +81,9 @@ pub fn parse_offchain_hash_msg(s: &str) -> Result<OffchainHash, String> {
 }
 
 /// A party identifier — IPI, ISNI, or both. Backs `artist`, every `creator`,
-/// `performers`, `contributors`. The `Both` choice gets two consecutive
-/// identifier prompts and yields `PartyId::Both { ipi, isni }`; the single-id
-/// choices stay one-prompt wide for the fast path.
+/// `contributors`. The `Both` choice gets two consecutive identifier prompts
+/// and yields `PartyId::Both { ipi, isni }`; the single-id choices stay
+/// one-prompt wide for the fast path.
 pub fn party_id(label: &str) -> Result<PartyId> {
     match prompts::select(
         label,
@@ -99,6 +108,38 @@ pub fn party_id(label: &str) -> Result<PartyId> {
             ipi: prompts::identifier("IPI", parse_ipi_msg, "00052210040")?,
             isni: prompts::identifier("ISNI", parse_isni_msg, "0000000121032683")?,
         }),
+    }
+}
+
+/// A performer identifier — IPN, IPI, or ISNI. Performer-specific (an IPN is
+/// only issued to performers declared at a performer CMO); the IPI / ISNI
+/// choices stay as a fallback when no IPN is available. Listed in the order
+/// IPN → IPI → ISNI so the primary code is the default.
+pub fn performer_id(label: &str) -> Result<PerformerId> {
+    match prompts::select(
+        label,
+        &[
+            ("IPN — 1–11 digits (auto-padded)", 0u8),
+            ("IPI — 1–11 digits (auto-padded)", 1u8),
+            ("ISNI — 16 chars", 2u8),
+        ],
+        0,
+    )? {
+        0 => Ok(PerformerId::Ipn(prompts::identifier(
+            "IPN",
+            parse_ipn_msg,
+            "00012345678",
+        )?)),
+        1 => Ok(PerformerId::Ipi(prompts::identifier(
+            "IPI",
+            parse_ipi_msg,
+            "00052210040",
+        )?)),
+        _ => Ok(PerformerId::Isni(prompts::identifier(
+            "ISNI",
+            parse_isni_msg,
+            "0000000121032683",
+        )?)),
     }
 }
 

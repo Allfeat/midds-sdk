@@ -6,7 +6,9 @@ use midds_traits::{
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
-use crate::shared::{BPM_MAX, BPM_MIN, MusicalKey, PartyId, Title, WorkRef, YEAR_MAX, YEAR_MIN};
+use crate::shared::{
+    BPM_MAX, BPM_MIN, MusicalKey, PartyId, PerformerId, Title, WorkRef, YEAR_MAX, YEAR_MIN,
+};
 
 /// Maximum number of alternative titles attached to a recording.
 pub const TITLE_ALIASES_MAX: u32 = 8;
@@ -25,8 +27,12 @@ pub const PLACE_MAX_LEN: u32 = 128;
 pub type TitleAliases = BoundedVec<Title, ConstU32<TITLE_ALIASES_MAX>>;
 /// Genres tagging the recording.
 pub type Genres = BoundedVec<Genre, ConstU32<GENRES_MAX>>;
-/// Performers credited on the recording (IPI or ISNI each).
-pub type Performers = BoundedVec<PartyId, ConstU32<PERFORMERS_MAX>>;
+/// Performers credited on the recording. Each carries an [`PerformerId`] —
+/// preferably an IPN (issued by a performer CMO), falling back to IPI or ISNI
+/// when the performer is not declared at such a CMO. Distinct from the
+/// [`PartyId`] used for artist / creators / contributors: a non-performer
+/// party cannot hold an IPN.
+pub type Performers = BoundedVec<PerformerId, ConstU32<PERFORMERS_MAX>>;
 /// Producers credited on the recording. ISNI only — producers are legal /
 /// natural persons identified by ISNI in industry metadata, not IPI.
 pub type Producers = BoundedVec<Isni, ConstU32<PRODUCERS_MAX>>;
@@ -174,8 +180,9 @@ impl ProductionPlaces {
 /// First on-chain version of a `Recording`.
 ///
 /// Mandatory fields: `isrc`, `title`, `artist`, `work`. Everything else is
-/// optional / collection-empty-by-default. Identity references (artist,
-/// performers, contributors) reuse the shared [`PartyId`]; producers are
+/// optional / collection-empty-by-default. `artist` and `contributors` use
+/// the shared [`PartyId`] (IPI / ISNI / both); `performers` use the
+/// performer-specific [`PerformerId`] (IPN / IPI / ISNI); producers are
 /// ISNI-only; the recorded work is referenced by on-chain id or ISWC via
 /// the shared [`WorkRef`].
 #[derive(

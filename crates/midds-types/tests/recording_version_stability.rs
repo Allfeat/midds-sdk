@@ -21,8 +21,8 @@ use std::{fs, path::PathBuf};
 use bounded_collections::BoundedVec;
 use midds_traits::Midds as _;
 use midds_types::{
-    Genre, Mode, MusicalKey, PartyId, PitchClass, ProductionPlaces, Recording, RecordingV1,
-    RecordingVersion, WorkRef,
+    Genre, Mode, MusicalKey, PartyId, PerformerId, PitchClass, ProductionPlaces, Recording,
+    RecordingV1, RecordingVersion, WorkRef,
 };
 use parity_scale_codec::{Decode, Encode};
 
@@ -31,8 +31,9 @@ const FIXTURE_RELATIVE: &str = "tests/fixtures/recording_v1.scale";
 /// Construct the canonical reference `Recording::V1` used by the fixture.
 ///
 /// Hits enough variants to make accidental wire reshuffles visible:
-/// - Both `PartyId` variants (IPI for artist, ISNI for performer, IPI for
-///   a contributor).
+/// - `PartyId::Ipi` for artist, `PartyId::Ipi` for a contributor.
+/// - `PerformerId::Ipn` for a performer — exercises the performer-specific
+///   identifier introduced after the IPN extension.
 /// - The string-bearing `WorkRef::Iswc` variant.
 /// - `Some(...)` on every `Option` field except `bpm` (kept `None`) — covers
 ///   both presence and absence in the SCALE Option discriminator.
@@ -55,7 +56,7 @@ fn reference_v1() -> RecordingV1 {
             .expect("genres within bound"),
         record_year: Some(1972),
         version_type: Some(RecordingVersion::Live),
-        performers: BoundedVec::try_from(vec![PartyId::Isni(bv(b"0000000121032683"))])
+        performers: BoundedVec::try_from(vec![PerformerId::Ipn(bv(b"12345678901"))])
             .expect("performers within bound"),
         producers: BoundedVec::try_from(vec![bv(b"000000012103268X")])
             .expect("producers within bound"),

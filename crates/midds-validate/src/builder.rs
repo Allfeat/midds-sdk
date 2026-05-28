@@ -458,11 +458,11 @@ mod tests {
 
 use midds_traits::Isni;
 use midds_types::{
-    CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Place,
-    ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, WorkRef,
+    CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PerformerId,
+    Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, WorkRef,
 };
 
-use crate::parse::parse_isrc;
+use crate::parse::{parse_ipn, parse_isrc};
 
 /// How to interpret a raw party-identifier string typed by the user.
 #[derive(Debug, Clone, Copy)]
@@ -475,6 +475,22 @@ enum PartyKind {
 struct PartyInput {
     raw: String,
     kind: PartyKind,
+}
+
+/// How to interpret a raw performer-identifier string. Distinct from
+/// [`PartyKind`] because a performer carries the wider [`PerformerId`] enum
+/// (IPN / IPI / ISNI) — non-performer parties cannot hold an IPN.
+#[derive(Debug, Clone, Copy)]
+enum PerformerKind {
+    Ipn,
+    Ipi,
+    Isni,
+}
+
+#[derive(Debug, Clone)]
+struct PerformerInput {
+    raw: String,
+    kind: PerformerKind,
 }
 
 /// How the recorded work was referenced by the user: by on-chain MIDDS id
@@ -503,7 +519,7 @@ pub struct RecordingBuilder {
     genres: Vec<Genre>,
     record_year: Option<u16>,
     version_type: Option<RecordingVersion>,
-    performers_raw: Vec<PartyInput>,
+    performers_raw: Vec<PerformerInput>,
     producers_raw: Vec<String>,
     duration: Option<u32>,
     bpm: Option<u16>,
@@ -585,20 +601,32 @@ impl RecordingBuilder {
         self
     }
 
-    /// Append a performer identified by an IPI.
+    /// Append a performer identified by an IPN (International Performer
+    /// Number — issued by performer CMOs to declared performers).
+    pub fn add_performer_ipn(mut self, ipn: &str) -> Self {
+        self.performers_raw.push(PerformerInput {
+            raw: ipn.to_string(),
+            kind: PerformerKind::Ipn,
+        });
+        self
+    }
+
+    /// Append a performer identified by an IPI — the fallback for a performer
+    /// not declared at a performer CMO but already registered on the
+    /// publishing side.
     pub fn add_performer_ipi(mut self, ipi: &str) -> Self {
-        self.performers_raw.push(PartyInput {
+        self.performers_raw.push(PerformerInput {
             raw: ipi.to_string(),
-            kind: PartyKind::Ipi,
+            kind: PerformerKind::Ipi,
         });
         self
     }
 
     /// Append a performer identified by an ISNI.
     pub fn add_performer_isni(mut self, isni: &str) -> Self {
-        self.performers_raw.push(PartyInput {
+        self.performers_raw.push(PerformerInput {
             raw: isni.to_string(),
-            kind: PartyKind::Isni,
+            kind: PerformerKind::Isni,
         });
         self
     }
@@ -722,7 +750,7 @@ impl RecordingBuilder {
         let title_aliases = self.build_title_aliases(&mut errors);
         let artist = parse_party(artist_in, "artist", &mut errors);
         let work = self.resolve_work(work_in, &mut errors);
-        let performers = parse_party_list(
+        let performers = parse_performer_list(
             &self.performers_raw,
             "performers",
             PERFORMERS_MAX,
@@ -934,8 +962,8 @@ fn parse_party(
     }
 }
 
-/// Parse a bounded list of party identifiers (performers / contributors).
-/// Aggregates per-entry failures and the list-length overflow.
+/// Parse a bounded list of party identifiers (contributors). Aggregates
+/// per-entry failures and the list-length overflow.
 fn parse_party_list<C: bounded_collections::Get<u32>>(
     inputs: &[PartyInput],
     field: &'static str,
@@ -947,6 +975,40 @@ fn parse_party_list<C: bounded_collections::Get<u32>>(
         let one = match input.kind {
             PartyKind::Ipi => parse_ipi(&input.raw).map(PartyId::Ipi),
             PartyKind::Isni => parse_isni(&input.raw).map(PartyId::Isni),
+        };
+        match one {
+            Ok(id) => parsed.push(id),
+            Err(e) => errors.push(FieldError {
+                field,
+                message: format!("#{i} `{}`: {e}", input.raw),
+            }),
+        }
+    }
+    if parsed.len() > max as usize {
+        errors.push(FieldError {
+            field,
+            message: format!("{} provided, exceeds {max} max", parsed.len()),
+        });
+        return None;
+    }
+    BoundedVec::try_from(parsed).ok()
+}
+
+/// Parse a bounded list of performer identifiers. The performer variant of
+/// [`parse_party_list`] — yields the wider [`PerformerId`] enum so the IPN
+/// branch is reachable.
+fn parse_performer_list<C: bounded_collections::Get<u32>>(
+    inputs: &[PerformerInput],
+    field: &'static str,
+    max: u32,
+    errors: &mut Vec<FieldError>,
+) -> Option<BoundedVec<PerformerId, C>> {
+    let mut parsed = Vec::with_capacity(inputs.len());
+    for (i, input) in inputs.iter().enumerate() {
+        let one = match input.kind {
+            PerformerKind::Ipn => parse_ipn(&input.raw).map(PerformerId::Ipn),
+            PerformerKind::Ipi => parse_ipi(&input.raw).map(PerformerId::Ipi),
+            PerformerKind::Isni => parse_isni(&input.raw).map(PerformerId::Isni),
         };
         match one {
             Ok(id) => parsed.push(id),

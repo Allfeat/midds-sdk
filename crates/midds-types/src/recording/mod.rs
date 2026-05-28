@@ -47,7 +47,7 @@ impl Midds for Recording {
 #[allow(clippy::disallowed_methods, reason = "tests legitimately unwrap")]
 mod tests {
     use super::*;
-    use crate::shared::{Mode, MusicalKey, PartyId, PitchClass, WorkRef};
+    use crate::shared::{Mode, MusicalKey, PartyId, PerformerId, PitchClass, WorkRef};
     use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
@@ -110,7 +110,8 @@ mod tests {
         v.work = WorkRef::Midds(42);
         v.genres = BoundedVec::try_from(vec![Genre::Pop, Genre::Electronic]).unwrap();
         v.version_type = Some(RecordingVersion::RadioEdit);
-        v.performers = BoundedVec::try_from(vec![PartyId::Ipi(bv::<11>(b"1234567890"))]).unwrap();
+        v.performers =
+            BoundedVec::try_from(vec![PerformerId::Ipn(bv::<11>(b"12345678901"))]).unwrap();
         v.producers = BoundedVec::try_from(vec![bv::<16>(b"000000012103268X")]).unwrap();
         v.contributors =
             BoundedVec::try_from(vec![PartyId::Isni(bv::<16>(b"0000000121032683"))]).unwrap();
@@ -251,7 +252,7 @@ mod json_tests {
     //! fail one of these on purpose, forcing a deliberate version bump.
 
     use super::*;
-    use crate::shared::{Mode, MusicalKey, PartyId, PitchClass, WorkRef};
+    use crate::shared::{Mode, MusicalKey, PartyId, PerformerId, PitchClass, WorkRef};
     use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
@@ -322,7 +323,7 @@ mod json_tests {
         v.genres = BoundedVec::try_from(vec![Genre::HipHop, Genre::RnB]).unwrap();
         v.version_type = Some(RecordingVersion::ACapella);
         v.performers =
-            BoundedVec::try_from(vec![PartyId::Isni(bv::<16>(b"0000000121032683"))]).unwrap();
+            BoundedVec::try_from(vec![PerformerId::Isni(bv::<16>(b"0000000121032683"))]).unwrap();
         v.producers = BoundedVec::try_from(vec![bv::<16>(b"000000012103268X")]).unwrap();
         v.contributors = BoundedVec::try_from(vec![PartyId::Ipi(bv::<11>(b"1234567890"))]).unwrap();
         v.places = Some(ProductionPlaces {

@@ -9,14 +9,14 @@ pub mod strategy;
 pub use builder::RecordingBuilder;
 
 use midds_types::{
-    Genre, Mode, MusicalKey, PartyId, PitchClass, Recording, RecordingVersion, WorkRef,
+    Genre, Mode, MusicalKey, PartyId, PerformerId, PitchClass, Recording, RecordingVersion, WorkRef,
 };
 use rand::Rng;
 #[cfg(feature = "corpus")]
 use rand::SeedableRng;
 
 use crate::MiddsFixtures;
-use crate::identifiers::{ipi_random, isni_random, isrc_for_index, iswc_from_work_code};
+use crate::identifiers::{ipi_random, ipn_random, isni_random, isrc_for_index, iswc_from_work_code};
 
 /// `Recording` corner of the `MiddsFixtures` trait. Generic test harnesses
 /// (mass injection, property tests, CLI bench) drive this struct so adding a
@@ -104,7 +104,9 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
     let genres: Vec<Genre> = (0..genre_count).map(|_| pick_genre(rng)).collect();
 
     let performer_count = rng.gen_range(0..=3usize);
-    let performers: Vec<PartyId> = (0..performer_count).map(|_| random_party_id(rng)).collect();
+    let performers: Vec<PerformerId> = (0..performer_count)
+        .map(|_| random_performer_id(rng))
+        .collect();
 
     let producer_count = rng.gen_range(0..=2usize);
     let producers: Vec<midds_traits::Isni> =
@@ -140,6 +142,14 @@ fn random_party_id<R: Rng + ?Sized>(rng: &mut R) -> PartyId {
         PartyId::Ipi(ipi_random(rng))
     } else {
         PartyId::Isni(isni_random(rng))
+    }
+}
+
+fn random_performer_id<R: Rng + ?Sized>(rng: &mut R) -> PerformerId {
+    match rng.gen_range(0..3u8) {
+        0 => PerformerId::Ipn(ipn_random(rng)),
+        1 => PerformerId::Ipi(ipi_random(rng)),
+        _ => PerformerId::Isni(isni_random(rng)),
     }
 }
 

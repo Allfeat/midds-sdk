@@ -19,7 +19,9 @@ use midds_types::{
 };
 use proptest::prelude::*;
 
-use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code};
+use crate::identifiers::{
+    ipi_from_stem, ipn_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code,
+};
 use crate::recording::strategy::arb_party_id;
 
 /// Strategy producing checksum-correct ISWCs.
@@ -30,6 +32,13 @@ pub fn arb_iswc() -> impl Strategy<Value = Iswc> {
 /// Strategy producing checksum-correct IPIs of length 9..=11.
 pub fn arb_ipi() -> impl Strategy<Value = midds_traits::Ipi> {
     (any::<u64>(), 9usize..=11).prop_map(|(stem, len)| ipi_from_stem(stem, len))
+}
+
+/// Strategy producing structurally valid 11-digit IPNs. IPN has no public
+/// check-digit specification on the IPD side, so "valid" here is the
+/// structural guarantee `validate_ipn_format` checks (length + charset).
+pub fn arb_ipn() -> impl Strategy<Value = midds_traits::Ipn> {
+    any::<u64>().prop_map(ipn_from_stem)
 }
 
 /// Strategy producing checksum-correct ISNIs.

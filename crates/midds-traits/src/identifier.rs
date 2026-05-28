@@ -11,6 +11,11 @@ pub type Iswc = MiddsString<11>;
 pub type Isni = MiddsString<16>;
 /// IPI: 9 to 11 decimal digits.
 pub type Ipi = MiddsString<11>;
+/// IPN: International Performer Number — exactly 11 decimal digits. Issued by
+/// SCAPR's IPD registry to performers declared at a performer CMO. Distinct
+/// from IPI (CISAC, songwriters/publishers) and ISNI (ISO, any party), so it
+/// gets its own validator instead of being collapsed into [`Ipi`].
+pub type Ipn = MiddsString<11>;
 /// ISRC: 2 alpha country + 3 alphanumeric registrant + 2-digit year + 5 digits.
 pub type Isrc = MiddsString<12>;
 /// UPC / EAN barcode keying a `Release`: a GTIN-12 (UPC-A, 12 digits) or
@@ -48,6 +53,16 @@ pub fn validate_isni_format(b: &[u8]) -> Result<(), MiddsFormatError> {
 
 pub fn validate_ipi_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() < 9 || b.len() > 11 {
+        return Err(MiddsFormatError::OutOfBounds);
+    }
+    if !b.iter().all(u8::is_ascii_digit) {
+        return Err(MiddsFormatError::InvalidCharset);
+    }
+    Ok(())
+}
+
+pub fn validate_ipn_format(b: &[u8]) -> Result<(), MiddsFormatError> {
+    if b.len() != 11 {
         return Err(MiddsFormatError::OutOfBounds);
     }
     if !b.iter().all(u8::is_ascii_digit) {
@@ -111,6 +126,7 @@ mod tests {
         assert_eq!(<Iswc as MaxEncodedLen>::max_encoded_len(), 1 + 11);
         assert_eq!(<Isni as MaxEncodedLen>::max_encoded_len(), 1 + 16);
         assert_eq!(<Ipi as MaxEncodedLen>::max_encoded_len(), 1 + 11);
+        assert_eq!(<Ipn as MaxEncodedLen>::max_encoded_len(), 1 + 11);
         assert_eq!(<Isrc as MaxEncodedLen>::max_encoded_len(), 1 + 12);
         assert_eq!(<Upc as MaxEncodedLen>::max_encoded_len(), 1 + 13);
         assert_eq!(<OffchainHash as MaxEncodedLen>::max_encoded_len(), 2 + 64);
@@ -207,6 +223,33 @@ mod tests {
     fn ipi_invalid_charset() {
         assert_eq!(
             validate_ipi_format(b"12345A789"),
+            Err(MiddsFormatError::InvalidCharset),
+        );
+    }
+
+    #[test]
+    fn ipn_pass() {
+        assert!(validate_ipn_format(b"12345678901").is_ok());
+        assert!(validate_ipn_format(b"00000000000").is_ok());
+    }
+
+    #[test]
+    fn ipn_wrong_length() {
+        assert_eq!(
+            validate_ipn_format(b"1234567890"),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+        assert_eq!(
+            validate_ipn_format(b"123456789012"),
+            Err(MiddsFormatError::OutOfBounds),
+        );
+        assert_eq!(validate_ipn_format(b""), Err(MiddsFormatError::OutOfBounds));
+    }
+
+    #[test]
+    fn ipn_invalid_charset() {
+        assert_eq!(
+            validate_ipn_format(b"1234567890A"),
             Err(MiddsFormatError::InvalidCharset),
         );
     }

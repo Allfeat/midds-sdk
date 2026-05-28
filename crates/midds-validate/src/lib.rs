@@ -18,4 +18,4 @@ pub use checksum::{
     verify_iswc_checksum, verify_upc_checksum,
 };
 pub use error::{BuildError, FieldError, ParseError};
-pub use parse::{parse_ipi, parse_isni, parse_isrc, parse_iswc, parse_upc};
+pub use parse::{parse_ipi, parse_ipn, parse_isni, parse_isrc, parse_iswc, parse_upc};

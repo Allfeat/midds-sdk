@@ -12,9 +12,9 @@ use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Country, Creator,
     CreatorRole, CreatorRoles, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
-    MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PitchClass,
-    Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion, Release,
-    ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
+    MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PerformerId,
+    PitchClass, Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion,
+    Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
     TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef, WorkType,
 };
 
@@ -194,10 +194,12 @@ pub fn min_size_recording() -> Recording {
 }
 
 /// Maximum-size valid `Recording`: every bounded field at capacity, every
-/// optional field present, `PartyId::Both` everywhere (the larger identity
-/// variant now that IPI+ISNI can be carried together — 30 bytes vs ≤ 18 for
-/// single-id) and `WorkRef::Iswc` (larger than the MIDDS id). Stable
-/// worst-case baseline for fee benchmarks and SCALE-encoding tests.
+/// optional field present, `PartyId::Both` for `artist`/`contributors` (the
+/// larger identity variant now that IPI+ISNI can be carried together — 30
+/// bytes vs ≤ 18 for single-id), `PerformerId::Isni` for `performers` (the
+/// larger variant — 17 bytes vs 12 for `Ipn`/`Ipi`), and `WorkRef::Iswc`
+/// (larger than the MIDDS id). Stable worst-case baseline for fee benchmarks
+/// and SCALE-encoding tests.
 pub fn max_size_recording() -> Recording {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let aliases: Vec<_> = (0..TITLE_ALIASES_MAX)
@@ -211,7 +213,9 @@ pub fn max_size_recording() -> Recording {
         ipi: ipi_from_stem(u64::from(i) * 1_000_000_007 + 1, 11),
         isni: isni_at(i),
     };
-    let performers: Vec<PartyId> = (0..PERFORMERS_MAX).map(party_both_at).collect();
+    let performers: Vec<PerformerId> = (0..PERFORMERS_MAX)
+        .map(|i| PerformerId::Isni(isni_at(i)))
+        .collect();
     let producers: Vec<Isni> = (0..PRODUCERS_MAX).map(isni_at).collect();
     let contributors: Vec<PartyId> = (0..CONTRIBUTORS_MAX).map(party_both_at).collect();
     let place = BoundedVec::try_from(vec![b'p'; PLACE_MAX_LEN as usize]).expect("place at bound");

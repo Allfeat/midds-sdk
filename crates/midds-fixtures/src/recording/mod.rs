@@ -16,7 +16,9 @@ use rand::Rng;
 use rand::SeedableRng;
 
 use crate::MiddsFixtures;
-use crate::identifiers::{ipi_random, ipn_random, isni_random, isrc_for_index, iswc_from_work_code};
+use crate::identifiers::{
+    ipi_random, ipn_random, isni_random, isrc_for_index, iswc_from_work_code,
+};
 
 /// `Recording` corner of the `MiddsFixtures` trait. Generic test harnesses
 /// (mass injection, property tests, CLI bench) drive this struct so adding a

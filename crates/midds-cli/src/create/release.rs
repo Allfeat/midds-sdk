@@ -152,11 +152,8 @@ fn build_producers() -> Result<release::Producers> {
         0,
         release::PRODUCERS_MAX as usize,
         |_| -> Result<Producer> {
-            let isni: Isni = prompts::identifier(
-                "Producer ISNI",
-                shared::parse_isni_msg,
-                "0000000121032683",
-            )?;
+            let isni: Isni =
+                prompts::identifier("Producer ISNI", shared::parse_isni_msg, "0000000121032683")?;
             let catalog_number =
                 prompts::bounded_string::<REL_CATALOG_MAX>("Catalogue number", true)?;
             Ok(Producer {

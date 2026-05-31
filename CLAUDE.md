@@ -73,7 +73,7 @@ pub trait Midds: Parameter + MaxEncodedLen {
 |---|---|---|
 | `midds-traits` | no_std | `trait Midds`, identifier byte-string aliases (`Iswc`, `Isni`, `Ipi`, `Isrc`, `Upc`, `OffchainHash`), pure `validate_*_format` functions, `MiddsFormatError`. |
 | `midds-types` | no_std | Canonical MIDDS payloads. V1 ships all three types — `MusicalWork`, `Recording`, `Release` — each a top-level versioned `enum X { V1(XV1) }`. Cross-type pieces (`Title`, `PartyId`, `WorkRef`, `RecordingRef`, `MusicalKey`) live in `shared`; `Country` (ISO 3166-1) and `Language` (ISO 639-1) are closed tag-byte enums. |
-| `pallet-midds` | no_std | The generic multi-instance FRAME pallet. 4 extrinsics (`deposit`, `update`, `force_edit`, `force_remove`), bond via `fungible::MutateHold`, mock runtime in `src/mock.rs`. |
+| `pallet-midds` | no_std | The generic multi-instance FRAME pallet implementing `docs/economics.md`. Permissionless `deposit` secured by a **stratified (sponsor/owner) bond** `(DepositBase + DepositPerByte·size)·M_fast·M_slow` held via `fungible::MutateHold`; a **7-day refundable commitment window** then finalization to the Treasury (`transfer_on_hold`); **multi-claim** identifier index + exact-payload uniqueness; `_on_behalf` meta-transactions; and `force_*` sudo (`edit` / `remove_refund` / `remove_slash` / `remove_many`). 13 call indices total. Mock runtime in `src/mock.rs`. |
 | `midds-runtime-api` | no_std | `decl_runtime_apis!` for `lookup_by_identifier` / `get` / `deposit_info`. Implemented once per instance in the runtime. |
 | `midds-rpc` | std | Generic JSON-RPC handler bridging the runtime API to clients. |
 | `midds-validate` | std | Tolerant parsers (`parse_iswc`, …), warning-only checksum verifiers, `MusicalWorkBuilder`. **Never** runs on-chain. |
@@ -85,11 +85,12 @@ pub trait Midds: Parameter + MaxEncodedLen {
 ### Pallet (`pallet-midds`) mechanics
 
 - **Multi-instance**: parametrised on `<T, I>` and instantiated per-MIDDS-type in the runtime. `HoldReason<I>` is also instance-scoped.
-- **Storage**: `Items<MiddsId, T::Midds>`, `IdentifierIndex<Identifier, MiddsId>` (reverse lookup, backs uniqueness), `DepositInfo<MiddsId, Deposit>` (depositor + deposited_at + held bond), `NextMiddsId` (monotonic per-instance counter).
-- **Bond formula**: `DepositBase + DepositPerByte * encoded_size`. Stored in `Deposit::amount` so removal releases the exact original amount even if the formula has since changed.
-- **Freeze window**: `update` only works while `now - deposited_at <= UpdateWindow` and only by the original depositor. `force_edit` (sudo) bypasses the freeze.
+- **Storage**: `Items<MiddsId, T::Midds>`; `IdentifierClaims<Identifier, MiddsId, ()>` (**multi-claim** reverse index — several parties may register the same identifier); `PayloadHashes<H256, MiddsId>` (exact-payload uniqueness — byte-identical payloads only); `DepositInfo<MiddsId, Deposit>` (depositor + deposited_at + **sponsor/owner bond layers** + payload_hash + finalized); `PendingFinalization<expiry_block, MiddsId, ()>` + `NextFinalizationScan` (finalization queue + catch-up cursor); `DepositsThisBlock`/`FastMultiplier`/`SlowWindowBuckets`/`SlowWindowHead`/`SlowMultiplier` (dynamic pricing); `OnBehalfNonce<AccountId, u64>` (meta-tx replay protection); `DepositBase`/`DepositPerByte` (**sudo-mutable** bond params — storage, not Config consts); `NextMiddsId`.
+- **Bond formula**: `(DepositBase + DepositPerByte * encoded_size) * M_fast * M_slow`. `DepositBase`/`DepositPerByte` live in storage (sudo-set via `force_set_deposit_*`); genesis must supply a non-zero `deposit_base` (asserted) or the chain won't build. The deposit-time multiplier premium is **sticky per bond layer** (anti-arbitrage), so an `update` re-prices only the base delta, never the banked premium.
+- **Commitment window**: `update` / `remove_own` work only while `now - deposited_at < CommitmentWindow` (and `update` only by the depositor). At expiry the bond finalizes to the Treasury — eagerly via the bounded `on_initialize` sweep, or via permissionless `finalize(id)`. `force_edit` (sudo) bypasses the window.
+- **Atomic settlement**: bond→Treasury always uses `transfer_on_hold` (never release-then-transfer, so a freeze on the payer can't strand a half-settled bond); the `on_initialize` finalize sweep wraps each record in its own `with_storage_layer` and weighs each prefix probe.
 - **Identifier immutability**: neither `update` nor `force_edit` can change the canonical identifier.
-- **Validation on-chain is format-only** (charset, length, structure) — explicitly **not** checksum verification. Real-world registries publish records with bad check digits; checksums are warning-only and live in `midds-validate`.
+- **Validation on-chain is format-only** (charset, length, structure, numeric ranges, min-cardinality) — explicitly **not** checksum verification. Real-world registries publish records with bad check digits; checksums are warning-only and live in `midds-validate`.
 
 ### Versioning strategy
 

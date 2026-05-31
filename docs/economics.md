@@ -271,6 +271,27 @@ sous-payée à la création — son extension ultérieure rebase la couche au
 nouveau total base, ce qui peut faire grossir le hold ; ce comportement
 miroite la pré-stratification.
 
+### 5.6.1 Exposition du sponsor à la prime (risque assumé)
+
+Sur un record sponsorisé, l'autorité de rétractation appartient à
+l'**owner** (`remove_own` / `remove_own_on_behalf`). Si l'owner annule
+pendant une période de `M > 1`, la base du sponsor lui est rendue, mais
+**la prime de multiplicateur que le sponsor a payée part en Treasury**
+(règle anti-arbitrage §5.5, appliquée par couche). Un owner peut donc, à
+coût nul pour lui (via un relayer en `remove_own_on_behalf`), faire perdre
+au sponsor la prime payée au `deposit_on_behalf`.
+
+C'est le **pendant assumé** de l'escape hatch web3 : rendre la prime au
+sponsor rouvrirait l'arbitrage de burst par collusion sponsor↔owner
+(burst cher → owner annule → prime récupérée). La perte est nulle à `M = 1`
+(régime nominal) et n'apparaît que sous charge.
+
+**Mitigation, côté opérateur** : ne pas auto-sponsoriser quand `M` est
+élevé. Les RPC `current_multipliers` / `current_deposit_price` (§12.2)
+sont exposés précisément pour gater le `deposit_on_behalf` sur le
+multiplicateur courant avant de signer — l'équivalent d'un *slippage
+limit*.
+
 ---
 
 ## 6. Constants runtime

@@ -253,6 +253,17 @@ cohérente.
 
 ### 5.3 `pallet-midds` (no_std, le cœur)
 
+> ⚠️ **Cette sous-section décrit le draft V1 initial (4 extrinsics, storage
+> simple `IdentifierIndex`, bond statique) et est SUPERSEDED par
+> [`docs/economics.md`](./economics.md) ET par l'implémentation livrée.** Le
+> pallet réel a 13 call indices, un bond stratifié sponsor/owner avec
+> multiplicateurs dynamiques, une fenêtre 7j + file de finalisation, des
+> méta-transactions `_on_behalf`, le multi-claim (`IdentifierClaims` +
+> `PayloadHashes`) et `force_remove_refund/slash/many`. Pour la surface
+> exacte, voir `CLAUDE.md` (« Pallet mechanics ») et le code
+> (`pallets/pallet-midds/src/{lib,impls,multipliers,types}.rs`). Le texte
+> ci-dessous est conservé pour l'historique de conception uniquement.
+
 **Rôle** : pallet FRAME générique multi-instance gérant le cycle de vie d'un
 type MIDDS.
 

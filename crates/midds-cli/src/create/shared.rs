@@ -63,8 +63,7 @@ pub fn parse_isrc_msg(s: &str) -> Result<Isrc, String> {
 
 /// Human-readable rule shown when [`parse_upc`] rejects a typed UPC/EAN.
 pub fn parse_upc_msg(s: &str) -> Result<Upc, String> {
-    parse_upc(s)
-        .map_err(|_| "UPC / EAN must be 12 or 13 digits (spaces / dashes accepted)".into())
+    parse_upc(s).map_err(|_| "UPC / EAN must be 12 or 13 digits (spaces / dashes accepted)".into())
 }
 
 /// Tiny non-empty check for the off-chain extension hash. There is no

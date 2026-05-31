@@ -12,10 +12,11 @@ use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Country, Creator,
     CreatorRole, CreatorRoles, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
-    MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, PerformerId,
-    PitchClass, Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion,
-    Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
-    TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef, WorkType,
+    MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId,
+    PerformerId, PitchClass, Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1,
+    RecordingVersion, Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus,
+    ReleaseType, ReleaseV1, TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef,
+    WorkType,
 };
 
 use crate::identifiers::{

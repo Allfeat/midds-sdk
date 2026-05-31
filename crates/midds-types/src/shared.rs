@@ -229,8 +229,23 @@ impl WorkRef {
 /// [`WorkRef`]: the `Midds` variant is the cheapest on-chain reference
 /// (8 bytes, no string), the ISRC variant keeps a `Release` tracklist usable
 /// before each referenced recording is registered.
+///
+/// `Ord` is derived (by variant order then contents, matching the SCALE tag
+/// order) so `Release::validate_format` can detect duplicate tracks via a
+/// `BTreeSet` in O(n log n) instead of an O(n²) pairwise scan. Deriving `Ord`
+/// does not change the SCALE encoding.
 #[derive(
-    Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RecordingRef {

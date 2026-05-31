@@ -283,8 +283,13 @@ impl ReleaseV1 {
         for t in &self.tracks {
             t.validate_format()?;
         }
-        for (i, a) in self.tracks.iter().enumerate() {
-            if self.tracks.iter().skip(i + 1).any(|b| b == a) {
+        // Tracklist uniqueness: no `RecordingRef` may appear twice. A
+        // `BTreeSet` of references is O(n log n) over the (≤ TRACKS_MAX = 256)
+        // entries, replacing the previous O(n²) pairwise scan so the
+        // worst-case cost of this on-chain check stays bounded.
+        let mut seen = alloc::collections::BTreeSet::new();
+        for t in &self.tracks {
+            if !seen.insert(t) {
                 return Err(MiddsFormatError::CrossFieldInconsistency);
             }
         }

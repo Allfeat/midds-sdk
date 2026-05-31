@@ -110,11 +110,18 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     /// Shift `current` toward the observed/target deviation, clamped to
     /// `[min, max]`. EIP-1559 form: the up step is
     /// `current × (1 + rate × δ)` with `δ = (observed − target) / target`,
-    /// so a 10× burst yields a 10× rate move instead of the constant 1×
-    /// step the previous binary version did. The down step mirrors that
-    /// via `current × 1 / (1 + rate × δ)` (with `δ` flipped) so a pair of
-    /// opposing same-magnitude observations round-trips the multiplier
-    /// back to its starting value, preserving symmetry.
+    /// so a 10× burst yields a `10 × rate` move instead of the constant 1×
+    /// step the previous binary version did. The down step is the reciprocal
+    /// `current / (1 + rate × δ)`.
+    ///
+    /// The two sides are **deliberately asymmetric**: the up-side `δ` is
+    /// unbounded (a burst can land at many multiples of target), but the
+    /// down-side `δ = (target − observed) / target` is capped at 1 because
+    /// `observed ≥ 0`. So a spike ratchets up fast and then decays by at most
+    /// `÷(1 + rate)` per fully-idle period — the intended anti-DoS shape
+    /// (quick to react, slow to forgive). A clean reciprocal round-trip
+    /// therefore only holds for deviations of magnitude `≤ 1× target`; a
+    /// larger burst unwinds over several periods rather than in one.
     fn adjust_multiplier(
         current: FixedU128,
         observed: u32,

@@ -41,7 +41,12 @@ pub trait BenchmarkHelper<M, Signature, AccountId> {
 }
 
 fn fund_caller<T: Config<I>, I: 'static>(account: &T::AccountId) {
-    let endowment = BalanceOf::<T, I>::max_value() / 2u32.into();
+    // `max_value() / 16` — astronomically more than any bond, yet small
+    // enough that funding several accounts (e.g. the operator *and* owner of
+    // a two-layer record) never overflows `TotalIssuance`. With `max_value()
+    // / 2`, the second `set_balance` would overflow issuance and the fungible
+    // default silently leaves that account at zero, so its later hold fails.
+    let endowment = BalanceOf::<T, I>::max_value() / 16u32.into();
     let _ = T::Currency::set_balance(account, endowment);
 }
 
@@ -51,6 +56,61 @@ fn warp_past_window<T: Config<I>, I: 'static>() {
     let now = frame_system::Pallet::<T>::block_number();
     let target = now + T::CommitmentWindow::get() + 1u32.into();
     frame_system::Pallet::<T>::set_block_number(target);
+}
+
+/// Build a record at id 0 that carries **both** a sponsor layer and an owner
+/// layer — the worst case for every settlement path (`finalize_one`,
+/// `remove_own`, `force_remove_*`), which must then release/transfer two
+/// holds, not one. The operator sponsors the deposit via `deposit_on_behalf`
+/// and the owner extends it with a plain `update` (the web3 escape hatch),
+/// materialising the owner layer. Returns the owner account so the caller can
+/// drive depositor-authenticated extrinsics. Both operator and owner are
+/// funded.
+fn setup_two_layer_record<T: Config<I>, I: 'static>() -> T::AccountId {
+    let operator: T::AccountId = whitelisted_caller();
+    fund_caller::<T, I>(&operator);
+
+    let valid_until = BlockNumberFor::<T>::max_value();
+    let initial = T::BenchmarkHelper::bench_instance(0);
+    let dummy = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+        kind: MiddsPallet::<T, I>::kind_bytes(),
+        genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
+        action: OnBehalfAction::Deposit,
+        item: initial.clone(),
+        operator: operator.clone(),
+        nonce: 0,
+        valid_until,
+    };
+    let (_, owner) = T::BenchmarkHelper::create_signature(b"owner", &dummy.encode());
+
+    let nonce0 = crate::OnBehalfNonce::<T, I>::get(&owner);
+    let dep_payload = DepositOnBehalfPayload::<T::AccountId, BlockNumberFor<T>, T::Hash, T::Midds> {
+        kind: MiddsPallet::<T, I>::kind_bytes(),
+        genesis_hash: MiddsPallet::<T, I>::genesis_hash(),
+        action: OnBehalfAction::Deposit,
+        item: initial.clone(),
+        operator: operator.clone(),
+        nonce: nonce0,
+        valid_until,
+    };
+    let (dep_sig, _) = T::BenchmarkHelper::create_signature(b"owner", &dep_payload.encode());
+    MiddsPallet::<T, I>::deposit_on_behalf(
+        RawOrigin::Signed(operator).into(),
+        owner.clone(),
+        initial,
+        nonce0,
+        valid_until,
+        dep_sig,
+    )
+    .expect("deposit_on_behalf in two-layer setup");
+
+    // Owner extends the sponsored record → materialises the owner layer.
+    fund_caller::<T, I>(&owner);
+    let extended = T::BenchmarkHelper::bench_instance(64);
+    MiddsPallet::<T, I>::update(RawOrigin::Signed(owner.clone()).into(), 0, extended)
+        .expect("owner update materialises the owner layer");
+
+    owner
 }
 
 #[instance_benchmarks]
@@ -93,14 +153,12 @@ mod benchmarks {
 
     #[benchmark]
     fn remove_own() -> Result<(), BenchmarkError> {
-        let caller: T::AccountId = whitelisted_caller();
-        fund_caller::<T, I>(&caller);
-
-        let item = T::BenchmarkHelper::bench_instance(0);
-        MiddsPallet::<T, I>::deposit(RawOrigin::Signed(caller.clone()).into(), item)?;
+        // Worst case: a two-layer record removed within the window, so both
+        // layers settle (each premium to Treasury, each base refunded).
+        let owner = setup_two_layer_record::<T, I>();
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(caller), 0);
+        _(RawOrigin::Signed(owner), 0);
 
         assert!(!Items::<T, I>::contains_key(0));
         Ok(())
@@ -108,11 +166,10 @@ mod benchmarks {
 
     #[benchmark]
     fn finalize_one() -> Result<(), BenchmarkError> {
-        let caller: T::AccountId = whitelisted_caller();
-        fund_caller::<T, I>(&caller);
-
-        let item = T::BenchmarkHelper::bench_instance(0);
-        MiddsPallet::<T, I>::deposit(RawOrigin::Signed(caller).into(), item)?;
+        // Worst case: a two-layer record, so the finalization sweep settles
+        // two holds to the Treasury — the per-record cost `on_initialize`
+        // multiplies by `MaxFinalizationsPerBlock`.
+        let _owner = setup_two_layer_record::<T, I>();
         warp_past_window::<T, I>();
 
         let cranker: T::AccountId = whitelisted_caller();
@@ -122,6 +179,7 @@ mod benchmarks {
 
         let info = DepositInfo::<T, I>::get(0).expect("info kept after finalize");
         assert!(info.finalized);
+        assert!(info.owner_layer.is_some(), "two-layer worst case");
         Ok(())
     }
 
@@ -143,12 +201,10 @@ mod benchmarks {
 
     #[benchmark]
     fn force_remove_refund() -> Result<(), BenchmarkError> {
-        let caller: T::AccountId = whitelisted_caller();
-        fund_caller::<T, I>(&caller);
-
-        let item = T::BenchmarkHelper::bench_instance(0);
-        let identifier = item.identifier().clone();
-        MiddsPallet::<T, I>::deposit(RawOrigin::Signed(caller).into(), item)?;
+        // Worst case: a two-layer record refunded pre-finalization (both
+        // layers released back to their respective payers).
+        let _owner = setup_two_layer_record::<T, I>();
+        let identifier = T::BenchmarkHelper::bench_instance(0).identifier().clone();
 
         #[extrinsic_call]
         _(RawOrigin::Root, 0);
@@ -161,12 +217,13 @@ mod benchmarks {
 
     #[benchmark]
     fn force_remove_slash() -> Result<(), BenchmarkError> {
-        let caller: T::AccountId = whitelisted_caller();
-        fund_caller::<T, I>(&caller);
-
-        let item = T::BenchmarkHelper::bench_instance(0);
-        let payload_hash = <T::Hashing as sp_runtime::traits::Hash>::hash_of(&item);
-        MiddsPallet::<T, I>::deposit(RawOrigin::Signed(caller).into(), item)?;
+        // Worst case: a two-layer record slashed pre-finalization, so both
+        // layers transfer their full hold to the Treasury. The stored payload
+        // is the owner-extended one (`bench_instance(64)`).
+        let _owner = setup_two_layer_record::<T, I>();
+        let payload_hash = <T::Hashing as sp_runtime::traits::Hash>::hash_of(
+            &T::BenchmarkHelper::bench_instance(64),
+        );
 
         #[extrinsic_call]
         _(RawOrigin::Root, 0);

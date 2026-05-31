@@ -90,7 +90,7 @@ pub mod pallet {
     use parity_scale_codec::Encode;
     use sp_runtime::{
         FixedU128,
-        traits::{IdentifyAccount, One, Saturating, Verify},
+        traits::{IdentifyAccount, One, Saturating, Verify, Zero},
     };
 
     #[pallet::pallet]
@@ -158,9 +158,19 @@ pub mod pallet {
         type CommitmentWindow: Get<BlockNumberFor<Self>>;
 
         /// Hard cap on the number of pending finalizations executed by
-        /// `on_initialize` per block. The leftover entries are picked up
-        /// either by the next blocks' `on_initialize` or by a permissionless
+        /// `on_initialize` per block — and, equivalently, the number of
+        /// finalization-queue prefixes the eager sweep probes per block (so
+        /// the cursor catch-up after a backlog can never do an unbounded,
+        /// unweighed `iter_prefix` scan). Leftover entries are picked up by
+        /// subsequent blocks' `on_initialize` or by a permissionless
         /// `finalize(id)` call (cf. `docs/economics.md` §4.2).
+        ///
+        /// **Calibration**: set this **≥ the maximum sustainable deposit rate
+        /// per block**, not merely [`Config::FastTargetPerBlock`] — the latter
+        /// is a soft target the multipliers price *around*, not a throughput
+        /// cap. If deposits durably outpace this cap, the finalization queue
+        /// (and the conversion of bonds into Treasury revenue) falls
+        /// progressively behind.
         #[pallet::constant]
         type MaxFinalizationsPerBlock: Get<u32>;
 
@@ -256,8 +266,15 @@ pub mod pallet {
     >;
 
     /// Hash of the SCALE-encoded payload → on-chain id. Backs exact-payload
-    /// uniqueness: identical payloads are rejected, but different payloads
-    /// sharing an identifier are accepted.
+    /// uniqueness: byte-identical payloads are rejected, but different
+    /// payloads sharing an identifier are accepted (multi-claim).
+    ///
+    /// This stops *accidental* exact re-submissions only — flipping a single
+    /// optional byte yields a different hash and a distinct accepted record.
+    /// Adversarial near-duplicate suppression is therefore **not** an on-chain
+    /// guarantee; it is a deliberate off-chain / PoM concern (cf.
+    /// `docs/economics.md` §10.1). The on-chain deterrent against near-dup
+    /// flooding is the dynamic bond, not this index.
     #[pallet::storage]
     pub type PayloadHashes<T: Config<I>, I: 'static = ()> =
         StorageMap<_, Identity, T::Hash, MiddsId>;
@@ -428,6 +445,11 @@ pub mod pallet {
         /// of the unmultiplied bond formula changed. Same per-layer
         /// stickiness as `DepositBaseSet`.
         DepositPerByteSet { new: BalanceOf<T, I> },
+        /// A `force_remove_many` entry could not be applied (e.g. the id was
+        /// already gone, or `Refund` was requested on an already-finalized
+        /// record). The batch is best-effort and continues; this surfaces the
+        /// skipped id/kind so the `ForceOrigin` caller can reconcile.
+        RemovalFailed { id: MiddsId, kind: RemovalKind },
     }
 
     #[pallet::error]
@@ -483,10 +505,14 @@ pub mod pallet {
         WrongSponsor,
     }
 
-    /// Initial values for the runtime-mutable bond parameters. Both must be
-    /// supplied at chain bootstrap — there is no implicit default, since the
-    /// right calibration depends on the runtime's currency unit and the
-    /// economic targets of the host chain (cf. `docs/economics.md` §6).
+    /// Initial values for the runtime-mutable bond parameters. A real runtime
+    /// **must** override these at chain bootstrap — the right calibration
+    /// depends on the host chain's currency unit and economic targets
+    /// (cf. `docs/economics.md` §6). The [`Default`] impl supplies a
+    /// deliberately non-functional `1`-planck placeholder: non-zero so the
+    /// bond formula stays non-degenerate (`base × M` can never collapse to a
+    /// free deposit), but economically meaningless so a forgetful runtime is
+    /// obviously misconfigured rather than silently free.
     #[pallet::genesis_config]
     pub struct GenesisConfig<T: Config<I>, I: 'static = ()> {
         pub deposit_base: BalanceOf<T, I>,
@@ -497,9 +523,14 @@ pub mod pallet {
 
     impl<T: Config<I>, I: 'static> Default for GenesisConfig<T, I> {
         fn default() -> Self {
+            // Non-zero placeholder: keeps the bond formula non-degenerate (so
+            // `base × M_fast × M_slow` can never be a free deposit) and lets
+            // the `construct_runtime!`-generated `test_genesis_config_builds`
+            // pass, while staying an obvious "override me" value for any
+            // production runtime.
             Self {
-                deposit_base: <BalanceOf<T, I> as sp_runtime::traits::Zero>::zero(),
-                deposit_per_byte: <BalanceOf<T, I> as sp_runtime::traits::Zero>::zero(),
+                deposit_base: <BalanceOf<T, I> as One>::one(),
+                deposit_per_byte: <BalanceOf<T, I> as One>::one(),
                 _config: core::marker::PhantomData,
             }
         }
@@ -508,6 +539,21 @@ pub mod pallet {
     #[pallet::genesis_build]
     impl<T: Config<I>, I: 'static> BuildGenesisConfig for GenesisConfig<T, I> {
         fn build(&self) {
+            // The bond floor is the load-bearing anti-spam parameter: with a
+            // zero `deposit_base`, `base × M_fast × M_slow` collapses to zero
+            // and every permissionless deposit becomes free — and multi-claim
+            // has no per-account limit by design. Reject an *explicit* zero
+            // outright (a copy-paste / unfilled-placeholder hazard) so the
+            // chain fails to build rather than silently shipping a registry
+            // with no spam cost. The non-functional `Default` (1 planck) is
+            // itself non-zero, so a forgetful runtime still gets a
+            // non-degenerate formula. Cf. `docs/economics.md` §6.
+            assert!(
+                !self.deposit_base.is_zero(),
+                "pallet-midds: GenesisConfig::deposit_base must be non-zero \
+                 (it is the anti-spam bond floor); configure it explicitly per \
+                 docs/economics.md §6"
+            );
             DepositBase::<T, I>::put(self.deposit_base);
             DepositPerByte::<T, I>::put(self.deposit_per_byte);
         }
@@ -522,28 +568,51 @@ pub mod pallet {
             Self::adjust_fast_multiplier(fast_count);
 
             if !n.is_zero() && (n % T::BlocksPerDay::get()).is_zero() {
-                Self::rotate_slow_bucket();
+                // Adjust **before** rotating: at a daily rollover the head
+                // bucket holds the day that just ended, so the 7 live buckets
+                // are exactly the last 7 full days. Rotating first would zero
+                // the new bucket and leave only 6 days of data feeding the
+                // adjustment (cf. the previous off-by-one).
                 Self::adjust_slow_multiplier();
+                Self::rotate_slow_bucket();
                 weight = weight.saturating_add(T::DbWeight::get().reads_writes(2, 2));
             }
 
             let cap = T::MaxFinalizationsPerBlock::get() as usize;
             let mut remaining = cap;
+            // Bound the number of finalization-queue prefixes probed this
+            // block. Without this, a cursor left far behind `n` (e.g. after a
+            // sustained backlog finally drains) could sweep an unbounded run
+            // of empty prefixes in a single block — real `iter_prefix` DB
+            // reads that the old weight formula never accounted for. The
+            // cursor catches up over subsequent blocks; `finalize(id)` is the
+            // immediate permissionless fallback for anything still due.
+            let mut probes_remaining = cap;
             let initial_cursor = NextFinalizationScan::<T, I>::get();
             let mut cursor = initial_cursor;
             weight = weight.saturating_add(T::DbWeight::get().reads(1));
-            while cursor <= n && remaining > 0 {
+            while cursor <= n && remaining > 0 && probes_remaining > 0 {
                 let due: Vec<MiddsId> = PendingFinalization::<T, I>::iter_prefix(cursor)
                     .take(remaining)
                     .map(|(id, _)| id)
                     .collect();
+                // A prefix probe costs at least one DB read even when empty —
+                // charge it so the catch-up scan is reflected in block weight.
+                weight = weight.saturating_add(T::DbWeight::get().reads(1));
+                probes_remaining = probes_remaining.saturating_sub(1);
                 let count = due.len();
                 for id in due {
-                    let _ = Self::do_finalize(id);
+                    // Each finalization runs in its own storage layer so a
+                    // partial multi-layer settlement (e.g. sponsor layer moved
+                    // but owner layer's Treasury transfer failing) can never
+                    // persist: on error the record rolls back to a clean,
+                    // fully-held, not-yet-finalized state, recoverable via
+                    // `finalize(id)`. The bond is never half-released.
+                    let _ = frame_support::storage::with_storage_layer(|| Self::do_finalize(id));
                     weight = weight.saturating_add(T::WeightInfo::finalize_one());
                 }
                 remaining = remaining.saturating_sub(count);
-                if remaining > 0 {
+                if remaining > 0 && probes_remaining > 0 {
                     cursor = cursor.saturating_add(One::one());
                 }
             }
@@ -643,7 +712,7 @@ pub mod pallet {
             Self::ensure_identifier_unchanged(id, &item)?;
             Self::ensure_in_window(&info)?;
 
-            let updated = Self::apply_edit(id, item, info, &caller)?;
+            let updated = Self::apply_edit(id, item, info, &caller, true)?;
             Self::emit_updated_event(id, &updated);
             Ok(())
         }
@@ -697,7 +766,7 @@ pub mod pallet {
                 }
             })?;
 
-            let updated = Self::apply_edit(id, item, info, &operator)?;
+            let updated = Self::apply_edit(id, item, info, &operator, true)?;
             Self::emit_updated_event(id, &updated);
             Ok(())
         }
@@ -760,6 +829,11 @@ pub mod pallet {
         /// rewrites the on-chain payload and the reverse hash index.
         /// Lets governance correct a typo on a permanent record without
         /// slashing + re-depositing (which would lose attribution).
+        ///
+        /// Note this lets `ForceOrigin` enlarge a finalized record's encoded
+        /// footprint without posting additional bond (the original bond is
+        /// already spent to the Treasury). That is an accepted
+        /// governance-trust assumption, not a user-reachable path.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::force_edit(item.encoded_size() as u32))]
         #[frame_support::transactional]
@@ -774,7 +848,9 @@ pub mod pallet {
                 Self::apply_finalized_edit(id, item, info)?;
             } else {
                 let sponsor = info.sponsor_layer.payer.clone();
-                Self::apply_edit(id, item, info, &sponsor)?;
+                // `count_demand = false`: a governance edit is not organic
+                // deposit demand and must not move the dynamic multipliers.
+                Self::apply_edit(id, item, info, &sponsor, false)?;
             }
             Self::deposit_event(Event::ForceEdited { id });
             Ok(())
@@ -807,18 +883,32 @@ pub mod pallet {
         /// [`RemovalKind`], so a single call may interleave good-faith
         /// refunds and abuse slashes. Bounded by
         /// [`Config::MaxRemovalsPerCall`] for predictable weight.
+        ///
+        /// **Best-effort**: each entry is applied in its own storage layer and
+        /// a failing entry (e.g. an id already removed, or a `Refund`
+        /// requested on an already-finalized record) is skipped with a
+        /// [`Event::RemovalFailed`] rather than aborting the whole batch — a
+        /// single stale id in a large cleanup list no longer reverts every
+        /// other removal.
         #[pallet::call_index(7)]
         #[pallet::weight(T::WeightInfo::force_remove_many(requests.len() as u32))]
-        #[frame_support::transactional]
         pub fn force_remove_many(
             origin: OriginFor<T>,
             requests: BoundedVec<RemovalRequest, T::MaxRemovalsPerCall>,
         ) -> DispatchResult {
             T::ForceOrigin::ensure_origin(origin)?;
             for req in requests {
-                match req.kind {
-                    RemovalKind::Refund => Self::do_force_remove_refund(req.id)?,
-                    RemovalKind::Slash => Self::do_force_remove_slash(req.id)?,
+                let outcome = frame_support::storage::with_storage_layer(|| match req.kind {
+                    RemovalKind::Refund => Self::do_force_remove_refund(req.id),
+                    RemovalKind::Slash => Self::do_force_remove_slash(req.id),
+                });
+                if outcome.is_err() {
+                    // The failing entry rolled back inside its own layer; emit
+                    // the skip in the surviving outer context and carry on.
+                    Self::deposit_event(Event::RemovalFailed {
+                        id: req.id,
+                        kind: req.kind,
+                    });
                 }
             }
             Ok(())

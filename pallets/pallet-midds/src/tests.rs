@@ -954,12 +954,13 @@ fn force_remove_many_mixed_batch_per_id_kind() {
     });
 }
 
-/// `#[transactional]` on `force_remove_many` must roll the entire batch
-/// back if any single id fails — without atomicity the operator would
-/// observe an unstable middle state where some ids were settled and
-/// others were not.
+/// `force_remove_many` is **best-effort**: a failing entry (here a
+/// non-existent id) is skipped with a `RemovalFailed` event and runs in its
+/// own storage layer, so the rest of the batch still applies. A single stale
+/// id never reverts the good removals — the previous all-or-nothing behaviour
+/// was an operational footgun where one bad id undid a large cleanup.
 #[test]
-fn force_remove_many_rolls_back_partial_batch_on_failure() {
+fn force_remove_many_is_best_effort_and_skips_failures() {
     new_test_ext().execute_with(|| {
         let a = mock_midds(b"a", 5);
         let b = mock_midds(b"b", 6);
@@ -969,33 +970,40 @@ fn force_remove_many_rolls_back_partial_batch_on_failure() {
         for it in [&a, &b] {
             assert_ok!(Midds::deposit(RuntimeOrigin::signed(ALICE), it.clone()));
         }
-        let held_after_deposit = held(ALICE);
-        assert_eq!(held_after_deposit, total_a + total_b);
+        assert_eq!(held(ALICE), total_a + total_b);
+        let free_before = free(ALICE);
 
-        assert_noop!(
-            Midds::force_remove_many(
-                RuntimeOrigin::root(),
-                BoundedVec::try_from(vec![
-                    RemovalRequest {
-                        id: 0,
-                        kind: RemovalKind::Refund,
-                    },
-                    RemovalRequest {
-                        id: 42,
-                        kind: RemovalKind::Refund,
-                    },
-                ])
-                .expect("2 ≤ MaxRemovalsPerCall"),
-            ),
-            pallet_midds::Error::<Test, Instance>::MiddsNotFound,
-        );
+        // Batch: refund id 0 (valid) interleaved with id 42 (does not exist).
+        assert_ok!(Midds::force_remove_many(
+            RuntimeOrigin::root(),
+            BoundedVec::try_from(vec![
+                RemovalRequest {
+                    id: 0,
+                    kind: RemovalKind::Refund,
+                },
+                RemovalRequest {
+                    id: 42,
+                    kind: RemovalKind::Refund,
+                },
+            ])
+            .expect("2 ≤ MaxRemovalsPerCall"),
+        ));
 
-        assert_eq!(
-            held(ALICE),
-            held_after_deposit,
-            "partial batch must roll back both layers' settlement"
-        );
-        assert!(pallet_midds::DepositInfo::<Test, Instance>::contains_key(0));
+        // id 0 was refunded: its bond returned to ALICE, storage cleared.
+        assert!(!pallet_midds::DepositInfo::<Test, Instance>::contains_key(
+            0
+        ));
+        assert_eq!(held(ALICE), total_b, "only b's bond remains held");
+        assert_eq!(free(ALICE), free_before + total_a);
+
+        // id 1 (b) was not in the batch and is untouched.
+        assert!(pallet_midds::DepositInfo::<Test, Instance>::contains_key(1));
+
+        // The failed entry is surfaced, not silently swallowed.
+        System::assert_has_event(RuntimeEvent::Midds(pallet_midds::Event::RemovalFailed {
+            id: 42,
+            kind: RemovalKind::Refund,
+        }));
     });
 }
 

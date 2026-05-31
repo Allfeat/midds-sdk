@@ -14,8 +14,8 @@ use alloc::vec::Vec;
 use frame_support::{
     pallet_prelude::*,
     traits::{
-        fungible::{Mutate, MutateHold},
-        tokens::{Precision, Preservation},
+        fungible::MutateHold,
+        tokens::{Fortitude, Precision, Restriction},
     },
 };
 use frame_system::pallet_prelude::BlockNumberFor;
@@ -286,6 +286,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         item: T::Midds,
         mut info: DepositOf<T, I>,
         caller: &T::AccountId,
+        count_demand: bool,
     ) -> Result<DepositOf<T, I>, DispatchError> {
         let new_size = item.encoded_size() as u32;
         let new_total_base = Self::compute_base_bond(new_size);
@@ -300,7 +301,13 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             }
         }
 
-        Self::route_size_delta(&mut info, caller, new_total_base, old_total_base)?;
+        Self::route_size_delta(
+            &mut info,
+            caller,
+            new_total_base,
+            old_total_base,
+            count_demand,
+        )?;
 
         if new_hash != info.payload_hash {
             PayloadHashes::<T, I>::remove(info.payload_hash);
@@ -348,6 +355,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         caller: &T::AccountId,
         new_total_base: BalanceOf<T, I>,
         old_total_base: BalanceOf<T, I>,
+        count_demand: bool,
     ) -> DispatchResult {
         let caller_is_sponsor = caller == &info.sponsor_layer.payer;
 
@@ -356,7 +364,15 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
             if delta.is_zero() {
                 return Ok(());
             }
-            Self::record_deposit_demand();
+            // A user-driven `update` that grows the payload consumes fresh
+            // storage and is real demand (and must be priced into the
+            // multipliers, else a minimal-deposit-then-grow path would dodge
+            // dynamic pricing). A governance `force_edit`, however, is an
+            // administrative correction — it must not pollute the market
+            // demand signal, so `count_demand` is `false` on that path.
+            if count_demand {
+                Self::record_deposit_demand();
+            }
             if caller_is_sponsor {
                 Self::extend_layer_in_place(
                     &info.sponsor_layer.payer.clone(),
@@ -529,29 +545,48 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         if amount.is_zero() {
             return Ok(());
         }
-        <T::Currency as MutateHold<T::AccountId>>::release(
-            &Self::deposit_reason(),
-            payer,
-            amount,
-            Precision::Exact,
-        )
-        .map_err(|_| Error::<T, I>::BondReleaseFailed)?;
-
-        let to_treasury = match kind {
-            SettlementKind::Refund => return Ok(()),
-            SettlementKind::PremiumOnly => premium,
-            SettlementKind::Full => amount,
+        // Split the held `amount` into the part owed to the Treasury and the
+        // part refunded to `payer`.
+        let (to_treasury, to_payer) = match kind {
+            SettlementKind::Refund => (Zero::zero(), amount),
+            SettlementKind::PremiumOnly => (premium, amount.saturating_sub(premium)),
+            SettlementKind::Full => (amount, Zero::zero()),
         };
-        if to_treasury.is_zero() {
-            return Ok(());
+
+        // The Treasury leg is moved **straight from the hold** via
+        // `transfer_on_hold` — never released to `payer`'s free balance first.
+        // This makes the settlement atomic (the funds either reach the
+        // Treasury or nothing moves) and immune to a freeze on `payer` that
+        // would otherwise block a post-release `transfer` and strand the bond
+        // mid-settlement. `Fortitude::Force` is used because a finalized /
+        // slashed bond (and the non-refundable premium on `remove_own`) is
+        // protocol revenue owed regardless of any user-side lock — slash-like,
+        // per `docs/economics.md` §9. The matching free-balance arrival on the
+        // Treasury side is identical to the previous `release + transfer`, so
+        // off-chain balance watchers observe the same net movement.
+        if !to_treasury.is_zero() {
+            <T::Currency as MutateHold<T::AccountId>>::transfer_on_hold(
+                &Self::deposit_reason(),
+                payer,
+                &T::TreasuryAccount::get(),
+                to_treasury,
+                Precision::Exact,
+                Restriction::Free,
+                Fortitude::Force,
+            )
+            .map_err(|_| Error::<T, I>::BondTransferFailed)?;
         }
-        <T::Currency as Mutate<T::AccountId>>::transfer(
-            payer,
-            &T::TreasuryAccount::get(),
-            to_treasury,
-            Preservation::Expendable,
-        )
-        .map_err(|_| Error::<T, I>::BondTransferFailed)?;
+        // Whatever is owed back to the payer is released from the remaining
+        // hold. `release` moves hold → free and is unaffected by freezes.
+        if !to_payer.is_zero() {
+            <T::Currency as MutateHold<T::AccountId>>::release(
+                &Self::deposit_reason(),
+                payer,
+                to_payer,
+                Precision::Exact,
+            )
+            .map_err(|_| Error::<T, I>::BondReleaseFailed)?;
+        }
         Ok(())
     }
 
@@ -707,6 +742,17 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     /// [`Self::lookup_by_identifier_paged`].
     pub const MAX_LOOKUP_LIMIT: u32 = 256;
 
+    /// Hard cap on the number of `IdentifierClaims` entries any single
+    /// reverse-lookup / count helper will **read from storage**. This is the
+    /// distinction `MAX_LOOKUP_LIMIT` does not make: that one bounds the
+    /// returned payload, this one bounds the work done. Because multi-claim is
+    /// unbounded, without this cap a hot (or maliciously inflated) identifier
+    /// would make every lookup read, allocate and sort its entire prefix —
+    /// an RPC-node OOM / stall vector. Sized far above any realistic count of
+    /// distinct claims on one identifier; beyond it, enumeration is
+    /// best-effort (storage order) and `count_by_identifier` saturates.
+    pub const MAX_LOOKUP_SCAN: u32 = 10_000;
+
     /// First page of `MiddsId`s registered against the canonical
     /// identifier, capped at [`Self::MAX_LOOKUP_LIMIT`]. The result is
     /// sorted by `MiddsId` ascending so the cap is deterministic and
@@ -729,7 +775,13 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         if cap == 0 {
             return Vec::new();
         }
+        // `.take(MAX_LOOKUP_SCAN)` bounds the storage reads before any
+        // allocation: for an identifier with up to that many claims the sort
+        // is global and the `after` cursor is exact; past it the call reads
+        // only the first `MAX_LOOKUP_SCAN` entries (storage order) so a
+        // pathological identifier can't OOM/stall the node.
         let mut ids: Vec<MiddsId> = IdentifierClaims::<T, I>::iter_prefix(identifier)
+            .take(Self::MAX_LOOKUP_SCAN as usize)
             .map(|(id, _)| id)
             .filter(|id| match after {
                 Some(after_id) => *id > after_id,
@@ -741,15 +793,14 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         ids
     }
 
-    /// Total number of `MiddsId`s registered against the canonical
-    /// identifier — useful for UIs that need to render "X claims" next
-    /// to a paginated list. Iterates the prefix once, so the cost scales
-    /// linearly with the number of claims; callers that only need a
-    /// "more than N?" indicator should compare against
-    /// [`Self::MAX_LOOKUP_LIMIT`] from the lookup helper instead.
+    /// Number of `MiddsId`s registered against the canonical identifier,
+    /// **saturating at [`Self::MAX_LOOKUP_SCAN`]**. A return value equal to
+    /// that cap means "at least that many" — the scan is bounded for the same
+    /// RPC-node-safety reason as [`Self::lookup_by_identifier_paged`]. UIs that
+    /// only need a "X claims" badge can render the cap as "X+".
     pub fn count_by_identifier(identifier: <T::Midds as Midds>::Identifier) -> u32 {
         IdentifierClaims::<T, I>::iter_prefix(identifier)
-            .take(u32::MAX as usize)
+            .take(Self::MAX_LOOKUP_SCAN as usize)
             .count() as u32
     }
 }

@@ -211,8 +211,26 @@ impl MusicalWorkV1 {
                 for r in refs {
                     validate_iswc_format(r)?;
                 }
+                // A medley / mashup must reference at least two *distinct other*
+                // works: no reference may be the work itself, and no reference
+                // may repeat. Both are structurally meaningless otherwise. The
+                // `BTreeSet` keeps the uniqueness scan O(n log n) over the
+                // (<= WORK_REFERENCES_MAX = 32) entries, mirroring the Release
+                // tracklist-uniqueness check.
+                let mut seen = alloc::collections::BTreeSet::new();
+                for r in refs {
+                    if r == &self.iswc || !seen.insert(r) {
+                        return Err(MiddsFormatError::CrossFieldInconsistency);
+                    }
+                }
             }
-            WorkType::Adaptation(iswc) => validate_iswc_format(iswc)?,
+            WorkType::Adaptation(iswc) => {
+                validate_iswc_format(iswc)?;
+                // An adaptation cannot derive from itself.
+                if iswc == &self.iswc {
+                    return Err(MiddsFormatError::CrossFieldInconsistency);
+                }
+            }
         }
         if let Some(ci) = &self.classical_info {
             ci.validate_format()?;
@@ -233,6 +251,15 @@ mod tests {
 
     fn iswc() -> Iswc {
         BoundedVec::try_from(b"T0000000000".to_vec()).expect("11-byte ISWC")
+    }
+
+    /// A structurally-valid ISWC distinct from [`iswc`] (`T0000000000`) for
+    /// `1 <= n <= 9` — lets the work-reference tests build distinct,
+    /// non-self source lists.
+    fn iswc_n(n: u8) -> Iswc {
+        let mut bytes = b"T0000000000".to_vec();
+        bytes[10] = b'0' + n;
+        BoundedVec::try_from(bytes).expect("11-byte ISWC")
     }
 
     /// Builds a [`CreatorRoles`] from a static set of roles. Tests stay
@@ -342,9 +369,11 @@ mod tests {
 
     #[test]
     fn medley_and_mashup_need_at_least_two_refs() {
-        let refs = |n: usize| {
-            WorkReferences::try_from(vec![iswc(); n]).expect("refs within WORK_REFERENCES_MAX")
-        };
+        // Distinct refs, none equal to `base().iswc` — isolates the cardinality
+        // rule from the distinctness / self-reference rules below.
+        let distinct = [iswc_n(1), iswc_n(2)];
+        let refs =
+            |n: usize| WorkReferences::try_from(distinct[..n].to_vec()).expect("refs within bound");
         for make in [
             WorkType::Medley as fn(WorkReferences) -> WorkType,
             WorkType::Mashup,
@@ -355,7 +384,59 @@ mod tests {
             w.work_type = make(refs(1));
             assert_eq!(w.validate_format(), Err(MiddsFormatError::OutOfBounds));
             w.work_type = make(refs(2));
-            w.validate_format().expect(">= 2 refs validates");
+            w.validate_format()
+                .expect(">= 2 distinct non-self refs validates");
         }
+    }
+
+    #[test]
+    fn medley_and_mashup_reject_duplicate_refs() {
+        for make in [
+            WorkType::Medley as fn(WorkReferences) -> WorkType,
+            WorkType::Mashup,
+        ] {
+            let mut w = base();
+            // Two structurally-valid but identical refs.
+            w.work_type = make(
+                WorkReferences::try_from(vec![iswc_n(1), iswc_n(1)]).expect("refs within bound"),
+            );
+            assert_eq!(
+                w.validate_format(),
+                Err(MiddsFormatError::CrossFieldInconsistency)
+            );
+        }
+    }
+
+    #[test]
+    fn medley_and_mashup_reject_self_reference() {
+        for make in [
+            WorkType::Medley as fn(WorkReferences) -> WorkType,
+            WorkType::Mashup,
+        ] {
+            let mut w = base();
+            let self_iswc = w.iswc.clone();
+            // One distinct source plus the work's own ISWC.
+            w.work_type = make(
+                WorkReferences::try_from(vec![iswc_n(1), self_iswc]).expect("refs within bound"),
+            );
+            assert_eq!(
+                w.validate_format(),
+                Err(MiddsFormatError::CrossFieldInconsistency)
+            );
+        }
+    }
+
+    #[test]
+    fn adaptation_rejects_self_reference() {
+        let mut w = base();
+        w.work_type = WorkType::Adaptation(w.iswc.clone());
+        assert_eq!(
+            w.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency)
+        );
+        // An adaptation of a distinct source validates.
+        w.work_type = WorkType::Adaptation(iswc_n(1));
+        w.validate_format()
+            .expect("adaptation on a distinct source validates");
     }
 }

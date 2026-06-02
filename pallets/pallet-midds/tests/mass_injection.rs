@@ -396,11 +396,15 @@ fn mass_injection_100k() {
 
 #[test]
 fn mass_injection_max_size() {
+    // `max_size_musical_work` is a Medley referencing source codes 1..=32.
+    // Offset each item's ISWC clear of that band so no item references itself
+    // — `validate_format` now rejects self-reference (`CrossFieldInconsistency`).
+    const ISWC_BASE: u32 = 1_000;
     let items: Vec<MusicalWork> = (0..1_000u32)
         .map(|i| {
             let mut work = max_size_musical_work();
             let MusicalWork::V1(v1) = &mut work;
-            v1.iswc = iswc_for_index(i);
+            v1.iswc = iswc_for_index(ISWC_BASE + i);
             work
         })
         .collect();

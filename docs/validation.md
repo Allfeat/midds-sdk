@@ -12,7 +12,8 @@
 > structuré, `duration` en `u32`, `PartyId` sans `Both`, pas de
 > `manufacturer_name`) sont délibérés et conservés. L'ancien front sert de
 > source pour les **règles numériques / de cardinalité** (BPM, années,
-> nombre de voix, cardinalité Medley/Mashup) qui manquaient à la validation
+> nombre de voix, cardinalité + unicité + non-auto-référence des œuvres
+> sources Medley/Mashup/Adaptation) qui manquaient à la validation
 > on-chain et sont ajoutées ici.
 
 ---
@@ -106,8 +107,8 @@ identique à l'ancien front).
 | Variant | Règle on-chain | |
 |---|---|---|
 | `Original` | aucune | = |
-| `Medley(refs)` / `Mashup(refs)` | `refs.len() >= 2` (`OutOfBounds` si < 2) ; chaque réf : structure ISWC ; max 32 (`WORK_REFERENCES_MAX`) | **N** (était : non-vide ≥ 1) |
-| `Adaptation(iswc)` | exactement 1 ISWC (**S**) ; structure ISWC | = |
+| `Medley(refs)` / `Mashup(refs)` | `refs.len() >= 2` (`OutOfBounds` si < 2) ; chaque réf : structure ISWC ; **réfs distinctes et ≠ `iswc` du work** (`CrossFieldInconsistency`) ; max 32 (`WORK_REFERENCES_MAX`) | **N** (était : non-vide ≥ 1) |
+| `Adaptation(iswc)` | exactement 1 ISWC (**S**) ; structure ISWC ; **≠ `iswc` du work** (`CrossFieldInconsistency`) | **N** (était : structure seule) |
 
 **`ClassicalInfo`** (bloc optionnel) :
 
@@ -273,11 +274,13 @@ Décisions explicites, figées, à ne pas « corriger » sans bump de version :
 | Couche | Rôle |
 |---|---|
 | Type (`BoundedVec` / `MiddsString` / enum) | Longueurs max, cardinalités max, appartenance enum — **impossible à violer** par construction/décodage. |
-| `Midds::validate_format` (on-chain, bloquant) | Structure des identifiants, non-vide des champs obligatoires, **bornes numériques (`creation_year`, `record_year`, `bpm`, `number_of_voices`)**, **cardinalité minimale (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, `release_date` mois/jour. Format uniquement, jamais de checksum. |
+| `Midds::validate_format` (on-chain, bloquant) | Structure des identifiants, non-vide des champs obligatoires, **bornes numériques (`creation_year`, `record_year`, `bpm`, `number_of_voices`)**, **cardinalité minimale (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, **unicité + non-auto-référence des refs `Medley`/`Mashup`/`Adaptation`**, `release_date` mois/jour. Format uniquement, jamais de checksum. |
 | `midds-validate` (std, warning-only, jamais on-chain) | Parsing tolérant, vérification checksums (warnings), conventions non bloquantes (`instrumental⇒language`, contrôle calendaire strict, plafond `duration` métier). |
 
-Invariant inter-champs **appliqué** on-chain : `CrossFieldInconsistency` —
-unicité de la tracklist `Release` (aucun `RecordingRef` en double).
+Invariants inter-champs **appliqués** on-chain (`CrossFieldInconsistency`) :
+unicité de la tracklist `Release` (aucun `RecordingRef` en double) ; refs
+sources d'un `MusicalWork` `Medley` / `Mashup` / `Adaptation` distinctes et
+différentes de l'`iswc` du work lui-même.
 
 Invariant réservé non encore utilisé : `MiddsFormatError::DateInconsistency`
 (ex. `recording_year > work_year`) — prévu pour un durcissement inter-champs

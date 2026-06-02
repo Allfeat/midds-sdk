@@ -201,8 +201,25 @@ pub fn arb_work_type() -> impl Strategy<Value = WorkType> {
 }
 
 fn arb_work_references() -> impl Strategy<Value = WorkReferences> {
-    proptest::collection::vec(arb_iswc(), 2..=(WORK_REFERENCES_MAX as usize))
-        .prop_map(|v| BoundedVec::try_from(v).expect("work refs within bound"))
+    // `BTreeSet` so the generated refs are pairwise distinct: `validate_format`
+    // rejects a medley / mashup that lists the same source ISWC twice.
+    proptest::collection::btree_set(arb_iswc(), 2..=(WORK_REFERENCES_MAX as usize)).prop_map(
+        |set| {
+            BoundedVec::try_from(set.into_iter().collect::<Vec<_>>()).expect("work refs at bound")
+        },
+    )
+}
+
+/// True when `work_type`'s source references include `iswc` itself — the
+/// self-reference `validate_format` rejects with `CrossFieldInconsistency`.
+/// Used to keep the "always validates" strategies free of self-referencing
+/// payloads.
+fn work_type_references_iswc(work_type: &WorkType, iswc: &Iswc) -> bool {
+    match work_type {
+        WorkType::Original => false,
+        WorkType::Medley(refs) | WorkType::Mashup(refs) => refs.iter().any(|r| r == iswc),
+        WorkType::Adaptation(r) => r == iswc,
+    }
 }
 
 pub fn arb_classical_info() -> impl Strategy<Value = ClassicalInfo> {
@@ -268,6 +285,13 @@ pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
                 offchain_extension,
             },
         )
+        // A work cannot reference itself. `arb_iswc` draws from a 10^9 code
+        // space and the refs are already pairwise distinct (see
+        // `arb_work_references`), so this filter discards only the vanishing
+        // fraction of cases where a ref happens to equal the work's own ISWC.
+        .prop_filter("work must not reference its own ISWC", |w| {
+            !work_type_references_iswc(&w.work_type, &w.iswc)
+        })
 }
 
 /// Strategy producing valid `MusicalWork` payloads that pass
@@ -295,7 +319,10 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
         proptest::collection::vec(printable_ascii(), OPUS_MAX_LEN as usize),
         proptest::collection::vec(printable_ascii(), CATALOG_NUMBER_MAX_LEN as usize),
         proptest::collection::vec(printable_ascii(), 64usize),
-        proptest::collection::vec(0u32..1_000_000_000u32, WORK_REFERENCES_MAX as usize),
+        // `BTreeSet` of exactly `WORK_REFERENCES_MAX` distinct codes: the refs
+        // must be pairwise distinct, and 32 fixed-length ISWCs still saturate
+        // the `MaxEncodedLen` bound regardless of their values.
+        proptest::collection::btree_set(0u32..1_000_000_000u32, WORK_REFERENCES_MAX as usize),
     )
         .prop_map(
             |(iswc, title, isni_bodies, ipi_stems, opus, catalog, hash, work_codes)| {
@@ -353,6 +380,12 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                 MusicalWork::V1(v1)
             },
         )
+        // Guard the rare case where the work's own ISWC coincides with one of
+        // its (distinct) source refs — `validate_format` forbids self-reference.
+        .prop_filter("max-size work must not reference its own ISWC", |w| {
+            let MusicalWork::V1(v1) = w;
+            !work_type_references_iswc(&v1.work_type, &v1.iswc)
+        })
 }
 
 /// Strategy producing payloads that systematically fail

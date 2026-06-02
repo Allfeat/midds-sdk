@@ -28,7 +28,9 @@ pub enum MiddsFormatError {
     DateInconsistency,
     /// Two non-date fields constrain each other but disagree (e.g. the
     /// declared tracklist length does not match the number of `Recording`
-    /// references, or a creator's role contradicts the work type). Reserved
-    /// for cross-field invariants on `Recording` / `Release`.
+    /// references, a creator's role contradicts the work type, or a
+    /// `MusicalWork` medley/mashup/adaptation references itself or lists the
+    /// same source ISWC twice). Used for cross-field invariants on
+    /// `MusicalWork`, `Recording`, and `Release`.
     CrossFieldInconsistency,
 }

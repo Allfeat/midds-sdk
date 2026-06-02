@@ -556,7 +556,8 @@ mod tests {
 
 use midds_traits::Isni;
 use midds_types::{
-    CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PerformerId,
+    CONTRIBUTORS_MAX, FEATURING_MAX, GENRES_MAX, Genre, INSTRUMENTS_PER_PERFORMER_MAX, Instrument,
+    PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Performer, PerformerId, PerformerInstruments,
     Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX,
 };
 
@@ -589,6 +590,7 @@ enum PerformerKind {
 struct PerformerInput {
     raw: String,
     kind: PerformerKind,
+    instruments: Vec<Instrument>,
 }
 
 /// How the recorded work was referenced by the user: by on-chain MIDDS id
@@ -613,8 +615,10 @@ pub struct RecordingBuilder {
     title_raw: Option<String>,
     title_aliases_raw: Vec<String>,
     artist: Option<PartyInput>,
+    featuring_raw: Vec<PartyInput>,
     work: Option<WorkInput>,
     genres: Vec<Genre>,
+    sub_genre: Option<Genre>,
     record_year: Option<u16>,
     version_type: Option<RecordingVersion>,
     performers_raw: Vec<PerformerInput>,
@@ -689,6 +693,12 @@ impl RecordingBuilder {
         self
     }
 
+    /// Set (or clear) the optional secondary genre.
+    pub fn sub_genre(mut self, sub_genre: Option<Genre>) -> Self {
+        self.sub_genre = sub_genre;
+        self
+    }
+
     pub fn record_year(mut self, year: u16) -> Self {
         self.record_year = Some(year);
         self
@@ -700,11 +710,14 @@ impl RecordingBuilder {
     }
 
     /// Append a performer identified by an IPN (International Performer
-    /// Number — issued by performer CMOs to declared performers).
+    /// Number — issued by performer CMOs to declared performers). Attach the
+    /// instrument(s) played afterwards with
+    /// [`performer_instruments`](Self::performer_instruments).
     pub fn add_performer_ipn(mut self, ipn: &str) -> Self {
         self.performers_raw.push(PerformerInput {
             raw: ipn.to_string(),
             kind: PerformerKind::Ipn,
+            instruments: Vec::new(),
         });
         self
     }
@@ -716,6 +729,7 @@ impl RecordingBuilder {
         self.performers_raw.push(PerformerInput {
             raw: ipi.to_string(),
             kind: PerformerKind::Ipi,
+            instruments: Vec::new(),
         });
         self
     }
@@ -725,7 +739,18 @@ impl RecordingBuilder {
         self.performers_raw.push(PerformerInput {
             raw: isni.to_string(),
             kind: PerformerKind::Isni,
+            instruments: Vec::new(),
         });
+        self
+    }
+
+    /// Attach the instrument(s) played by the most recently added performer.
+    /// No-op when no performer has been added yet; the list is bound-checked
+    /// against `INSTRUMENTS_PER_PERFORMER_MAX` at [`build`](Self::build).
+    pub fn performer_instruments(mut self, instruments: Vec<Instrument>) -> Self {
+        if let Some(last) = self.performers_raw.last_mut() {
+            last.instruments = instruments;
+        }
         self
     }
 
@@ -780,6 +805,24 @@ impl RecordingBuilder {
     /// Append a contributor identified by an ISNI.
     pub fn add_contributor_isni(mut self, isni: &str) -> Self {
         self.contributors_raw.push(PartyInput {
+            raw: isni.to_string(),
+            kind: PartyKind::Isni,
+        });
+        self
+    }
+
+    /// Append a featured artist ("feat.") identified by an IPI.
+    pub fn add_featured_artist_ipi(mut self, ipi: &str) -> Self {
+        self.featuring_raw.push(PartyInput {
+            raw: ipi.to_string(),
+            kind: PartyKind::Ipi,
+        });
+        self
+    }
+
+    /// Append a featured artist ("feat.") identified by an ISNI.
+    pub fn add_featured_artist_isni(mut self, isni: &str) -> Self {
+        self.featuring_raw.push(PartyInput {
             raw: isni.to_string(),
             kind: PartyKind::Isni,
         });
@@ -861,6 +904,8 @@ impl RecordingBuilder {
             CONTRIBUTORS_MAX,
             &mut errors,
         );
+        let featuring =
+            parse_party_list(&self.featuring_raw, "featuring", FEATURING_MAX, &mut errors);
         let genres = if self.genres.len() > GENRES_MAX as usize {
             errors.push(FieldError {
                 field: "genres",
@@ -898,8 +943,10 @@ impl RecordingBuilder {
             title: title.expect("no errors → title parsed"),
             title_aliases: title_aliases.expect("no errors → aliases bounded"),
             artist: artist.expect("no errors → artist parsed"),
+            featuring: featuring.expect("no errors → featuring parsed"),
             work: work.expect("no errors → work resolved"),
             genres: genres.expect("no errors → genres bounded"),
+            sub_genre: self.sub_genre,
             record_year: self.record_year,
             version_type: self.version_type,
             performers: performers.expect("no errors → performers bounded"),
@@ -1092,29 +1139,47 @@ fn parse_party_list<C: bounded_collections::Get<u32>>(
     BoundedVec::try_from(parsed).ok()
 }
 
-/// Parse a bounded list of performer identifiers. The performer variant of
-/// [`parse_party_list`] — yields the wider [`PerformerId`] enum so the IPN
-/// branch is reachable.
+/// Parse a bounded list of performers. The performer variant of
+/// [`parse_party_list`] — each entry pairs the wider [`PerformerId`] enum (so
+/// the IPN branch is reachable) with its already-typed instrument list, which
+/// is bound-checked against `INSTRUMENTS_PER_PERFORMER_MAX`.
 fn parse_performer_list<C: bounded_collections::Get<u32>>(
     inputs: &[PerformerInput],
     field: &'static str,
     max: u32,
     errors: &mut Vec<FieldError>,
-) -> Option<BoundedVec<PerformerId, C>> {
+) -> Option<BoundedVec<Performer, C>> {
     let mut parsed = Vec::with_capacity(inputs.len());
     for (i, input) in inputs.iter().enumerate() {
-        let one = match input.kind {
+        let id = match input.kind {
             PerformerKind::Ipn => parse_ipn(&input.raw).map(PerformerId::Ipn),
             PerformerKind::Ipi => parse_ipi(&input.raw).map(PerformerId::Ipi),
             PerformerKind::Isni => parse_isni(&input.raw).map(PerformerId::Isni),
         };
-        match one {
-            Ok(id) => parsed.push(id),
-            Err(e) => errors.push(FieldError {
-                field,
-                message: format!("#{i} `{}`: {e}", input.raw),
-            }),
-        }
+        let id = match id {
+            Ok(id) => id,
+            Err(e) => {
+                errors.push(FieldError {
+                    field,
+                    message: format!("#{i} `{}`: {e}", input.raw),
+                });
+                continue;
+            }
+        };
+        let instruments = match PerformerInstruments::try_from(input.instruments.clone()) {
+            Ok(instruments) => instruments,
+            Err(_) => {
+                errors.push(FieldError {
+                    field,
+                    message: format!(
+                        "#{i} lists {} instruments, exceeds {INSTRUMENTS_PER_PERFORMER_MAX} max",
+                        input.instruments.len()
+                    ),
+                });
+                continue;
+            }
+        };
+        parsed.push(Performer { id, instruments });
     }
     if parsed.len() > max as usize {
         errors.push(FieldError {
@@ -1248,6 +1313,30 @@ mod recording_tests {
         recording
             .validate_format()
             .expect("builder output validates on-chain");
+    }
+
+    #[test]
+    fn featuring_instruments_and_sub_genre_build_and_validate() {
+        use midds_traits::Midds as _;
+        let recording = RecordingBuilder::new()
+            .isrc("USRC17607839")
+            .title("Collab Track")
+            .artist_isni("0000000121032683")
+            .work_iswc("T0345246802")
+            .add_featured_artist_ipi("00000000171")
+            .add_performer_ipn("00012345678")
+            .performer_instruments(vec![Instrument::ElectricGuitar, Instrument::LeadVocals])
+            .sub_genre(Some(Genre::Soul))
+            .build()
+            .expect("builds");
+        let Recording::V1(v) = &recording;
+        assert_eq!(v.featuring.len(), 1);
+        assert_eq!(v.sub_genre, Some(Genre::Soul));
+        assert_eq!(v.performers.len(), 1);
+        assert_eq!(v.performers[0].instruments.len(), 2);
+        recording
+            .validate_format()
+            .expect("featuring / instruments / sub_genre payload validates");
     }
 }
 

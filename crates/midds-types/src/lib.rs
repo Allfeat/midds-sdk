@@ -18,9 +18,10 @@ pub use musical_work::{
     WORK_REFERENCES_MAX, WorkReferences, WorkType,
 };
 pub use recording::{
-    CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,
-    PRODUCERS_MAX, Performers, Place, Producers, ProductionPlaces, Recording, RecordingV1,
-    RecordingVersion, TITLE_ALIASES_MAX, TitleAliases,
+    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, GENRES_MAX, Genre, Genres,
+    INSTRUMENTS_PER_PERFORMER_MAX, Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX,
+    Performer, PerformerInstruments, Performers, Place, Producers, ProductionPlaces, Recording,
+    RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TitleAliases,
 };
 pub use release::{
     COVER_CONTRIBUTORS_MAX, CoverContributorName, CoverContributors, DistributorName, Producer,

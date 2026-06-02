@@ -10,8 +10,8 @@
 use frame_support::BoundedVec;
 use midds_traits::{Isni, Isrc, OffchainHash};
 use midds_types::{
-    Genre, MusicalKey, PartyId, PerformerId, Place, Recording, RecordingV1, RecordingVersion,
-    Title, WorkRef,
+    Genre, MusicalKey, PartyId, Performer, Place, Recording, RecordingV1, RecordingVersion, Title,
+    WorkRef,
 };
 
 /// Fluent builder over already-canonical inputs.
@@ -21,11 +21,13 @@ pub struct RecordingBuilder {
     title: Title,
     title_aliases: Vec<Title>,
     artist: PartyId,
+    featuring: Vec<PartyId>,
     work: WorkRef,
     genres: Vec<Genre>,
+    sub_genre: Option<Genre>,
     record_year: Option<u16>,
     version_type: Option<RecordingVersion>,
-    performers: Vec<PerformerId>,
+    performers: Vec<Performer>,
     producers: Vec<Isni>,
     duration: Option<u32>,
     bpm: Option<u16>,
@@ -51,8 +53,10 @@ impl RecordingBuilder {
             title: BoundedVec::try_from(b"Untitled Recording".to_vec()).expect("18 bytes < 256"),
             title_aliases: Vec::new(),
             artist: default_artist,
+            featuring: Vec::new(),
             work: default_work,
             genres: Vec::new(),
+            sub_genre: None,
             record_year: None,
             version_type: None,
             performers: Vec::new(),
@@ -90,6 +94,13 @@ impl RecordingBuilder {
         self
     }
 
+    /// Replace the featured-artists list. Panics at build if it exceeds
+    /// `FEATURING_MAX`.
+    pub fn featuring_unchecked(mut self, featuring: Vec<PartyId>) -> Self {
+        self.featuring = featuring;
+        self
+    }
+
     pub fn work(mut self, work: WorkRef) -> Self {
         self.work = work;
         self
@@ -98,6 +109,12 @@ impl RecordingBuilder {
     /// Replace the genres list. Panics if `genres.len() > GENRES_MAX`.
     pub fn genres_unchecked(mut self, genres: Vec<Genre>) -> Self {
         self.genres = genres;
+        self
+    }
+
+    /// Set (or clear) the optional secondary genre.
+    pub fn sub_genre(mut self, sub_genre: Option<Genre>) -> Self {
+        self.sub_genre = sub_genre;
         self
     }
 
@@ -112,7 +129,8 @@ impl RecordingBuilder {
     }
 
     /// Replace the performers list. Panics if `performers.len() > PERFORMERS_MAX`.
-    pub fn performers_unchecked(mut self, performers: Vec<PerformerId>) -> Self {
+    /// Each [`Performer`] carries its own (already-bounded) instrument list.
+    pub fn performers_unchecked(mut self, performers: Vec<Performer>) -> Self {
         self.performers = performers;
         self
     }
@@ -185,8 +203,10 @@ impl RecordingBuilder {
             title_aliases: BoundedVec::try_from(self.title_aliases)
                 .expect("title aliases within bound"),
             artist: self.artist,
+            featuring: BoundedVec::try_from(self.featuring).expect("featuring within bound"),
             work: self.work,
             genres: BoundedVec::try_from(self.genres).expect("genres within bound"),
+            sub_genre: self.sub_genre,
             record_year: self.record_year,
             version_type: self.version_type,
             performers: BoundedVec::try_from(self.performers).expect("performers within bound"),
@@ -213,7 +233,7 @@ impl Default for RecordingBuilder {
 mod tests {
     use super::*;
     use midds_traits::Midds as _;
-    use midds_types::{Mode, PitchClass};
+    use midds_types::{Instrument, Mode, PerformerId, PitchClass};
 
     #[test]
     fn default_builder_validates() {
@@ -231,10 +251,24 @@ mod tests {
             .artist(PartyId::Isni(
                 BoundedVec::try_from(b"0000000121032683".to_vec()).expect("16 bytes"),
             ))
+            .featuring_unchecked(vec![PartyId::Ipi(
+                BoundedVec::try_from(b"00000000171".to_vec()).expect("11 bytes"),
+            )])
             .work(WorkRef::Midds(42))
             .genres_unchecked(vec![Genre::Pop, Genre::Jazz])
+            .sub_genre(Some(Genre::Soul))
             .record_year(1999)
             .version_type(RecordingVersion::Live)
+            .performers_unchecked(vec![Performer {
+                id: PerformerId::Ipn(
+                    BoundedVec::try_from(b"12345678901".to_vec()).expect("11 bytes"),
+                ),
+                instruments: BoundedVec::try_from(vec![
+                    Instrument::ElectricGuitar,
+                    Instrument::LeadVocals,
+                ])
+                .expect("2 instruments"),
+            }])
             .duration(241)
             .bpm(128)
             .key(MusicalKey {
@@ -249,6 +283,10 @@ mod tests {
         assert_eq!(v.title_aliases.len(), 1);
         assert_eq!(v.work, WorkRef::Midds(42));
         assert_eq!(v.genres.len(), 2);
+        assert_eq!(v.featuring.len(), 1);
+        assert_eq!(v.sub_genre, Some(Genre::Soul));
+        assert_eq!(v.performers.len(), 1);
+        assert_eq!(v.performers[0].instruments.len(), 2);
         assert_eq!(v.record_year, Some(1999));
         assert_eq!(v.duration, Some(241));
         assert!(v.places.is_some());

@@ -8,8 +8,10 @@ pub mod strategy;
 
 pub use builder::RecordingBuilder;
 
+use frame_support::BoundedVec;
 use midds_types::{
-    Genre, Mode, MusicalKey, PartyId, PerformerId, PitchClass, Recording, RecordingVersion, WorkRef,
+    Genre, Instrument, Mode, MusicalKey, PartyId, Performer, PerformerId, PerformerInstruments,
+    PitchClass, Recording, RecordingVersion, WorkRef,
 };
 use rand::Rng;
 #[cfg(feature = "corpus")]
@@ -104,10 +106,21 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
 
     let genre_count = rng.gen_range(0..=3usize);
     let genres: Vec<Genre> = (0..genre_count).map(|_| pick_genre(rng)).collect();
+    let sub_genre = if rng.r#gen::<bool>() {
+        Some(pick_genre(rng))
+    } else {
+        None
+    };
+
+    let featuring_count = rng.gen_range(0..=2usize);
+    let featuring: Vec<PartyId> = (0..featuring_count).map(|_| random_party_id(rng)).collect();
 
     let performer_count = rng.gen_range(0..=3usize);
-    let performers: Vec<PerformerId> = (0..performer_count)
-        .map(|_| random_performer_id(rng))
+    let performers: Vec<Performer> = (0..performer_count)
+        .map(|_| Performer {
+            id: random_performer_id(rng),
+            instruments: random_instruments(rng),
+        })
         .collect();
 
     let producer_count = rng.gen_range(0..=2usize);
@@ -123,8 +136,10 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
         .isrc(isrc)
         .title(&title_bytes)
         .artist(artist)
+        .featuring_unchecked(featuring)
         .work(work)
         .genres_unchecked(genres)
+        .sub_genre(sub_genre)
         .record_year(rng.gen_range(1900..=2025))
         .version_type(pick_version(rng))
         .performers_unchecked(performers)
@@ -152,6 +167,29 @@ fn random_performer_id<R: Rng + ?Sized>(rng: &mut R) -> PerformerId {
         0 => PerformerId::Ipn(ipn_random(rng)),
         1 => PerformerId::Ipi(ipi_random(rng)),
         _ => PerformerId::Isni(isni_random(rng)),
+    }
+}
+
+/// 0..=3 instruments for one performer, drawn from a representative spread of
+/// the [`Instrument`] taxonomy. Empty is a valid "instrument unknown".
+fn random_instruments<R: Rng + ?Sized>(rng: &mut R) -> PerformerInstruments {
+    let count = rng.gen_range(0..=3usize);
+    let instruments: Vec<Instrument> = (0..count).map(|_| pick_instrument(rng)).collect();
+    BoundedVec::try_from(instruments).expect("instrument count within bound")
+}
+
+fn pick_instrument<R: Rng + ?Sized>(rng: &mut R) -> Instrument {
+    match rng.gen_range(0..10u8) {
+        0 => Instrument::ElectricGuitar,
+        1 => Instrument::AcousticGuitar,
+        2 => Instrument::BassGuitar,
+        3 => Instrument::DrumKit,
+        4 => Instrument::Piano,
+        5 => Instrument::Synthesizer,
+        6 => Instrument::Violin,
+        7 => Instrument::Saxophone,
+        8 => Instrument::LeadVocals,
+        _ => Instrument::Other,
     }
 }
 

@@ -14,8 +14,15 @@ use crate::shared::{
 pub const TITLE_ALIASES_MAX: u32 = 8;
 /// Maximum number of genres tagging a recording.
 pub const GENRES_MAX: u32 = 8;
+/// Maximum number of featured artists ("feat.") credited on the recording.
+pub const FEATURING_MAX: u32 = 16;
 /// Maximum number of performers (band members, orchestra…) credited.
 pub const PERFORMERS_MAX: u32 = 64;
+/// Maximum number of instruments credited to a single performer. A
+/// multi-instrumentalist ("guitar, vocals") lists each; a single-instrument
+/// credit is a one-element list, and an unknown instrument is the empty list
+/// (no minimum cardinality).
+pub const INSTRUMENTS_PER_PERFORMER_MAX: u32 = 8;
 /// Maximum number of producers credited.
 pub const PRODUCERS_MAX: u32 = 8;
 /// Maximum number of other contributors credited.
@@ -27,12 +34,17 @@ pub const PLACE_MAX_LEN: u32 = 128;
 pub type TitleAliases = BoundedVec<Title, ConstU32<TITLE_ALIASES_MAX>>;
 /// Genres tagging the recording.
 pub type Genres = BoundedVec<Genre, ConstU32<GENRES_MAX>>;
-/// Performers credited on the recording. Each carries an [`PerformerId`] —
-/// preferably an IPN (issued by a performer CMO), falling back to IPI or ISNI
-/// when the performer is not declared at such a CMO. Distinct from the
-/// [`PartyId`] used for artist / creators / contributors: a non-performer
-/// party cannot hold an IPN.
-pub type Performers = BoundedVec<PerformerId, ConstU32<PERFORMERS_MAX>>;
+/// Featured artists ("feat.") credited on the recording. Each is a
+/// [`PartyId`] (IPI / ISNI / both) exactly like the main `artist`: a featured
+/// artist is credited in the same sense as the lead, not as a session
+/// [`PerformerId`].
+pub type Featuring = BoundedVec<PartyId, ConstU32<FEATURING_MAX>>;
+/// Instruments a single [`Performer`] played on the recording.
+pub type PerformerInstruments = BoundedVec<Instrument, ConstU32<INSTRUMENTS_PER_PERFORMER_MAX>>;
+/// Performers credited on the recording. Each is a [`Performer`]: a
+/// performer-specific [`PerformerId`] (IPN preferred, IPI / ISNI fallback)
+/// paired with the instrument(s) they played.
+pub type Performers = BoundedVec<Performer, ConstU32<PERFORMERS_MAX>>;
 /// Producers credited on the recording. ISNI only — producers are legal /
 /// natural persons identified by ISNI in industry metadata, not IPI.
 pub type Producers = BoundedVec<Isni, ConstU32<PRODUCERS_MAX>>;
@@ -43,9 +55,10 @@ pub type Place = MiddsString<PLACE_MAX_LEN>;
 
 /// Top-level musical genre. Closed enum: stored as a single SCALE tag byte
 /// on-chain (cheaper and indexable, vs an unbounded free-text string).
-/// Flat industry-aligned taxonomy; finer granularity is deliberately left
-/// to a future payload version rather than a sub-genre tree (which would
-/// cost a byte and force a version bump on every taxonomy tweak).
+/// Flat industry-aligned taxonomy: the same enum backs both the `genres`
+/// list and the optional `sub_genre` refinement. Finer *hierarchical*
+/// granularity (a genre→sub-genre tree) is deliberately left to a future
+/// payload version rather than baked into the variant set.
 #[derive(
     Encode,
     Decode,
@@ -125,10 +138,159 @@ pub enum RecordingVersion {
     Demo,
     /// Re-recording of an earlier release.
     ReRecorded,
-    /// Otherwise edited (clean, censored…).
+    /// Otherwise edited (censored, trimmed…). For the parental-advisory
+    /// clean cut prefer the dedicated [`RecordingVersion::Clean`].
     Edited,
     /// Cover of another artist's recording.
     Cover,
+    /// Explicit content removed or masked — the "clean" radio / retail edit
+    /// (the parental-advisory counterpart to an explicit release). Appended
+    /// after `Cover` so every pre-existing V1 tag byte is unchanged.
+    Clean,
+}
+
+/// Instrument played by a [`Performer`] on a recording.
+///
+/// Closed enum stored as a single SCALE tag byte (like [`Genre`]): cheap and
+/// indexable versus a free-text string. The taxonomy is broad and grouped by
+/// instrument family, with generic catch-alls (`Vocals`, `Guitar`,
+/// `Keyboards`, `Strings`, `Percussion`) for when only the family is known
+/// and a final `Other` for anything outside the list. New instruments are
+/// **appended** in a future payload version — never reordered or removed — so
+/// existing tag bytes stay stable.
+#[derive(
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Instrument {
+    // --- Vocals ---
+    /// Vocals, family unspecified.
+    Vocals,
+    LeadVocals,
+    BackingVocals,
+    Choir,
+    // --- Keyboards ---
+    Piano,
+    ElectricPiano,
+    Organ,
+    Harpsichord,
+    Synthesizer,
+    Accordion,
+    Celesta,
+    Melodica,
+    /// Keyboards, type unspecified.
+    Keyboards,
+    // --- Plucked strings ---
+    AcousticGuitar,
+    ElectricGuitar,
+    BassGuitar,
+    ClassicalGuitar,
+    /// Guitar, type unspecified.
+    Guitar,
+    Banjo,
+    Mandolin,
+    Ukulele,
+    Harp,
+    Sitar,
+    Lute,
+    Balalaika,
+    Oud,
+    // --- Bowed strings ---
+    Violin,
+    Viola,
+    Cello,
+    DoubleBass,
+    /// Bowed-string section / unspecified.
+    Strings,
+    // --- Woodwinds ---
+    Flute,
+    Piccolo,
+    Clarinet,
+    Oboe,
+    Bassoon,
+    Saxophone,
+    Recorder,
+    EnglishHorn,
+    Harmonica,
+    Bagpipes,
+    PanFlute,
+    // --- Brass ---
+    Trumpet,
+    Cornet,
+    Flugelhorn,
+    Trombone,
+    FrenchHorn,
+    Tuba,
+    Euphonium,
+    // --- Pitched / mallet percussion ---
+    Marimba,
+    Xylophone,
+    Vibraphone,
+    Glockenspiel,
+    Timpani,
+    Steelpan,
+    // --- Percussion & drums ---
+    DrumKit,
+    SnareDrum,
+    BassDrum,
+    Cymbals,
+    Tambourine,
+    Congas,
+    Bongos,
+    Djembe,
+    Tabla,
+    Cajon,
+    Triangle,
+    Castanets,
+    Maracas,
+    Timbales,
+    Cowbell,
+    HandClaps,
+    /// Percussion, instrument unspecified.
+    Percussion,
+    // --- Electronic / production ---
+    DrumMachine,
+    Sampler,
+    Sequencer,
+    Turntables,
+    Theremin,
+    // --- Fallback ---
+    /// Any instrument outside the list above.
+    Other,
+}
+
+/// A performer credited on the recording: a performer-specific identifier
+/// plus the instrument(s) they played.
+///
+/// `id` is a [`PerformerId`] (IPN preferred — the performer-CMO registry —
+/// with IPI / ISNI as the fallback for performers not declared at such a CMO).
+/// `instruments` may be empty (instrument unknown), carry one entry, or list
+/// several for a multi-instrumentalist, up to [`INSTRUMENTS_PER_PERFORMER_MAX`].
+#[derive(
+    Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Performer {
+    pub id: PerformerId,
+    pub instruments: PerformerInstruments,
+}
+
+impl Performer {
+    pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
+        // The identifier is the only format-checkable part; instrument
+        // membership is guaranteed structurally by the closed enum and the
+        // empty list is a valid "instrument unknown".
+        self.id.validate_format()
+    }
 }
 
 /// Where the recording was recorded, mixed and mastered. Every sub-field is
@@ -180,11 +342,12 @@ impl ProductionPlaces {
 /// First on-chain version of a `Recording`.
 ///
 /// Mandatory fields: `isrc`, `title`, `artist`, `work`. Everything else is
-/// optional / collection-empty-by-default. `artist` and `contributors` use
-/// the shared [`PartyId`] (IPI / ISNI / both); `performers` use the
-/// performer-specific [`PerformerId`] (IPN / IPI / ISNI); producers are
-/// ISNI-only; the recorded work is referenced by on-chain id or ISWC via
-/// the shared [`WorkRef`].
+/// optional / collection-empty-by-default. `artist`, `featuring` and
+/// `contributors` use the shared [`PartyId`] (IPI / ISNI / both);
+/// `performers` are [`Performer`]s pairing the performer-specific
+/// [`PerformerId`] (IPN / IPI / ISNI) with the instrument(s) played;
+/// producers are ISNI-only; the recorded work is referenced by on-chain id
+/// or ISWC via the shared [`WorkRef`].
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
@@ -200,8 +363,12 @@ pub struct RecordingV1 {
     )]
     pub title_aliases: TitleAliases,
     pub artist: PartyId,
+    pub featuring: Featuring,
     pub work: WorkRef,
     pub genres: Genres,
+    /// Optional secondary genre, drawn from the same [`Genre`] taxonomy as
+    /// `genres` — a refinement of the primary tagging, not a separate scale.
+    pub sub_genre: Option<Genre>,
     pub record_year: Option<u16>,
     pub version_type: Option<RecordingVersion>,
     pub performers: Performers,
@@ -246,6 +413,9 @@ impl RecordingV1 {
             return Err(MiddsFormatError::OutOfBounds);
         }
         self.artist.validate_format()?;
+        for f in &self.featuring {
+            f.validate_format()?;
+        }
         self.work.validate_format()?;
         for p in &self.performers {
             p.validate_format()?;
@@ -281,8 +451,10 @@ mod tests {
             title: BoundedVec::try_from(b"x".to_vec()).expect("1-byte title"),
             title_aliases: BoundedVec::default(),
             artist: PartyId::Ipi(BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI")),
+            featuring: BoundedVec::default(),
             work: WorkRef::Midds(0),
             genres: BoundedVec::default(),
+            sub_genre: None,
             record_year: None,
             version_type: None,
             performers: BoundedVec::default(),
@@ -334,5 +506,61 @@ mod tests {
         let mut r = base();
         r.bpm = None;
         r.validate_format().expect("None bpm validates");
+    }
+
+    #[test]
+    fn featuring_validates_each_party() {
+        // A well-formed featured artist passes; a malformed one is rejected
+        // through the same `PartyId` structure check as the main artist.
+        let mut r = base();
+        r.featuring = BoundedVec::try_from(vec![PartyId::Isni(
+            BoundedVec::try_from(b"0000000121032683".to_vec()).expect("16-byte ISNI"),
+        )])
+        .expect("one featured artist");
+        r.validate_format()
+            .expect("valid featured artist validates");
+
+        r.featuring = BoundedVec::try_from(vec![PartyId::Ipi(
+            BoundedVec::try_from(b"12345A789".to_vec()).expect("9 bytes"),
+        )])
+        .expect("one featured artist");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::InvalidCharset),
+            "non-digit IPI in a featured artist is rejected"
+        );
+    }
+
+    #[test]
+    fn performer_instruments_validate() {
+        // A performer carrying several instruments validates (instrument
+        // membership is structural); the performer id is still format-checked.
+        let mut r = base();
+        r.performers = BoundedVec::try_from(vec![Performer {
+            id: PerformerId::Ipn(
+                BoundedVec::try_from(b"12345678901".to_vec()).expect("11-byte IPN"),
+            ),
+            instruments: BoundedVec::try_from(vec![
+                Instrument::ElectricGuitar,
+                Instrument::LeadVocals,
+            ])
+            .expect("two instruments"),
+        }])
+        .expect("one performer");
+        r.validate_format()
+            .expect("performer with instruments validates");
+
+        r.performers = BoundedVec::try_from(vec![Performer {
+            id: PerformerId::Isni(
+                BoundedVec::try_from(b"00000001A1032683".to_vec()).expect("16 bytes"),
+            ),
+            instruments: BoundedVec::default(),
+        }])
+        .expect("one performer");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::InvalidCharset),
+            "malformed performer ISNI is rejected even with no instruments"
+        );
     }
 }

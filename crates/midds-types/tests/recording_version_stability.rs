@@ -21,8 +21,8 @@ use std::{fs, path::PathBuf};
 use bounded_collections::BoundedVec;
 use midds_traits::Midds as _;
 use midds_types::{
-    Genre, Mode, MusicalKey, PartyId, PerformerId, PitchClass, ProductionPlaces, Recording,
-    RecordingV1, RecordingVersion, WorkRef,
+    Genre, Instrument, Mode, MusicalKey, PartyId, Performer, PerformerId, PitchClass,
+    ProductionPlaces, Recording, RecordingV1, RecordingVersion, WorkRef,
 };
 use parity_scale_codec::{Decode, Encode};
 
@@ -32,12 +32,14 @@ const FIXTURE_RELATIVE: &str = "tests/fixtures/recording_v1.scale";
 ///
 /// Hits enough variants to make accidental wire reshuffles visible:
 /// - `PartyId::Ipi` for artist, `PartyId::Ipi` for a contributor.
-/// - `PerformerId::Ipn` for a performer — exercises the performer-specific
-///   identifier introduced after the IPN extension.
+/// - `PerformerId::Ipn` inside a `Performer` carrying two instruments —
+///   exercises the performer-specific identifier and the instrument list.
+/// - `PartyId::Isni` for a featured artist (non-empty `featuring`).
 /// - The string-bearing `WorkRef::Iswc` variant.
 /// - `Some(...)` on every `Option` field except `bpm` (kept `None`) — covers
-///   both presence and absence in the SCALE Option discriminator.
-/// - Non-empty `title_aliases`, `genres`, `producers`.
+///   both presence and absence in the SCALE Option discriminator; `sub_genre`
+///   is `Some` alongside the `genres` list.
+/// - Non-empty `title_aliases`, `genres`, `featuring`, `producers`.
 /// - `ProductionPlaces` with two of three places populated.
 /// - A non-empty offchain extension hash.
 fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
@@ -51,13 +53,20 @@ fn reference_v1() -> RecordingV1 {
         title_aliases: BoundedVec::try_from(vec![bv(b"Wild Side"), bv(b"Cote Sauvage")])
             .expect("aliases within bound"),
         artist: PartyId::Ipi(bv(b"123456786")),
+        featuring: BoundedVec::try_from(vec![PartyId::Isni(bv(b"0000000121032683"))])
+            .expect("featuring within bound"),
         work: WorkRef::Iswc(bv(b"T0345246802")),
         genres: BoundedVec::try_from(vec![Genre::Rock, Genre::Experimental])
             .expect("genres within bound"),
+        sub_genre: Some(Genre::Blues),
         record_year: Some(1972),
         version_type: Some(RecordingVersion::Live),
-        performers: BoundedVec::try_from(vec![PerformerId::Ipn(bv(b"12345678901"))])
-            .expect("performers within bound"),
+        performers: BoundedVec::try_from(vec![Performer {
+            id: PerformerId::Ipn(bv(b"12345678901")),
+            instruments: BoundedVec::try_from(vec![Instrument::ElectricGuitar, Instrument::Vocals])
+                .expect("instruments within bound"),
+        }])
+        .expect("performers within bound"),
         producers: BoundedVec::try_from(vec![bv(b"000000012103268X")])
             .expect("producers within bound"),
         duration: Some(255),

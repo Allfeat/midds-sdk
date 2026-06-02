@@ -11,12 +11,12 @@ use midds_types::release as rel;
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CONTRIBUTORS_MAX, CREATORS_MAX, ClassicalInfo, Country, Creator,
-    CreatorRole, CreatorRoles, GENRES_MAX, Genre, Language, Mode, MusicalKey, MusicalWork,
-    MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId,
-    PerformerId, PitchClass, Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1,
-    RecordingVersion, Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus,
-    ReleaseType, ReleaseV1, SAMPLES_MAX, TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX,
-    WorkRef, WorkType,
+    CreatorRole, CreatorRoles, FEATURING_MAX, GENRES_MAX, Genre, INSTRUMENTS_PER_PERFORMER_MAX,
+    Instrument, Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN,
+    PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, Performer, PerformerId, PitchClass,
+    Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion, Release,
+    ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
+    SAMPLES_MAX, TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef, WorkType,
 };
 
 use crate::identifiers::{
@@ -190,8 +190,10 @@ pub fn min_size_recording() -> Recording {
         title: BoundedVec::try_from(b"x".to_vec()).expect("1 byte"),
         title_aliases: BoundedVec::default(),
         artist: PartyId::Ipi(ipi_from_stem(0, 9)),
+        featuring: BoundedVec::default(),
         work: WorkRef::Midds(0),
         genres: BoundedVec::default(),
+        sub_genre: None,
         record_year: None,
         version_type: None,
         performers: BoundedVec::default(),
@@ -207,12 +209,13 @@ pub fn min_size_recording() -> Recording {
 }
 
 /// Maximum-size valid `Recording`: every bounded field at capacity, every
-/// optional field present, `PartyId::Both` for `artist`/`contributors` (the
-/// larger identity variant now that IPI+ISNI can be carried together — 30
-/// bytes vs ≤ 18 for single-id), `PerformerId::Isni` for `performers` (the
-/// larger variant — 17 bytes vs 12 for `Ipn`/`Ipi`), and `WorkRef::Iswc`
-/// (larger than the MIDDS id). Stable worst-case baseline for fee benchmarks
-/// and SCALE-encoding tests.
+/// optional field present, `PartyId::Both` for `artist` / `featuring` /
+/// `contributors` (the larger identity variant now that IPI+ISNI can be
+/// carried together — 30 bytes vs ≤ 18 for single-id), each `performers` entry
+/// a `PerformerId::Isni` (the larger variant) carrying a full
+/// `INSTRUMENTS_PER_PERFORMER_MAX` instrument list, `WorkRef::Iswc` (larger
+/// than the MIDDS id), and `sub_genre` present. Stable worst-case baseline for
+/// fee benchmarks and SCALE-encoding tests.
 pub fn max_size_recording() -> Recording {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let aliases: Vec<_> = (0..TITLE_ALIASES_MAX)
@@ -226,11 +229,18 @@ pub fn max_size_recording() -> Recording {
         ipi: ipi_from_stem(u64::from(i) * 1_000_000_007 + 1, 11),
         isni: isni_at(i),
     };
-    let performers: Vec<PerformerId> = (0..PERFORMERS_MAX)
-        .map(|i| PerformerId::Isni(isni_at(i)))
+    let max_instruments: Vec<Instrument> =
+        vec![Instrument::Other; INSTRUMENTS_PER_PERFORMER_MAX as usize];
+    let performers: Vec<Performer> = (0..PERFORMERS_MAX)
+        .map(|i| Performer {
+            id: PerformerId::Isni(isni_at(i)),
+            instruments: BoundedVec::try_from(max_instruments.clone())
+                .expect("instruments at bound"),
+        })
         .collect();
     let producers: Vec<Isni> = (0..PRODUCERS_MAX).map(isni_at).collect();
     let contributors: Vec<PartyId> = (0..CONTRIBUTORS_MAX).map(party_both_at).collect();
+    let featuring: Vec<PartyId> = (0..FEATURING_MAX).map(party_both_at).collect();
     let place = BoundedVec::try_from(vec![b'p'; PLACE_MAX_LEN as usize]).expect("place at bound");
     let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = RecordingV1 {
@@ -238,9 +248,11 @@ pub fn max_size_recording() -> Recording {
         title,
         title_aliases: BoundedVec::try_from(aliases).expect("aliases at bound"),
         artist: party_both_at(99),
+        featuring: BoundedVec::try_from(featuring).expect("featuring at bound"),
         work: WorkRef::Iswc(iswc_from_work_code(1)),
         genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
             .expect("genres at bound"),
+        sub_genre: Some(Genre::Other),
         record_year: Some(YEAR_MAX),
         version_type: Some(RecordingVersion::Original),
         performers: BoundedVec::try_from(performers).expect("performers at bound"),

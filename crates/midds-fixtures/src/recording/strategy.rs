@@ -15,9 +15,11 @@ use frame_support::BoundedVec;
 use midds_traits::{Isni, MiddsFormatError};
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
-    CONTRIBUTORS_MAX, Contributors, GENRES_MAX, Genre, Genres, PERFORMERS_MAX, PLACE_MAX_LEN,
-    PRODUCERS_MAX, PartyId, PerformerId, Performers, Place, Producers, ProductionPlaces, Recording,
-    RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN, TitleAliases, WorkRef,
+    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, GENRES_MAX, Genre, Genres,
+    INSTRUMENTS_PER_PERFORMER_MAX, Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX,
+    PartyId, Performer, PerformerId, PerformerInstruments, Performers, Place, Producers,
+    ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN,
+    TitleAliases, WorkRef,
 };
 use proptest::prelude::*;
 
@@ -78,6 +80,32 @@ pub fn arb_recording_version() -> impl Strategy<Value = RecordingVersion> {
         Just(RecordingVersion::ReRecorded),
         Just(RecordingVersion::Edited),
         Just(RecordingVersion::Cover),
+        Just(RecordingVersion::Clean),
+    ]
+}
+
+/// Strategy over a representative spread of the instrument taxonomy. Unlike
+/// [`arb_genre`], this is intentionally **not** exhaustive: the instrument
+/// enum is large and property tests only need valid, varied values — not
+/// one arm per variant.
+pub fn arb_instrument() -> impl Strategy<Value = Instrument> {
+    prop_oneof![
+        Just(Instrument::LeadVocals),
+        Just(Instrument::BackingVocals),
+        Just(Instrument::Piano),
+        Just(Instrument::Synthesizer),
+        Just(Instrument::AcousticGuitar),
+        Just(Instrument::ElectricGuitar),
+        Just(Instrument::BassGuitar),
+        Just(Instrument::Violin),
+        Just(Instrument::Cello),
+        Just(Instrument::Saxophone),
+        Just(Instrument::Trumpet),
+        Just(Instrument::Flute),
+        Just(Instrument::DrumKit),
+        Just(Instrument::Congas),
+        Just(Instrument::Turntables),
+        Just(Instrument::Other),
     ]
 }
 
@@ -144,8 +172,24 @@ fn arb_genres() -> impl Strategy<Value = Genres> {
         .prop_map(|v| BoundedVec::try_from(v).expect("genres within bound"))
 }
 
+/// 0..=`INSTRUMENTS_PER_PERFORMER_MAX` instruments for one performer; empty is
+/// a valid "instrument unknown".
+fn arb_performer_instruments() -> impl Strategy<Value = PerformerInstruments> {
+    proptest::collection::vec(
+        arb_instrument(),
+        0..=(INSTRUMENTS_PER_PERFORMER_MAX as usize),
+    )
+    .prop_map(|v| BoundedVec::try_from(v).expect("instruments within bound"))
+}
+
+/// A performer: a [`PerformerId`] plus the instrument(s) they played.
+pub fn arb_performer() -> impl Strategy<Value = Performer> {
+    (arb_performer_id(), arb_performer_instruments())
+        .prop_map(|(id, instruments)| Performer { id, instruments })
+}
+
 fn arb_performers() -> impl Strategy<Value = Performers> {
-    proptest::collection::vec(arb_performer_id(), 0..=(PERFORMERS_MAX as usize))
+    proptest::collection::vec(arb_performer(), 0..=(PERFORMERS_MAX as usize))
         .prop_map(|v| BoundedVec::try_from(v).expect("performers within bound"))
 }
 
@@ -159,10 +203,15 @@ fn arb_contributors() -> impl Strategy<Value = Contributors> {
         .prop_map(|v| BoundedVec::try_from(v).expect("contributors within bound"))
 }
 
+fn arb_featuring() -> impl Strategy<Value = Featuring> {
+    proptest::collection::vec(arb_party_id(), 0..=(FEATURING_MAX as usize))
+        .prop_map(|v| BoundedVec::try_from(v).expect("featuring within bound"))
+}
+
 /// Strategy producing valid `RecordingV1` payloads.
 ///
-/// `RecordingV1` has 16 fields; proptest only implements `Strategy` for
-/// tuples up to arity 12, so the fields are split into two 8-tuples and
+/// `RecordingV1` has 18 fields; proptest only implements `Strategy` for
+/// tuples up to arity 12, so the fields are split into two 9-tuples and
 /// flattened in the `prop_map`.
 pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
     let head = (
@@ -170,12 +219,14 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
         arb_title(),
         arb_title_aliases(),
         arb_party_id(),
+        arb_featuring(),
         arb_work_ref(),
         arb_genres(),
+        proptest::option::of(arb_genre()),
         proptest::option::of(1900u16..=2025u16),
-        proptest::option::of(arb_recording_version()),
     );
     let tail = (
+        proptest::option::of(arb_recording_version()),
         arb_performers(),
         arb_producers(),
         proptest::option::of(any::<u32>()),
@@ -187,15 +238,27 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
     );
     (head, tail).prop_map(
         |(
-            (isrc, title, title_aliases, artist, work, genres, record_year, version_type),
-            (performers, producers, duration, bpm, key, places, contributors, offchain_extension),
+            (isrc, title, title_aliases, artist, featuring, work, genres, sub_genre, record_year),
+            (
+                version_type,
+                performers,
+                producers,
+                duration,
+                bpm,
+                key,
+                places,
+                contributors,
+                offchain_extension,
+            ),
         )| RecordingV1 {
             isrc,
             title,
             title_aliases,
             artist,
+            featuring,
             work,
             genres,
+            sub_genre,
             record_year,
             version_type,
             performers,
@@ -220,12 +283,13 @@ pub fn arb_recording() -> impl Strategy<Value = Recording> {
 ///
 /// Every bounded field is filled to its bound and every `Option` is `Some`,
 /// using the larger enum variant wherever a choice exists: `artist` /
-/// `contributors` as `PartyId::Both` (the larger identity variant — 30 bytes
-/// vs ≤ 18 for single-id), `performers` as `PerformerId::Isni` (the larger
-/// variant — 17 bytes vs 12 for `Ipn` / `Ipi`), `work` as `WorkRef::Iswc`
-/// (12 bytes vs 8 for the MIDDS id), all three production places present at
-/// `PLACE_MAX_LEN`. The byte content is randomised so shrinking still has
-/// work to do.
+/// `featuring` / `contributors` as `PartyId::Both` (the larger identity
+/// variant — 30 bytes vs ≤ 18 for single-id), each `performers` entry as
+/// `PerformerId::Isni` (the larger variant) carrying a full
+/// `INSTRUMENTS_PER_PERFORMER_MAX` instrument list, `work` as `WorkRef::Iswc`
+/// (12 bytes vs 8 for the MIDDS id), `sub_genre` present, all three production
+/// places at `PLACE_MAX_LEN`. The byte content is randomised so shrinking
+/// still has work to do.
 pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
     // proptest's tuple `Strategy` impl tops out at 12 elements — group the
     // body/stem pairs that always travel together (`PartyId::Both`'s two
@@ -237,6 +301,7 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
             proptest::collection::vec(printable_ascii(), TITLE_MAX_LEN as usize),
             TITLE_ALIASES_MAX as usize,
         ),
+        proptest::collection::vec((any::<[u8; 15]>(), any::<u64>()), FEATURING_MAX as usize),
         proptest::collection::vec(any::<[u8; 15]>(), PERFORMERS_MAX as usize),
         proptest::collection::vec(any::<[u8; 15]>(), PRODUCERS_MAX as usize),
         proptest::collection::vec((any::<[u8; 15]>(), any::<u64>()), CONTRIBUTORS_MAX as usize),
@@ -250,6 +315,7 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                 isrc_idx,
                 title,
                 aliases,
+                featuring_pairs,
                 performer_bodies,
                 producer_bodies,
                 contributor_pairs,
@@ -267,9 +333,21 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                     ipi: ipi_from_stem(stem, 11),
                     isni: isni_from_body(body),
                 };
-                let performers: Vec<PerformerId> = performer_bodies
+                let featuring: Vec<PartyId> = featuring_pairs.into_iter().map(to_both).collect();
+                // Saturate each performer's instrument list to the bound (the
+                // SCALE worst case); `Instrument::Other` is one tag byte like
+                // any other variant.
+                let max_instruments: PerformerInstruments = BoundedVec::try_from(vec![
+                        Instrument::Other;
+                        INSTRUMENTS_PER_PERFORMER_MAX as usize
+                    ])
+                .expect("instruments at bound");
+                let performers: Vec<Performer> = performer_bodies
                     .into_iter()
-                    .map(|body| PerformerId::Isni(isni_from_body(body)))
+                    .map(|body| Performer {
+                        id: PerformerId::Isni(isni_from_body(body)),
+                        instruments: max_instruments.clone(),
+                    })
                     .collect();
                 let producers: Vec<Isni> =
                     producer_bodies.into_iter().map(isni_from_body).collect();
@@ -285,9 +363,11 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                         ipi: ipi_from_stem(artist_stem, 11),
                         isni: isni_from_body(artist_body),
                     },
+                    featuring: BoundedVec::try_from(featuring).expect("featuring at bound"),
                     work: WorkRef::Iswc(iswc_from_work_code(work_code)),
                     genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
                         .expect("genres at bound"),
+                    sub_genre: Some(Genre::Other),
                     record_year: Some(YEAR_MAX),
                     version_type: Some(RecordingVersion::Original),
                     performers: BoundedVec::try_from(performers).expect("performers at bound"),

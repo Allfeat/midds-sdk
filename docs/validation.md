@@ -149,11 +149,13 @@ revient à la fusion, plus économique en SCALE et plus fidèle au modèle méti
 | `title` | `Title` | oui | ≤ 256 | non-vide | = |
 | `title_aliases` | `BoundedVec<Title, 8>` (`TITLE_ALIASES_MAX = 8`) | non | ≤ 8 × 256 | chaque alias non-vide | = |
 | `artist` | `PartyId` | oui | — | structure de l'id | = |
+| `featuring` | `BoundedVec<PartyId, 16>` (`FEATURING_MAX = 16`) | non | ≤ 16 | chaque id : structure (artistes en featuring = mêmes `PartyId` que l'artiste principal, pas des `PerformerId`) | **N** |
 | `work` | `WorkRef` | oui | — | si `Iswc` ⇒ structure | = |
 | `genres` | `BoundedVec<Genre, 8>` (`GENRES_MAX = 8`) | non | ≤ 8 | appartenance | S |
+| `sub_genre` | `Option<Genre>` | non | — | appartenance (même taxinomie plate que `genres`) | **N** |
 | `record_year` | `Option<u16>` | non | — | si `Some` ⇒ **`1..=2999`** | **N** |
 | `version_type` | `Option<RecordingVersion>` | non | — | appartenance | S |
-| `performers` | `BoundedVec<PartyId, 64>` (`PERFORMERS_MAX = 64`) | non | ≤ 64 | chaque id : structure | = |
+| `performers` | `BoundedVec<Performer, 64>` (`PERFORMERS_MAX = 64`) | non | ≤ 64 | chaque `Performer` : `id` (`PerformerId`) structure ; `instruments` = `BoundedVec<Instrument, 8>` (`INSTRUMENTS_PER_PERFORMER_MAX = 8`), appartenance **S**, liste vide autorisée (« instrument inconnu ») | **N** |
 | `producers` | `BoundedVec<Isni, 8>` (`PRODUCERS_MAX = 8`) | non | ≤ 8 | chaque : structure ISNI (ISNI-only par design) | = |
 | `duration` | `Option<u32>` | non | — | **aucun plafond** (secondes ; `u32` ≈ 136 ans, choix V1 délibéré) | (cf. §7) |
 | `bpm` | `Option<u16>` | non | — | si `Some` ⇒ **`20..=300`** | **N** |
@@ -173,8 +175,18 @@ Enums fermés :
   Gospel, Soundtrack, Ambient, Experimental, Children, SpokenWord, Other`.
   Taxonomie aplatie volontairement (l'ancien front en exposait ≈160
   hiérarchiques) — granularité fine reportée à une version payload future.
-- **`RecordingVersion`** (13) : `Original, RadioEdit, Extended, Remix, Live,
-  Acoustic, Instrumental, ACapella, Karaoke, Demo, ReRecorded, Edited, Cover`.
+- **`RecordingVersion`** (14) : `Original, RadioEdit, Extended, Remix, Live,
+  Acoustic, Instrumental, ACapella, Karaoke, Demo, ReRecorded, Edited, Cover,
+  Clean`. `Clean` (version « clean » / sans contenu explicite, pendant
+  parental-advisory d'une sortie explicit) est **ajouté en queue** (tag SCALE
+  13, append-only) ; les tags des 13 variants précédents sont inchangés.
+- **`Instrument`** (77) : instrument joué par un `Performer`. Taxinomie large
+  groupée par famille (voix, claviers, cordes pincées, cordes frottées, bois,
+  cuivres, percussions à hauteur définie, percussions / batterie, électronique)
+  avec des génériques de famille (`Vocals`, `Guitar`, `Keyboards`, `Strings`,
+  `Percussion`) et un `Other` final. Un seul tag-byte SCALE comme `Genre` ;
+  nouveaux instruments **ajoutés en queue** dans une future version de payload,
+  jamais réordonnés.
 
 ---
 
@@ -279,6 +291,18 @@ Décisions explicites, figées, à ne pas « corriger » sans bump de version :
    non-auto-référence d'un sample n'est vérifiable que pour le variant `Iswc`
    (le variant `Midds` pointe un id attribué au dépôt, inconnu à la
    validation). Borne `SAMPLES_MAX = 64`.
+10. **`Recording.featuring` en `PartyId`, `sub_genre` unique, `Instrument`
+    large** : un artiste en featuring est crédité au même titre que l'artiste
+    principal (`artist: PartyId`), pas comme un interprète de session — d'où le
+    même type d'identité (IPI / ISNI / les deux), distinct du `Performer` qui
+    porte un `PerformerId` (IPN-capable) **et** la liste de ses instruments.
+    `sub_genre` est un `Option<Genre>` *unique* (raffinement secondaire tiré de
+    la même taxinomie plate que `genres`, pas un arbre hiérarchique).
+    `Instrument` est volontairement *large* (≈77 variantes) — choix inverse des
+    enums slimmés du point 6 — car l'instrument joué est une donnée de crédit
+    fréquente et précise ; le coût reste d'un tag-byte par instrument, plafonné
+    à `INSTRUMENTS_PER_PERFORMER_MAX = 8` par performer (liste vide = instrument
+    inconnu, aucune cardinalité minimale).
 
 ---
 

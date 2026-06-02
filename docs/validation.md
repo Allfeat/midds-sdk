@@ -95,20 +95,24 @@ identique à l'ancien front).
 | `creation_year` | `Option<u16>` | non | — | si `Some` ⇒ **`1..=2999`** | **N** |
 | `instrumental` | `bool` | oui | — | aucune (défaut `false`) | = |
 | `language` | `Option<Language>` | non | — | appartenance | S |
+| `explicit_lyrics` | `bool` | oui | — | aucune (défaut `false`) | **N** |
 | `bpm` | `Option<u16>` | non | — | si `Some` ⇒ **`20..=300`** | **N** |
 | `key` | `Option<MusicalKey>` | non | — | appartenance | S |
 | `work_type` | `WorkType` | oui | — | voir ci-dessous | |
+| `samples` | `BoundedVec<WorkRef, 64>` (`SAMPLES_MAX`) | non | ≤ 64 | chaque réf valide (`WorkRef`) ; **réfs distinctes** ; **non-auto-référence** (variant ISWC ≠ `iswc` du work) | **N** |
 | `creators` | `Creators` | oui | ≤ 32 (`CREATORS_MAX`) | **non-vide** ; chaque entrée : voir `Creator` ci-dessous | = |
 | `classical_info` | `Option<ClassicalInfo>` | non | — | voir ci-dessous | |
 | `offchain_extension` | `Option<OffchainHash>` | non | ≤ 64 | si `Some` ⇒ non-vide | = |
 
-**`WorkType`** (`Original | Medley(refs) | Mashup(refs) | Adaptation(iswc)`) :
+**`WorkType`** (`Original | Medley(refs) | Mashup(refs) | Adaptation(iswc) |
+Rearrangement(iswc)`) :
 
 | Variant | Règle on-chain | |
 |---|---|---|
 | `Original` | aucune | = |
 | `Medley(refs)` / `Mashup(refs)` | `refs.len() >= 2` (`OutOfBounds` si < 2) ; chaque réf : structure ISWC ; **réfs distinctes et ≠ `iswc` du work** (`CrossFieldInconsistency`) ; max 32 (`WORK_REFERENCES_MAX`) | **N** (était : non-vide ≥ 1) |
 | `Adaptation(iswc)` | exactement 1 ISWC (**S**) ; structure ISWC ; **≠ `iswc` du work** (`CrossFieldInconsistency`) | **N** (était : structure seule) |
+| `Rearrangement(iswc)` | identique à `Adaptation` : exactement 1 ISWC (**S**) ; structure ISWC ; **≠ `iswc` du work** (`CrossFieldInconsistency`). Variant distinct (tag SCALE 4, append-only) pour porter le *type* de dérivation sur le wire | **N** |
 
 **`ClassicalInfo`** (bloc optionnel) :
 
@@ -132,7 +136,8 @@ revient à la fusion, plus économique en SCALE et plus fidèle au modèle méti
 
 > Convention *builder-side uniquement* (non bloquante on-chain, à surfacer en
 > warning dans `midds-validate`) : `instrumental == true` ⇒ `language` devrait
-> être `None`.
+> être `None` et `explicit_lyrics` devrait rester `false` (une œuvre
+> instrumentale n'a pas de paroles).
 
 ---
 
@@ -263,9 +268,17 @@ Décisions explicites, figées, à ne pas « corriger » sans bump de version :
    `TITLE_ALIASES = 8`, `GENRES = 8`, `TRACKS = 256`,
    `COVER_CONTRIBUTORS = 16`). Ces valeurs sont la référence ; les chiffres
    de l'ancien front (UI-only) sont obsolètes.
-8. **Convention `instrumental ⇒ language = None`** : non bloquante on-chain
-   (le validateur ne la teste pas), à exposer en warning côté
-   `midds-validate`.
+8. **Convention `instrumental ⇒ language = None` / `explicit_lyrics = false`** :
+   non bloquante on-chain (le validateur ne la teste pas), à exposer en
+   warning côté `midds-validate`.
+9. **`MusicalWork.samples` accepte `WorkRef` (MIDDS id *ou* ISWC), pas
+   `Medley`/`Mashup`** : la liste des œuvres samplées *par* cette œuvre prend
+   les deux formes de référence (`WorkRef::Midds | WorkRef::Iswc`) — un sample
+   peut être cité avant que l'œuvre samplée soit enregistrée — alors que les
+   refs `Medley`/`Mashup` restent ISWC-only. Conséquence assumée : la
+   non-auto-référence d'un sample n'est vérifiable que pour le variant `Iswc`
+   (le variant `Midds` pointe un id attribué au dépôt, inconnu à la
+   validation). Borne `SAMPLES_MAX = 64`.
 
 ---
 
@@ -274,13 +287,15 @@ Décisions explicites, figées, à ne pas « corriger » sans bump de version :
 | Couche | Rôle |
 |---|---|
 | Type (`BoundedVec` / `MiddsString` / enum) | Longueurs max, cardinalités max, appartenance enum — **impossible à violer** par construction/décodage. |
-| `Midds::validate_format` (on-chain, bloquant) | Structure des identifiants, non-vide des champs obligatoires, **bornes numériques (`creation_year`, `record_year`, `bpm`, `number_of_voices`)**, **cardinalité minimale (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, **unicité + non-auto-référence des refs `Medley`/`Mashup`/`Adaptation`**, `release_date` mois/jour. Format uniquement, jamais de checksum. |
+| `Midds::validate_format` (on-chain, bloquant) | Structure des identifiants, non-vide des champs obligatoires, **bornes numériques (`creation_year`, `record_year`, `bpm`, `number_of_voices`)**, **cardinalité minimale (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, **unicité + non-auto-référence des refs `Medley`/`Mashup`/`Adaptation`/`Rearrangement` et des `samples`**, `release_date` mois/jour. Format uniquement, jamais de checksum. |
 | `midds-validate` (std, warning-only, jamais on-chain) | Parsing tolérant, vérification checksums (warnings), conventions non bloquantes (`instrumental⇒language`, contrôle calendaire strict, plafond `duration` métier). |
 
 Invariants inter-champs **appliqués** on-chain (`CrossFieldInconsistency`) :
 unicité de la tracklist `Release` (aucun `RecordingRef` en double) ; refs
-sources d'un `MusicalWork` `Medley` / `Mashup` / `Adaptation` distinctes et
-différentes de l'`iswc` du work lui-même.
+sources d'un `MusicalWork` `Medley` / `Mashup` / `Adaptation` / `Rearrangement`
+distinctes et différentes de l'`iswc` du work lui-même ; `samples` d'un
+`MusicalWork` distinctes (aucun `WorkRef` en double) et, pour le variant ISWC,
+différentes de l'`iswc` du work.
 
 Invariant réservé non encore utilisé : `MiddsFormatError::DateInconsistency`
 (ex. `recording_year > work_year`) — prévu pour un durcissement inter-champs

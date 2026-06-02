@@ -25,7 +25,7 @@ use bounded_collections::BoundedVec;
 use midds_traits::Midds as _;
 use midds_types::{
     ClassicalInfo, Creator, CreatorRole, CreatorRoles, Language, Mode, MusicalKey, MusicalWork,
-    MusicalWorkV1, PartyId, PitchClass, WorkType,
+    MusicalWorkV1, PartyId, PitchClass, WorkRef, WorkType,
 };
 use parity_scale_codec::{Decode, Encode};
 
@@ -48,6 +48,9 @@ fn roles<const N: usize>(rs: [CreatorRole; N]) -> CreatorRoles {
 /// - A non-`Original` `WorkType` (Adaptation references one ISWC).
 /// - `Some(...)` on every `Option` field except `bpm` (kept `None`) — covers
 ///   both presence and absence in the SCALE Option discriminator.
+/// - `explicit_lyrics = true` (the non-default boolean).
+/// - A non-empty `samples` list exercising both `WorkRef` shapes (ISWC + MIDDS
+///   id).
 /// - `ClassicalInfo` populated with both string fields plus `number_of_voices`.
 /// - A non-empty offchain extension hash.
 fn reference_v1() -> MusicalWorkV1 {
@@ -79,6 +82,11 @@ fn reference_v1() -> MusicalWorkV1 {
     });
     let offchain_extension =
         Some(BoundedVec::try_from(b"bafkreigh2akiscaildc".to_vec()).expect("offchain hash bound"));
+    let samples = BoundedVec::try_from(vec![
+        WorkRef::Iswc(BoundedVec::try_from(b"T1111111111".to_vec()).expect("11-byte sample ISWC")),
+        WorkRef::Midds(7),
+    ])
+    .expect("samples within bound");
 
     MusicalWorkV1 {
         iswc,
@@ -86,6 +94,7 @@ fn reference_v1() -> MusicalWorkV1 {
         creation_year: Some(1972),
         instrumental: false,
         language: Some(Language::En),
+        explicit_lyrics: true,
         bpm: None,
         key: Some(MusicalKey {
             pitch: PitchClass::A,
@@ -94,6 +103,7 @@ fn reference_v1() -> MusicalWorkV1 {
         work_type: WorkType::Adaptation(
             BoundedVec::try_from(b"T9876543210".to_vec()).expect("11-byte adaptation ISWC"),
         ),
+        samples,
         creators,
         classical_info,
         offchain_extension,

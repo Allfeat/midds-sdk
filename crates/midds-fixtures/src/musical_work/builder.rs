@@ -10,7 +10,7 @@ use frame_support::BoundedVec;
 use midds_traits::{Iswc, OffchainHash};
 use midds_types::{
     CatalogNumber, ClassicalInfo, Creator, CreatorRoles, Creators, Language, MusicalKey,
-    MusicalWork, MusicalWorkV1, Opus, Title, WorkType,
+    MusicalWork, MusicalWorkV1, Opus, SampleReferences, Title, WorkRef, WorkType,
 };
 
 /// Fluent builder over already-canonical inputs.
@@ -21,9 +21,11 @@ pub struct MusicalWorkBuilder {
     creation_year: Option<u16>,
     instrumental: bool,
     language: Option<Language>,
+    explicit_lyrics: bool,
     bpm: Option<u16>,
     key: Option<MusicalKey>,
     work_type: WorkType,
+    samples: SampleReferences,
     creators: Creators,
     classical_info: Option<ClassicalInfo>,
     offchain_extension: Option<OffchainHash>,
@@ -52,9 +54,11 @@ impl MusicalWorkBuilder {
             creation_year: Some(2024),
             instrumental: false,
             language: None,
+            explicit_lyrics: false,
             bpm: None,
             key: None,
             work_type: WorkType::Original,
+            samples: BoundedVec::default(),
             creators: BoundedVec::try_from(vec![default_creator]).expect("1 creator < 32"),
             classical_info: None,
             offchain_extension: None,
@@ -83,6 +87,11 @@ impl MusicalWorkBuilder {
         self
     }
 
+    pub fn explicit_lyrics(mut self, value: bool) -> Self {
+        self.explicit_lyrics = value;
+        self
+    }
+
     pub fn language(mut self, language: Language) -> Self {
         self.language = Some(language);
         self
@@ -100,6 +109,20 @@ impl MusicalWorkBuilder {
 
     pub fn work_type(mut self, work_type: WorkType) -> Self {
         self.work_type = work_type;
+        self
+    }
+
+    /// Replace the sampled-work references with the supplied list. Panics if
+    /// `samples.len() > SAMPLES_MAX`.
+    pub fn samples(mut self, samples: Vec<WorkRef>) -> Self {
+        self.samples = BoundedVec::try_from(samples).expect("samples within bound");
+        self
+    }
+
+    /// Append a sampled-work reference. Panics if the list is already at
+    /// `SAMPLES_MAX`.
+    pub fn add_sample(mut self, sample: WorkRef) -> Self {
+        self.samples.try_push(sample).expect("samples within bound");
         self
     }
 
@@ -153,9 +176,11 @@ impl MusicalWorkBuilder {
             creation_year: self.creation_year,
             instrumental: self.instrumental,
             language: self.language,
+            explicit_lyrics: self.explicit_lyrics,
             bpm: self.bpm,
             key: self.key,
             work_type: self.work_type,
+            samples: self.samples,
             creators: self.creators,
             classical_info: self.classical_info,
             offchain_extension: self.offchain_extension,

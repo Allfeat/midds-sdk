@@ -10,8 +10,8 @@ use midds_traits::Iswc;
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole, CreatorRoles,
-    Creators, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, TITLE_MAX_LEN, WORK_REFERENCES_MAX,
-    WorkReferences, WorkType,
+    Creators, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN, SAMPLES_MAX, SampleReferences,
+    TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkReferences, WorkType,
 };
 
 use crate::create::{prompts, shared};
@@ -30,8 +30,16 @@ pub fn build() -> Result<MusicalWork> {
     let creation_year = prompts::optional_int_in_range::<u16>("Creation year", YEAR_MIN, YEAR_MAX)?;
     let instrumental = prompts::confirm("Instrumental (no lyrics)?", false)?;
 
-    ui::step(3, STEPS, "Language");
+    ui::step(3, STEPS, "Language & lyrics");
     let language = prompts::optional("a language", || shared::language("Language"))?;
+    // An instrumental work has no lyrics, so `explicit_lyrics` stays false and
+    // the prompt is skipped (mirrors the builder-side `instrumental ⇒ …`
+    // convention from docs/validation.md §4).
+    let explicit_lyrics = if instrumental {
+        false
+    } else {
+        prompts::confirm("Explicit lyrics?", false)?
+    };
 
     ui::step(4, STEPS, "Tempo & key");
     let bpm = prompts::optional_int_in_range::<u16>("BPM", BPM_MIN, BPM_MAX)?;
@@ -40,13 +48,16 @@ pub fn build() -> Result<MusicalWork> {
     ui::step(5, STEPS, "Work type");
     let work_type = build_work_type()?;
 
-    ui::step(6, STEPS, "Creators");
+    ui::step(6, STEPS, "Samples");
+    let samples = build_samples()?;
+
+    ui::step(7, STEPS, "Creators");
     let creators = build_creators()?;
 
-    ui::step(7, STEPS, "Classical metadata");
+    ui::step(8, STEPS, "Classical metadata");
     let classical_info = build_classical_info()?;
 
-    ui::step(8, STEPS, "Off-chain extension");
+    ui::step(9, STEPS, "Off-chain extension");
     let offchain_extension = shared::offchain_extension()?;
 
     Ok(MusicalWork::V1(MusicalWorkV1 {
@@ -55,9 +66,11 @@ pub fn build() -> Result<MusicalWork> {
         creation_year,
         instrumental,
         language,
+        explicit_lyrics,
         bpm,
         key,
         work_type,
+        samples,
         creators,
         classical_info,
         offchain_extension,
@@ -71,6 +84,7 @@ fn build_work_type() -> Result<WorkType> {
         Medley,
         Mashup,
         Adaptation,
+        Rearrangement,
     }
     let kind = prompts::select(
         "Work type",
@@ -79,6 +93,10 @@ fn build_work_type() -> Result<WorkType> {
             ("Medley — works performed back-to-back", Kind::Medley),
             ("Mashup — works combined into one", Kind::Mashup),
             ("Adaptation — derived from one source", Kind::Adaptation),
+            (
+                "Rearrangement — re-arranged from one source",
+                Kind::Rearrangement,
+            ),
         ],
         0,
     )?;
@@ -97,12 +115,26 @@ fn build_work_type() -> Result<WorkType> {
                 WorkType::Mashup(refs)
             }
         }
-        Kind::Adaptation => WorkType::Adaptation(prompts::identifier(
-            "Source ISWC",
-            shared::parse_iswc_msg,
-            "T0345246801",
-        )?),
+        // Adaptation and Rearrangement both derive from exactly one source.
+        Kind::Adaptation | Kind::Rearrangement => {
+            let source = prompts::identifier("Source ISWC", shared::parse_iswc_msg, "T0345246801")?;
+            if matches!(kind, Kind::Adaptation) {
+                WorkType::Adaptation(source)
+            } else {
+                WorkType::Rearrangement(source)
+            }
+        }
     })
+}
+
+/// Sampled-work references — works this work sampled. Each is a `WorkRef`:
+/// an external ISWC, or the cheaper on-chain MIDDS id. The list may be empty.
+fn build_samples() -> Result<SampleReferences> {
+    let samples = prompts::collect_bounded("sampled work", 0, SAMPLES_MAX as usize, |_| {
+        shared::work_ref("Sampled work reference")
+    })?;
+    SampleReferences::try_from(samples)
+        .map_err(|_| anyhow::anyhow!("more than {SAMPLES_MAX} samples"))
 }
 
 fn build_creators() -> Result<Creators> {

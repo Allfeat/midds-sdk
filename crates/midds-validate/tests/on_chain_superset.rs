@@ -128,7 +128,7 @@ proptest! {
                     assert_iswc_round_trips(r.as_slice())?;
                 }
             }
-            WorkType::Adaptation(r) => {
+            WorkType::Adaptation(r) | WorkType::Rearrangement(r) => {
                 assert_iswc_round_trips(r.as_slice())?;
             }
         }

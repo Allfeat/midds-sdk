@@ -17,7 +17,7 @@ use bounded_collections::BoundedVec;
 use midds_traits::{Iswc, OffchainHash};
 use midds_types::{
     CREATORS_MAX, Creator, CreatorRole, CreatorRoles, Language, MusicalKey, MusicalWork,
-    MusicalWorkV1, PartyId, TITLE_MAX_LEN, WorkType,
+    MusicalWorkV1, PartyId, SAMPLES_MAX, TITLE_MAX_LEN, WorkRef, WorkType,
 };
 
 use crate::error::{BuildError, FieldError};
@@ -50,11 +50,21 @@ pub struct MusicalWorkBuilder {
     creation_year: Option<u16>,
     instrumental: bool,
     language: Option<Language>,
+    explicit_lyrics: bool,
     bpm: Option<u16>,
     key: Option<MusicalKey>,
     work_type: Option<WorkType>,
+    samples_raw: Vec<SampleInput>,
     creators_raw: Vec<CreatorInput>,
     offchain_extension_raw: Option<String>,
+}
+
+/// How a sampled work was referenced by the user: by on-chain MIDDS id (no
+/// parsing) or by a free-form ISWC string (tolerant-parsed at build).
+#[derive(Debug, Clone)]
+enum SampleInput {
+    Midds(u64),
+    Iswc(String),
 }
 
 /// A creator the user is composing for a `MusicalWork`. Holds the roles
@@ -103,8 +113,26 @@ impl MusicalWorkBuilder {
         self
     }
 
+    pub fn explicit_lyrics(mut self, value: bool) -> Self {
+        self.explicit_lyrics = value;
+        self
+    }
+
     pub fn language(mut self, language: Language) -> Self {
         self.language = Some(language);
+        self
+    }
+
+    /// Reference a work sampled by this one, by its on-chain MIDDS id.
+    pub fn add_sample_midds(mut self, id: u64) -> Self {
+        self.samples_raw.push(SampleInput::Midds(id));
+        self
+    }
+
+    /// Reference a work sampled by this one, by a free-form ISWC string
+    /// (anything [`parse_iswc`] accepts).
+    pub fn add_sample_iswc(mut self, iswc: &str) -> Self {
+        self.samples_raw.push(SampleInput::Iswc(iswc.to_string()));
         self
     }
 
@@ -322,6 +350,34 @@ impl MusicalWorkBuilder {
             BoundedVec::try_from(creators).ok()
         };
 
+        // Sampled-work references: MIDDS ids pass through, ISWC strings are
+        // tolerant-parsed; each failure surfaces as a `samples` field error.
+        let mut samples: Vec<WorkRef> = Vec::with_capacity(self.samples_raw.len());
+        for (i, s) in self.samples_raw.iter().enumerate() {
+            match s {
+                SampleInput::Midds(id) => samples.push(WorkRef::Midds(*id)),
+                SampleInput::Iswc(raw) => match parse_iswc(raw) {
+                    Ok(iswc) => samples.push(WorkRef::Iswc(iswc)),
+                    Err(e) => errors.push(FieldError {
+                        field: "samples",
+                        message: format!("#{i} `{raw}`: {e}"),
+                    }),
+                },
+            }
+        }
+        let samples_bv = if samples.len() > SAMPLES_MAX as usize {
+            errors.push(FieldError {
+                field: "samples",
+                message: format!(
+                    "{} samples provided, exceeds {SAMPLES_MAX} max",
+                    samples.len()
+                ),
+            });
+            None
+        } else {
+            BoundedVec::try_from(samples).ok()
+        };
+
         let offchain = match self.offchain_extension_raw {
             Some(raw) => match OffchainHash::try_from(raw.into_bytes()) {
                 Ok(h) if !h.is_empty() => Some(Some(h)),
@@ -343,6 +399,7 @@ impl MusicalWorkBuilder {
         let iswc = iswc.expect("no errors → iswc parsed");
         let title = title.expect("no errors → title parsed");
         let creators = creators_bv.expect("no errors → creators bounded");
+        let samples = samples_bv.expect("no errors → samples bounded");
         let offchain_extension = offchain.expect("no errors → offchain optional resolved");
 
         let v1 = MusicalWorkV1 {
@@ -351,9 +408,11 @@ impl MusicalWorkBuilder {
             creation_year: self.creation_year,
             instrumental: self.instrumental,
             language: self.language,
+            explicit_lyrics: self.explicit_lyrics,
             bpm: self.bpm,
             key: self.key,
             work_type: self.work_type.unwrap_or(WorkType::Original),
+            samples,
             creators,
             classical_info: None,
             offchain_extension,
@@ -454,12 +513,51 @@ mod tests {
         };
         assert_eq!(errors[0].field, "offchain_extension");
     }
+
+    #[test]
+    fn samples_and_explicit_lyrics_build_and_validate() {
+        use midds_traits::Midds as _;
+        let work = MusicalWorkBuilder::new()
+            .iswc("T0345246802")
+            .title("Sampling Work")
+            .explicit_lyrics(true)
+            .add_sample_iswc("T-098.765.432-1")
+            .add_sample_midds(7)
+            .add_creator("123456789")
+            .build()
+            .expect("builds");
+        work.validate_format()
+            .expect("builder output validates on-chain");
+        let MusicalWork::V1(v) = work;
+        assert!(v.explicit_lyrics);
+        assert_eq!(v.samples.len(), 2);
+        assert_eq!(
+            v.samples[0],
+            WorkRef::Iswc(parse_iswc("T0987654321").expect("canonical ISWC"))
+        );
+        assert_eq!(v.samples[1], WorkRef::Midds(7));
+    }
+
+    #[test]
+    fn bad_sample_iswc_surfaces_error() {
+        let res = MusicalWorkBuilder::new()
+            .iswc("T0345246802")
+            .title("X")
+            .add_creator("123456789")
+            .add_sample_iswc("not-an-iswc")
+            .build();
+        let errors = match res {
+            Err(BuildError::Fields(v)) => v,
+            other => panic!("expected Fields(_), got {other:?}"),
+        };
+        assert!(errors.iter().any(|e| e.field == "samples"));
+    }
 }
 
 use midds_traits::Isni;
 use midds_types::{
     CONTRIBUTORS_MAX, GENRES_MAX, Genre, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PerformerId,
-    Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, WorkRef,
+    Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX,
 };
 
 use crate::parse::{parse_ipn, parse_isrc};

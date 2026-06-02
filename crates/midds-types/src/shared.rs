@@ -203,8 +203,24 @@ impl PerformerId {
 /// not yet — on-chain). The `MiddsId` variant is the cheapest on-chain
 /// reference (8 bytes, no string); the ISWC variant keeps the system usable
 /// before the referenced work is registered.
+///
+/// `Ord` is derived (by variant order then contents, matching the SCALE tag
+/// order) so `MusicalWork::validate_format` can detect duplicate sampled-work
+/// references via a `BTreeSet` in O(n log n) instead of an O(n²) pairwise
+/// scan — the same trick [`RecordingRef`] uses for the Release tracklist.
+/// Deriving `Ord` does not change the SCALE encoding.
 #[derive(
-    Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum WorkRef {

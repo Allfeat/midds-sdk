@@ -3,7 +3,8 @@ pub mod v1;
 pub use v1::{
     CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, CatalogNumber, ClassicalInfo, Creator,
     CreatorRole, CreatorRoles, Creators, Mode, MusicalKey, MusicalWorkV1, OPUS_MAX_LEN, Opus,
-    PitchClass, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
+    PitchClass, SAMPLES_MAX, SampleReferences, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX,
+    WorkReferences, WorkType,
 };
 
 use midds_traits::{Iswc, Midds, MiddsFormatError};
@@ -84,12 +85,14 @@ mod tests {
             creation_year: Some(2024),
             instrumental: false,
             language: Some(Language::En),
+            explicit_lyrics: false,
             bpm: Some(120),
             key: Some(MusicalKey {
                 pitch: PitchClass::C,
                 mode: Mode::Major,
             }),
             work_type: WorkType::Original,
+            samples: BoundedVec::default(),
             creators: BoundedVec::try_from(vec![ipi_creator(b"123456789")]).unwrap(),
             classical_info: None,
             offchain_extension: None,
@@ -235,6 +238,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_pass_rearrangement_with_ref() {
+        let mut v = sample_v1();
+        v.work_type = WorkType::Rearrangement(bv::<11>(b"T0345246801"));
+        assert!(MusicalWork::V1(v).validate_format().is_ok());
+    }
+
+    #[test]
+    fn validate_pass_with_samples() {
+        use crate::shared::WorkRef;
+        let mut v = sample_v1();
+        v.samples = BoundedVec::try_from(vec![
+            WorkRef::Iswc(bv::<11>(b"T0345246801")),
+            WorkRef::Midds(42),
+        ])
+        .unwrap();
+        assert!(MusicalWork::V1(v).validate_format().is_ok());
+    }
+
+    #[test]
     fn validate_fails_medley_fewer_than_two_refs() {
         let mut empty = sample_v1();
         empty.work_type = WorkType::Medley(BoundedVec::default());
@@ -293,7 +315,7 @@ mod json_tests {
 
     use super::*;
     use crate::language::Language;
-    use crate::shared::PartyId;
+    use crate::shared::{PartyId, WorkRef};
     use bounded_collections::BoundedVec;
 
     fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
@@ -315,12 +337,14 @@ mod json_tests {
             creation_year: Some(2024),
             instrumental: false,
             language: Some(Language::En),
+            explicit_lyrics: false,
             bpm: Some(120),
             key: Some(MusicalKey {
                 pitch: PitchClass::C,
                 mode: Mode::Major,
             }),
             work_type: WorkType::Original,
+            samples: BoundedVec::default(),
             creators: BoundedVec::try_from(vec![Creator {
                 roles: roles_set([CreatorRole::Composer]),
                 party: PartyId::Ipi(bv(b"123456789")),
@@ -341,10 +365,12 @@ mod json_tests {
         assert_eq!(json["creation_year"], 2024);
         assert_eq!(json["instrumental"], false);
         assert_eq!(json["language"], "en");
+        assert_eq!(json["explicit_lyrics"], false);
         assert_eq!(json["bpm"], 120);
         assert_eq!(json["key"]["pitch"], "C");
         assert_eq!(json["key"]["mode"], "Major");
         assert_eq!(json["work_type"], "Original");
+        assert_eq!(json["samples"], serde_json::json!([]));
         assert_eq!(
             json["creators"][0]["roles"],
             serde_json::json!(["Composer"])
@@ -368,6 +394,14 @@ mod json_tests {
         v.work_type = WorkType::Medley(
             BoundedVec::try_from(vec![bv::<11>(b"T0345246801"), bv::<11>(b"T9876543210")]).unwrap(),
         );
+        v.explicit_lyrics = true;
+        // One ISWC sample and one MIDDS-id sample — exercises both `WorkRef`
+        // shapes in the JSON snapshot.
+        v.samples = BoundedVec::try_from(vec![
+            WorkRef::Iswc(bv::<11>(b"T1111111111")),
+            WorkRef::Midds(7),
+        ])
+        .unwrap();
         v.classical_info = Some(ClassicalInfo {
             opus: Some(bv(b"Op. 27 No. 2")),
             catalog_number: Some(bv(b"K. 545")),
@@ -395,6 +429,12 @@ mod json_tests {
         assert_eq!(
             json["work_type"]["Medley"],
             serde_json::json!(["T0345246801", "T9876543210"])
+        );
+        assert_eq!(json["explicit_lyrics"], true);
+        // `WorkRef` is externally tagged: `{"Iswc": "T…"}` / `{"Midds": n}`.
+        assert_eq!(
+            json["samples"],
+            serde_json::json!([{ "Iswc": "T1111111111" }, { "Midds": 7 }])
         );
         assert_eq!(json["classical_info"]["opus"], "Op. 27 No. 2");
         assert_eq!(json["classical_info"]["catalog_number"], "K. 545");
@@ -439,7 +479,9 @@ mod json_tests {
             "title":"x",
             "creation_year":2024,
             "instrumental":false,
+            "explicit_lyrics":false,
             "work_type":"Original",
+            "samples":[],
             "creators":[{"roles":["Composer"],"party":{"Ipi":"123456789"}}]
         }"#;
         let r: Result<MusicalWork, _> = serde_json::from_str(bad);
@@ -454,7 +496,9 @@ mod json_tests {
             "title":"x",
             "creation_year":2024,
             "instrumental":false,
+            "explicit_lyrics":false,
             "work_type":"Original",
+            "samples":[],
             "creators":[{"roles":["Composer"],"party":{"Ipi":"123456789"}}]
         }"#;
         let r: Result<MusicalWork, _> = serde_json::from_str(bad);

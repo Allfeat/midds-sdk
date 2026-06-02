@@ -15,14 +15,15 @@ use midds_types::shared::{BPM_MAX, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole,
     CreatorRoles, Creators, Language, Mode, MusicalKey, MusicalWork, MusicalWorkV1, OPUS_MAX_LEN,
-    PartyId, PitchClass, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX, WorkReferences, WorkType,
+    PartyId, PitchClass, SAMPLES_MAX, SampleReferences, TITLE_MAX_LEN, Title, WORK_REFERENCES_MAX,
+    WorkRef, WorkReferences, WorkType,
 };
 use proptest::prelude::*;
 
 use crate::identifiers::{
     ipi_from_stem, ipn_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code,
 };
-use crate::recording::strategy::arb_party_id;
+use crate::recording::strategy::{arb_party_id, arb_work_ref};
 
 /// Strategy producing checksum-correct ISWCs.
 pub fn arb_iswc() -> impl Strategy<Value = Iswc> {
@@ -197,7 +198,28 @@ pub fn arb_work_type() -> impl Strategy<Value = WorkType> {
         arb_work_references().prop_map(WorkType::Medley),
         arb_work_references().prop_map(WorkType::Mashup),
         arb_iswc().prop_map(WorkType::Adaptation),
+        arb_iswc().prop_map(WorkType::Rearrangement),
     ]
+}
+
+/// Strategy producing a (possibly empty) set of distinct sampled-work
+/// references. Distinctness comes from a `BTreeSet` (the validator rejects a
+/// list that samples the same work twice); the values may still collide with
+/// the work's own ISWC, which the `arb_musical_work*` filters drop.
+pub fn arb_samples() -> impl Strategy<Value = SampleReferences> {
+    proptest::collection::btree_set(arb_work_ref(), 0..=8usize).prop_map(|set| {
+        BoundedVec::try_from(set.into_iter().collect::<Vec<_>>()).expect("samples within bound")
+    })
+}
+
+/// True when `samples` cites `iswc` through its `WorkRef::Iswc` variant — the
+/// self-reference `validate_format` rejects with `CrossFieldInconsistency`.
+/// (The `WorkRef::Midds` variant can't be a self-reference: the work has no
+/// MIDDS id until it is deposited.)
+fn samples_reference_iswc(samples: &SampleReferences, iswc: &Iswc) -> bool {
+    samples
+        .iter()
+        .any(|s| matches!(s, WorkRef::Iswc(i) if i == iswc))
 }
 
 fn arb_work_references() -> impl Strategy<Value = WorkReferences> {
@@ -218,7 +240,7 @@ fn work_type_references_iswc(work_type: &WorkType, iswc: &Iswc) -> bool {
     match work_type {
         WorkType::Original => false,
         WorkType::Medley(refs) | WorkType::Mashup(refs) => refs.iter().any(|r| r == iswc),
-        WorkType::Adaptation(r) => r == iswc,
+        WorkType::Adaptation(r) | WorkType::Rearrangement(r) => r == iswc,
     }
 }
 
@@ -245,52 +267,66 @@ pub fn arb_classical_info() -> impl Strategy<Value = ClassicalInfo> {
 /// "instrumental ⇒ no language" convention only by construction; if you
 /// override `instrumental`, call `prop_filter`/`prop_map` to drop the language.
 pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
+    // The inner tuple groups the original eleven fields; `explicit_lyrics` and
+    // `samples` ride alongside it so the whole thing stays within proptest's
+    // tuple-arity limit.
     (
-        arb_iswc(),
-        arb_title(),
-        proptest::option::of(YEAR_MIN..=YEAR_MAX),
+        (
+            arb_iswc(),
+            arb_title(),
+            proptest::option::of(YEAR_MIN..=YEAR_MAX),
+            any::<bool>(),
+            proptest::option::of(arb_language()),
+            proptest::option::of(40u16..=240u16),
+            proptest::option::of(arb_musical_key()),
+            arb_work_type(),
+            arb_creators(),
+            proptest::option::of(arb_classical_info()),
+            proptest::option::of(arb_offchain_hash()),
+        ),
         any::<bool>(),
-        proptest::option::of(arb_language()),
-        proptest::option::of(40u16..=240u16),
-        proptest::option::of(arb_musical_key()),
-        arb_work_type(),
-        arb_creators(),
-        proptest::option::of(arb_classical_info()),
-        proptest::option::of(arb_offchain_hash()),
+        arb_samples(),
     )
         .prop_map(
             |(
-                iswc,
-                title,
-                creation_year,
-                instrumental,
-                language,
-                bpm,
-                key,
-                work_type,
-                creators,
-                classical_info,
-                offchain_extension,
+                (
+                    iswc,
+                    title,
+                    creation_year,
+                    instrumental,
+                    language,
+                    bpm,
+                    key,
+                    work_type,
+                    creators,
+                    classical_info,
+                    offchain_extension,
+                ),
+                explicit_lyrics,
+                samples,
             )| MusicalWorkV1 {
                 iswc,
                 title,
                 creation_year,
                 instrumental,
                 language,
+                explicit_lyrics,
                 bpm,
                 key,
                 work_type,
+                samples,
                 creators,
                 classical_info,
                 offchain_extension,
             },
         )
-        // A work cannot reference itself. `arb_iswc` draws from a 10^9 code
-        // space and the refs are already pairwise distinct (see
-        // `arb_work_references`), so this filter discards only the vanishing
-        // fraction of cases where a ref happens to equal the work's own ISWC.
+        // A work cannot reference itself, via either its work type or its
+        // samples. `arb_iswc` draws from a 10^9 code space and both ref lists
+        // are already pairwise distinct, so this filter discards only the
+        // vanishing fraction of cases where a ref equals the work's own ISWC.
         .prop_filter("work must not reference its own ISWC", |w| {
             !work_type_references_iswc(&w.work_type, &w.iswc)
+                && !samples_reference_iswc(&w.samples, &w.iswc)
         })
 }
 
@@ -308,8 +344,10 @@ pub fn arb_musical_work() -> impl Strategy<Value = MusicalWork> {
 /// (the largest of the three — full 11-byte IPI + 16-byte ISNI ≈ 30 bytes
 /// vs ≤ 18 for the single-id variants); `classical_info` populated with
 /// max-size `opus` and `catalog_number`; off-chain hash at 64 bytes; work
-/// type set to Medley with `WORK_REFERENCES_MAX` refs (the largest variant).
-/// The byte content is randomised so shrinking still has work to do.
+/// type set to Medley with `WORK_REFERENCES_MAX` refs (the largest variant);
+/// `samples` filled with `SAMPLES_MAX` `WorkRef::Iswc` entries (the larger of
+/// the two `WorkRef` shapes — 13 bytes vs 9 for the MIDDS-id variant). The
+/// byte content is randomised so shrinking still has work to do.
 pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
     (
         arb_iswc(),
@@ -323,9 +361,23 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
         // must be pairwise distinct, and 32 fixed-length ISWCs still saturate
         // the `MaxEncodedLen` bound regardless of their values.
         proptest::collection::btree_set(0u32..1_000_000_000u32, WORK_REFERENCES_MAX as usize),
+        // `BTreeSet` of exactly `SAMPLES_MAX` distinct codes for the sampled-
+        // work references (must be pairwise distinct — the validator rejects
+        // a duplicated sample).
+        proptest::collection::btree_set(0u32..1_000_000_000u32, SAMPLES_MAX as usize),
     )
         .prop_map(
-            |(iswc, title, isni_bodies, ipi_stems, opus, catalog, hash, work_codes)| {
+            |(
+                iswc,
+                title,
+                isni_bodies,
+                ipi_stems,
+                opus,
+                catalog,
+                hash,
+                work_codes,
+                sample_codes,
+            )| {
                 let title = BoundedVec::try_from(title).expect("title at bound");
                 let all_roles = {
                     let mut set = CreatorRoles::new();
@@ -361,18 +413,28 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                 let refs: Vec<Iswc> = work_codes.into_iter().map(iswc_from_work_code).collect();
                 let work_type =
                     WorkType::Medley(BoundedVec::try_from(refs).expect("work refs at bound"));
+                // `SAMPLES_MAX` distinct `WorkRef::Iswc` entries saturate the
+                // samples bound (the ISWC variant is larger than the MIDDS-id
+                // one, so it drives `MaxEncodedLen`).
+                let samples: Vec<WorkRef> = sample_codes
+                    .into_iter()
+                    .map(|c| WorkRef::Iswc(iswc_from_work_code(c)))
+                    .collect();
+                let samples = BoundedVec::try_from(samples).expect("samples at bound");
                 let v1 = MusicalWorkV1 {
                     iswc,
                     title,
                     creation_year: Some(YEAR_MAX),
                     instrumental: false,
                     language: Some(Language::En),
+                    explicit_lyrics: true,
                     bpm: Some(BPM_MAX),
                     key: Some(MusicalKey {
                         pitch: PitchClass::C,
                         mode: Mode::Major,
                     }),
                     work_type,
+                    samples,
                     creators,
                     classical_info: Some(classical),
                     offchain_extension: Some(offchain),
@@ -381,10 +443,12 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
             },
         )
         // Guard the rare case where the work's own ISWC coincides with one of
-        // its (distinct) source refs — `validate_format` forbids self-reference.
+        // its (distinct) source or sample refs — `validate_format` forbids
+        // self-reference.
         .prop_filter("max-size work must not reference its own ISWC", |w| {
             let MusicalWork::V1(v1) = w;
             !work_type_references_iswc(&v1.work_type, &v1.iswc)
+                && !samples_reference_iswc(&v1.samples, &v1.iswc)
         })
 }
 

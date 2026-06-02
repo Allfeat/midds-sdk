@@ -6,7 +6,7 @@ use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 use crate::language::Language;
-use crate::shared::{BPM_MAX, BPM_MIN, PartyId, YEAR_MAX, YEAR_MIN};
+use crate::shared::{BPM_MAX, BPM_MIN, PartyId, WorkRef, YEAR_MAX, YEAR_MIN};
 
 pub use crate::shared::{Mode, MusicalKey, PitchClass, TITLE_MAX_LEN, Title};
 
@@ -22,15 +22,28 @@ pub const OPUS_MAX_LEN: u32 = 32;
 pub const CATALOG_NUMBER_MAX_LEN: u32 = 32;
 /// Maximum number of source-work references carried by Medley / Mashup.
 pub const WORK_REFERENCES_MAX: u32 = 32;
+/// Maximum number of sampled-work references a work may declare (the works
+/// *this* work sampled). Generous cap — heavily-sampled productions stay
+/// representable on-chain; collage works beyond it can fall back to the
+/// off-chain extension.
+pub const SAMPLES_MAX: u32 = 64;
 
 pub type Creators = BoundedVec<Creator, ConstU32<CREATORS_MAX>>;
 pub type CreatorRoles = BoundedBTreeSet<CreatorRole, ConstU32<CREATOR_ROLES_MAX>>;
 pub type Opus = MiddsString<OPUS_MAX_LEN>;
 pub type CatalogNumber = MiddsString<CATALOG_NUMBER_MAX_LEN>;
 pub type WorkReferences = BoundedVec<Iswc, ConstU32<WORK_REFERENCES_MAX>>;
+/// List of sampled-work references. Each entry is a [`WorkRef`] — a sampled
+/// work may be cited by its on-chain MIDDS id or by an external ISWC — so a
+/// sample can be declared before the sampled work is itself registered.
+pub type SampleReferences = BoundedVec<WorkRef, ConstU32<SAMPLES_MAX>>;
 
 /// Top-level classification of a musical work, with the source ISWCs the
 /// derived variants reference.
+///
+/// SCALE layout: variant tags are append-only (`Original` = 0 … `Adaptation`
+/// = 3). `Rearrangement` is appended at tag 4, so payloads encoded before it
+/// existed decode unchanged.
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
@@ -56,6 +69,13 @@ pub enum WorkType {
     ),
     /// Derivative work based on exactly one source.
     Adaptation(
+        #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Iswc,
+    ),
+    /// Re-arrangement of exactly one source work (e.g. an orchestral version
+    /// of a song, a piano reduction). Structurally identical to `Adaptation`
+    /// — one source ISWC — but a distinct variant so the *kind* of derivation
+    /// survives on the wire.
+    Rearrangement(
         #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Iswc,
     ),
 }
@@ -168,9 +188,17 @@ pub struct MusicalWorkV1 {
     pub creation_year: Option<u16>,
     pub instrumental: bool,
     pub language: Option<Language>,
+    /// Whether the work's lyrics are explicit. Defaults to `false`; an
+    /// instrumental work has no lyrics, so `explicit_lyrics` should stay
+    /// `false` when `instrumental` is `true` (a builder-side convention,
+    /// surfaced as a warning in `midds-validate`, not enforced on-chain).
+    pub explicit_lyrics: bool,
     pub bpm: Option<u16>,
     pub key: Option<MusicalKey>,
     pub work_type: WorkType,
+    /// Works sampled *by* this work, each referenced by MIDDS id or ISWC.
+    /// Empty when the work samples nothing.
+    pub samples: SampleReferences,
     pub creators: Creators,
     pub classical_info: Option<ClassicalInfo>,
     #[cfg_attr(
@@ -224,12 +252,32 @@ impl MusicalWorkV1 {
                     }
                 }
             }
-            WorkType::Adaptation(iswc) => {
+            WorkType::Adaptation(iswc) | WorkType::Rearrangement(iswc) => {
                 validate_iswc_format(iswc)?;
-                // An adaptation cannot derive from itself.
+                // A derivative work (adaptation or rearrangement) cannot
+                // derive from itself.
                 if iswc == &self.iswc {
                     return Err(MiddsFormatError::CrossFieldInconsistency);
                 }
+            }
+        }
+        // Sampled-work references: each must be structurally valid, the list
+        // must hold no duplicate, and no sample may be the work itself. Self-
+        // reference is only checkable for the ISWC variant — a `WorkRef::Midds`
+        // points at a MIDDS id assigned at deposit time, unknown here. Mirrors
+        // the Medley / Mashup uniqueness + non-self-reference rules (and the
+        // Release tracklist check) with a `BTreeSet`, O(n log n) over the
+        // (<= SAMPLES_MAX = 64) entries.
+        let mut seen_samples = alloc::collections::BTreeSet::new();
+        for s in &self.samples {
+            s.validate_format()?;
+            if let WorkRef::Iswc(i) = s
+                && i == &self.iswc
+            {
+                return Err(MiddsFormatError::CrossFieldInconsistency);
+            }
+            if !seen_samples.insert(s) {
+                return Err(MiddsFormatError::CrossFieldInconsistency);
             }
         }
         if let Some(ci) = &self.classical_info {
@@ -282,9 +330,11 @@ mod tests {
             creation_year: Some(2000),
             instrumental: false,
             language: None,
+            explicit_lyrics: false,
             bpm: None,
             key: None,
             work_type: WorkType::Original,
+            samples: BoundedVec::default(),
             creators: BoundedVec::try_from(vec![Creator {
                 roles: roles_set([CreatorRole::Composer]),
                 party: PartyId::Ipi(
@@ -295,6 +345,12 @@ mod tests {
             classical_info: None,
             offchain_extension: None,
         }
+    }
+
+    /// Builds a [`SampleReferences`] list from raw [`WorkRef`]s, panicking past
+    /// the bound — keeps the sample tests below readable.
+    fn samples<const N: usize>(refs: [WorkRef; N]) -> SampleReferences {
+        SampleReferences::try_from(refs.to_vec()).expect("samples within bound")
     }
 
     #[test]
@@ -438,5 +494,75 @@ mod tests {
         w.work_type = WorkType::Adaptation(iswc_n(1));
         w.validate_format()
             .expect("adaptation on a distinct source validates");
+    }
+
+    #[test]
+    fn rearrangement_rejects_self_reference() {
+        let mut w = base();
+        w.work_type = WorkType::Rearrangement(w.iswc.clone());
+        assert_eq!(
+            w.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency)
+        );
+        // A rearrangement of a distinct source validates.
+        w.work_type = WorkType::Rearrangement(iswc_n(1));
+        w.validate_format()
+            .expect("rearrangement on a distinct source validates");
+    }
+
+    #[test]
+    fn samples_accepts_distinct_mixed_refs() {
+        let mut w = base();
+        // A MIDDS-id sample and an ISWC sample, distinct and non-self.
+        w.samples = samples([WorkRef::Midds(7), WorkRef::Iswc(iswc_n(1))]);
+        w.validate_format()
+            .expect("distinct MIDDS + ISWC samples validate");
+    }
+
+    #[test]
+    fn samples_reject_invalid_iswc() {
+        let mut w = base();
+        let bad = BoundedVec::try_from(b"X0000000000".to_vec()).expect("11 bytes");
+        w.samples = samples([WorkRef::Iswc(bad)]);
+        assert_eq!(
+            w.validate_format(),
+            Err(MiddsFormatError::InvalidIdentifierStructure)
+        );
+    }
+
+    #[test]
+    fn samples_reject_duplicate() {
+        let mut w = base();
+        // Same ISWC sampled twice.
+        w.samples = samples([WorkRef::Iswc(iswc_n(1)), WorkRef::Iswc(iswc_n(1))]);
+        assert_eq!(
+            w.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency)
+        );
+        // The MIDDS-id variant is deduplicated on exact equality too.
+        w.samples = samples([WorkRef::Midds(3), WorkRef::Midds(3)]);
+        assert_eq!(
+            w.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency)
+        );
+    }
+
+    #[test]
+    fn samples_reject_self_iswc() {
+        let mut w = base();
+        // Sampling the work's own ISWC is meaningless.
+        w.samples = samples([WorkRef::Iswc(w.iswc.clone())]);
+        assert_eq!(
+            w.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency)
+        );
+    }
+
+    #[test]
+    fn empty_samples_validate() {
+        let mut w = base();
+        w.samples = BoundedVec::default();
+        w.validate_format()
+            .expect("a work that samples nothing validates");
     }
 }

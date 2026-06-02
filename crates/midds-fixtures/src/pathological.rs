@@ -15,8 +15,8 @@ use midds_types::{
     MusicalWorkV1, OPUS_MAX_LEN, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId,
     PerformerId, PitchClass, Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1,
     RecordingVersion, Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus,
-    ReleaseType, ReleaseV1, TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef,
-    WorkType,
+    ReleaseType, ReleaseV1, SAMPLES_MAX, TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX,
+    WorkRef, WorkType,
 };
 
 use crate::identifiers::{
@@ -60,9 +60,11 @@ pub fn min_size_musical_work() -> MusicalWork {
         creation_year: None,
         instrumental: true,
         language: None,
+        explicit_lyrics: false,
         bpm: None,
         key: None,
         work_type: WorkType::Original,
+        samples: BoundedVec::default(),
         creators: BoundedVec::try_from(vec![Creator {
             roles: single_role(CreatorRole::Composer),
             party: PartyId::Ipi(ipi_from_stem(0, 9)),
@@ -102,6 +104,14 @@ pub fn max_size_musical_work() -> MusicalWork {
         .map(|i| iswc_from_work_code(i + 1))
         .collect();
     let work_type = WorkType::Medley(BoundedVec::try_from(refs).expect("refs at bound"));
+    // `SAMPLES_MAX` distinct `WorkRef::Iswc` entries (the larger variant — 13
+    // bytes vs 9 for the MIDDS-id one) saturate the samples bound. Codes
+    // `1..=SAMPLES_MAX` keep every sample distinct and different from the
+    // work's own ISWC (code 0).
+    let samples: Vec<WorkRef> = (0..SAMPLES_MAX)
+        .map(|i| WorkRef::Iswc(iswc_from_work_code(i + 1)))
+        .collect();
+    let samples = BoundedVec::try_from(samples).expect("samples at bound");
     let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = MusicalWorkV1 {
         iswc: iswc_from_work_code(0),
@@ -109,12 +119,14 @@ pub fn max_size_musical_work() -> MusicalWork {
         creation_year: Some(YEAR_MAX),
         instrumental: false,
         language: Some(Language::En),
+        explicit_lyrics: true,
         bpm: Some(BPM_MAX),
         key: Some(MusicalKey {
             pitch: PitchClass::C,
             mode: Mode::Major,
         }),
         work_type,
+        samples,
         creators,
         classical_info: Some(ClassicalInfo {
             opus: Some(opus),

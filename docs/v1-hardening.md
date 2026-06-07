@@ -1,58 +1,58 @@
-# Plan de stabilisation V1 — MusicalWork avant scale-out
+# V1 hardening plan — MusicalWork before scale-out
 
-> Document de plan : ce qu'il faut consolider sur le SDK MIDDS **avant**
-> d'ajouter Recording et Release. Pendant de [`plan.md`](./plan.md),
-> [`economics.md`](./economics.md) et [`testing.md`](./testing.md). Issu d'un
-> audit complet (pallet / traits-types-validate / client-RPC-CLI /
-> fixtures-CI) réalisé le 2026-05-04.
-
----
-
-## 1. Contexte
-
-V1 cible **MusicalWork end-to-end**. L'architecture générique (`trait Midds`
-+ pallet multi-instance) est en place mais n'a jamais été exercée par un
-deuxième type. L'audit a révélé trois familles de problèmes :
-
-1. **Choix structurants encore corrigeables sans douleur** (trait, API
-   client, runtime API) qui deviendront *breaking* dès qu'une 2e instance
-   sera en production.
-2. **Bugs/ambiguïtés dans le pallet** sur des invariants documentés mais non
-   testés (bornes de fenêtre, bond cumulé, branches mortes).
-3. **Friction d'extension** dans `midds-fixtures`, `midds-cli` et `bench/`
-   qui forcera du copier-coller à chaque nouveau type.
-
-Objectif de ce plan : refermer ces trois fronts en 4 sprints PR-sized
-(~5–6 jours total) **avant** de toucher à Recording.
+> Planning document: what needs to be consolidated on the MIDDS SDK **before**
+> adding Recording and Release. Counterpart to [`plan.md`](./plan.md),
+> [`economics.md`](./economics.md) and [`testing.md`](./testing.md). Derived from a
+> complete audit (pallet / traits-types-validate / client-RPC-CLI /
+> fixtures-CI) carried out on 2026-05-04.
 
 ---
 
-## 2. Séquencement
+## 1. Context
 
-| Sprint | Goal | Effort | Bloque | Bloqué par |
+V1 targets **MusicalWork end-to-end**. The generic architecture (`trait Midds`
++ multi-instance pallet) is in place but has never been exercised by a
+second type. The audit revealed three families of problems:
+
+1. **Structural choices still fixable without pain** (trait, client
+   API, runtime API) that will become *breaking* as soon as a 2nd instance
+   is in production.
+2. **Bugs/ambiguities in the pallet** on invariants that are documented but not
+   tested (window bounds, cumulative bond, dead branches).
+3. **Extension friction** in `midds-fixtures`, `midds-cli` and `bench/`
+   that will force copy-paste with every new type.
+
+Goal of this plan: close these three fronts in 4 PR-sized sprints
+(~5–6 days total) **before** touching Recording.
+
+---
+
+## 2. Sequencing
+
+| Sprint | Goal | Effort | Blocks | Blocked by |
 |---|---|---|---|---|
-| A | `trait Midds` enrichi + API client/runtime-api complète | 1.5–2j | Recording, Release | — |
-| B | Bugs pallet + invariants couverts par property tests | 1j | — | — |
-| C | Génériser `midds-fixtures`, `midds-cli` et `bench/` sur `M: Midds` | 1.5–2j | Recording (corpus, builders) | A |
-| D | CI durcie + dette doc + quick wins | 0.5j | release-plz prod-ready | — |
+| A | Enriched `trait Midds` + complete client/runtime-api API | 1.5–2d | Recording, Release | — |
+| B | Pallet bugs + invariants covered by property tests | 1d | — | — |
+| C | Genericize `midds-fixtures`, `midds-cli` and `bench/` over `M: Midds` | 1.5–2d | Recording (corpus, builders) | A |
+| D | Hardened CI + doc debt + quick wins | 0.5d | release-plz prod-ready | — |
 
-A et B sont indépendants → peuvent partir en parallèle. C dépend de A pour
-l'API client générique. D peut s'intercaler à tout moment.
+A and B are independent → can start in parallel. C depends on A for
+the generic client API. D can slot in at any time.
 
 ---
 
-## 3. Sprint A — `trait Midds` enrichi + API client/runtime-api complète
+## 3. Sprint A — Enriched `trait Midds` + complete client/runtime-api API
 
 ### 3.1 Goal
 
-Geler les contrats publics qui touchent toutes les instances (trait,
-runtime API, namespace RPC, façade client) **maintenant**, pendant qu'il n'y
-a qu'une seule impl à migrer. Ce sont les seuls changements de ce plan qui
-sont réellement *breaking* SCALE.
+Freeze the public contracts that touch all instances (trait,
+runtime API, RPC namespace, client façade) **now**, while there is
+only a single impl to migrate. These are the only changes in this plan that
+are genuinely SCALE-*breaking*.
 
-### 3.2 Tâches
+### 3.2 Tasks
 
-#### 3.2.1 `trait Midds` — `KIND` + `identifier()` par référence
+#### 3.2.1 `trait Midds` — `KIND` + `identifier()` by reference
 
 `crates/midds-traits/src/lib.rs:20`
 
@@ -64,29 +64,29 @@ pub trait Midds: Parameter + MaxEncodedLen {
 
     type Identifier: Parameter + MaxEncodedLen + Ord;
 
-    fn identifier(&self) -> &Self::Identifier;  // était: -> Self::Identifier
+    fn identifier(&self) -> &Self::Identifier;  // was: -> Self::Identifier
     fn validate_format(&self) -> Result<(), MiddsFormatError>;
 }
 ```
 
-- Mettre à jour `crates/midds-types/src/musical_work/mod.rs` (impl Midds).
-- Mettre à jour `pallets/pallet-midds/src/{lib,mock}.rs` — chaque `.identifier()`
-  perd son `.clone()`.
+- Update `crates/midds-types/src/musical_work/mod.rs` (impl Midds).
+- Update `pallets/pallet-midds/src/{lib,mock}.rs` — each `.identifier()`
+  loses its `.clone()`.
 
-#### 3.2.2 `MiddsFormatError` — variants prospectifs
+#### 3.2.2 `MiddsFormatError` — forward-looking variants
 
 `crates/midds-traits/src/error.rs:11`
 
-Ajouter `DateInconsistency` et `CrossFieldInconsistency` (planifiés
-`plan.md:166`, jamais implémentés). Recording et Release en auront besoin
-(year vs release_year, tracklist vs durations). C'est un `enum` SCALE → tout
-ajout ultérieur serait breaking.
+Add `DateInconsistency` and `CrossFieldInconsistency` (planned
+`plan.md:166`, never implemented). Recording and Release will need them
+(year vs release_year, tracklist vs durations). It's a SCALE `enum` → any
+later addition would be breaking.
 
-#### 3.2.3 Runtime API — `DepositInfoOf` typé
+#### 3.2.3 Runtime API — typed `DepositInfoOf`
 
 `crates/midds-runtime-api/src/lib.rs:41`
 
-Remplacer le tuple `(AccountId, Balance, Balance, bool)` par :
+Replace the tuple `(AccountId, Balance, Balance, bool)` with:
 
 ```rust
 #[derive(Encode, Decode, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug)]
@@ -98,16 +98,16 @@ pub struct DepositInfoOf<AccountId, Balance> {
 }
 ```
 
-Propager dans `midds-rpc/src/lib.rs:39` (alias `DepositInfoView` à supprimer
-au profit du type partagé) et dans `crates/midds-client/src/pallet/api.rs:381`
-(décodage manuel du tuple à supprimer).
+Propagate it into `midds-rpc/src/lib.rs:39` (the `DepositInfoView` alias to be removed
+in favor of the shared type) and into `crates/midds-client/src/pallet/api.rs:381`
+(manual tuple decoding to be removed).
 
-#### 3.2.4 Client — méthodes query type-safe
+#### 3.2.4 Client — type-safe query methods
 
 `crates/midds-client/src/pallet/api.rs`
 
-Le helper privé `runtime_api<T: Decode>` existe déjà ; ajouter publiquement
-sur `PalletApi<M: Midds>` :
+The private helper `runtime_api<T: Decode>` already exists; add publicly
+on `PalletApi<M: Midds>`:
 
 ```rust
 pub async fn lookup_by_identifier(&self, id: &M::Identifier) -> Result<Vec<MiddsId>>;
@@ -115,67 +115,67 @@ pub async fn get(&self, id: MiddsId) -> Result<Option<M>>;
 pub async fn deposit_info(&self, id: MiddsId) -> Result<Option<DepositInfoOf<AccountId, Balance>>>;
 ```
 
-Pas de logique nouvelle — câblage trivial, alignement sur le runtime API.
+No new logic — trivial wiring, alignment with the runtime API.
 
-#### 3.2.5 RPC — namespacing préparé pour multi-instance
+#### 3.2.5 RPC — namespacing prepared for multi-instance
 
 `crates/midds-rpc/src/lib.rs:46`
 
-Le commentaire (l. 11-20) reconnaît la dette. Deux options :
+The comment (l. 11-20) acknowledges the debt. Two options:
 
-- **Option 1 (préférée)** : macro `define_midds_rpc!(MusicalWorks)` qui
-  génère le trait `#[rpc(server)]` avec préfixe `midds_musicalWorks_*`.
-- **Option 2 (minimale)** : helper `rename_methods(module: RpcModule, prefix: &str)`
-  pour que le node renomme à l'enregistrement, sans macro.
+- **Option 1 (preferred)**: a `define_midds_rpc!(MusicalWorks)` macro that
+  generates the `#[rpc(server)]` trait with the `midds_musicalWorks_*` prefix.
+- **Option 2 (minimal)**: a `rename_methods(module: RpcModule, prefix: &str)` helper
+  so the node renames at registration time, without a macro.
 
-Choisir Option 1 si le coût macro reste raisonnable (~50 lignes), sinon
-Option 2 documenté comme *opt-in côté node*.
+Choose Option 1 if the macro cost stays reasonable (~50 lines), otherwise
+Option 2 documented as *opt-in on the node side*.
 
 ### 3.3 Tests
 
 - `crates/midds-traits/tests/kind.rs` — assert `MusicalWork::KIND == "MusicalWork"`.
-- `crates/midds-runtime-api/tests/deposit_info_codec.rs` — round-trip SCALE
-  de `DepositInfoOf` (la migration tuple → struct **doit** être backward-incompatible
-  par design, mais le test verrouille la nouvelle représentation).
-- `crates/midds-client/tests/query_smoke.rs` — appel des 3 nouvelles méthodes
-  contre un mock subxt (ou marqué `#[ignore]` si trop lourd, exécuté en E2E).
+- `crates/midds-runtime-api/tests/deposit_info_codec.rs` — SCALE round-trip
+  of `DepositInfoOf` (the tuple → struct migration **must** be backward-incompatible
+  by design, but the test locks the new representation).
+- `crates/midds-client/tests/query_smoke.rs` — call the 3 new methods
+  against a subxt mock (or marked `#[ignore]` if too heavy, run in E2E).
 
-### 3.4 Critères de validation
+### 3.4 Validation criteria
 
-- `cargo test --workspace --all-features` vert.
+- `cargo test --workspace --all-features` green.
 - `cargo build -p pallet-midds --no-default-features --target wasm32-unknown-unknown`.
-- Aucune occurrence de `.identifier().clone()` ne subsiste.
-- `grep -rn 'tuple.*deposit_info\|(AccountId, Balance, Balance, bool)' crates/` retourne 0.
-- CHANGELOG : marquer `BREAKING CHANGE: Midds trait now requires KIND const; identifier() returns &Identifier; runtime API DepositInfo is now a struct.`
+- No occurrence of `.identifier().clone()` remains.
+- `grep -rn 'tuple.*deposit_info\|(AccountId, Balance, Balance, bool)' crates/` returns 0.
+- CHANGELOG: mark `BREAKING CHANGE: Midds trait now requires KIND const; identifier() returns &Identifier; runtime API DepositInfo is now a struct.`
 
 ---
 
-## 4. Sprint B — Bugs pallet + invariants couverts
+## 4. Sprint B — Pallet bugs + invariants covered
 
 ### 4.1 Goal
 
-Refermer les ambiguïtés de comportement détectées dans le pallet et **prouver
-par property tests** les invariants documentés `plan.md:560-566`. Tout ce
-qui passe ce sprint vaut pour toutes les futures instances gratuitement.
+Close the behavioral ambiguities detected in the pallet and **prove
+by property tests** the documented invariants `plan.md:560-566`. Everything
+that passes this sprint applies to all future instances for free.
 
-### 4.2 Tâches
+### 4.2 Tasks
 
-#### 4.2.1 Borne unique de la fenêtre 7j
+#### 4.2.1 Single bound for the 7d window
 
 `pallets/pallet-midds/src/lib.rs:494,520,551`
 
-État actuel : `update`/`remove_own` utilisent `elapsed <= window`,
-`finalize` utilise `elapsed > window`. Au bloc `expiry` exact, l'ordre
-intra-bloc décide qui gagne (non-déterministe pour le user).
+Current state: `update`/`remove_own` use `elapsed <= window`,
+`finalize` uses `elapsed > window`. At the exact `expiry` block, the
+intra-block order decides who wins (non-deterministic for the user).
 
-Décision proposée : **`<` partout**. Le bloc `expiry` lui-même est
-finalisable. Cohérent avec `economics.md` ("fenêtre 7 jours strictement
-inférieure"). Documenter dans le doc-comment de `Config::CommitmentWindow`.
+Proposed decision: **`<` everywhere**. The `expiry` block itself is
+finalizable. Consistent with `economics.md` ("window strictly
+less than 7 days"). Document in the `Config::CommitmentWindow` doc-comment.
 
-Helper à extraire : `fn ensure_in_window(info: &Deposit, now: BlockNumber)
--> DispatchResult` — utilisé par `update` et `remove_own`.
+Helper to extract: `fn ensure_in_window(info: &Deposit, now: BlockNumber)
+-> DispatchResult` — used by `update` and `remove_own`.
 
-#### 4.2.2 Borner `force_remove_many`
+#### 4.2.2 Bound `force_remove_many`
 
 `pallets/pallet-midds/src/lib.rs:603`
 
@@ -184,87 +184,87 @@ Helper à extraire : `fn ensure_in_window(info: &Deposit, now: BlockNumber)
 type MaxRemovalsPerCall: Get<u32>;
 ```
 
-Signature passe de `Vec<MiddsId>` à `BoundedVec<RemovalRequest, T::MaxRemovalsPerCall>`
-où :
+Signature changes from `Vec<MiddsId>` to `BoundedVec<RemovalRequest, T::MaxRemovalsPerCall>`
+where:
 
 ```rust
 pub enum RemovalKind { Refund, Slash }
 pub struct RemovalRequest { id: MiddsId, kind: RemovalKind }
 ```
 
-Bénéfices : weight bornable, fin du flag `slash: bool` global (chaque id
-peut avoir son traitement). Mock runtime : `MaxRemovalsPerCall = 32`.
+Benefits: boundable weight, end of the global `slash: bool` flag (each id
+can have its own handling). Mock runtime: `MaxRemovalsPerCall = 32`.
 
-#### 4.2.3 Branche morte `do_apply_edit`
+#### 4.2.3 Dead branch `do_apply_edit`
 
 `pallets/pallet-midds/src/lib.rs:670-682`
 
-Soit retirer la branche `DuplicatePayload` (interceptée plus tôt par
-`IdentifierClaims::contains_key`), soit ajouter un test qui force le path
-résiduel (deux items même identifier, payloads différents, second update
-qui collide en hash avec un troisième). Décision recommandée : **garder + tester**,
-car la pré-vérification pourrait sauter dans une refacto future.
+Either remove the `DuplicatePayload` branch (intercepted earlier by
+`IdentifierClaims::contains_key`), or add a test that forces the residual
+path (two items with the same identifier, different payloads, a second update
+that collides in hash with a third). Recommended decision: **keep + test**,
+because the pre-check could be dropped in a future refactor.
 
-#### 4.2.4 Property tests des invariants `plan.md:560-566`
+#### 4.2.4 Property tests of the invariants `plan.md:560-566`
 
 `pallets/pallet-midds/src/property_tests.rs`
 
-Ajouter un test générant une séquence arbitraire d'extrinsics
+Add a test generating an arbitrary sequence of extrinsics
 (`deposit`, `update`, `remove_own`, `force_remove_*`, `on_initialize`)
-puis assertant après chaque step :
+then asserting after each step:
 
 | Invariant | Assertion |
 |---|---|
-| Bond cumulé | `pour chaque account: held(account) == Σ DepositInfo[id].amount where depositor==account` |
-| Couplage Items↔DepositInfo | `Items::iter().count() == DepositInfo::iter().count()` |
-| Cardinalité PayloadHashes | `PayloadHashes::iter().count() == Items::iter().count()` |
-| Identifier immuable | `forall id: identifier_at(t) == identifier_at(t-1)` |
-| `NextMiddsId` monotone | jamais décroissant |
+| Cumulative bond | `for each account: held(account) == Σ DepositInfo[id].amount where depositor==account` |
+| Items↔DepositInfo coupling | `Items::iter().count() == DepositInfo::iter().count()` |
+| PayloadHashes cardinality | `PayloadHashes::iter().count() == Items::iter().count()` |
+| Immutable identifier | `forall id: identifier_at(t) == identifier_at(t-1)` |
+| `NextMiddsId` monotonic | never decreasing |
 
-Cas pathologiques à inclure : `arb_invalid_mock_midds()` produisant des
-payloads malformés et assertant `assert_noop!(InvalidFormat)`.
+Pathological cases to include: `arb_invalid_mock_midds()` producing
+malformed payloads and asserting `assert_noop!(InvalidFormat)`.
 
-#### 4.2.5 Tests `current_deposit_price` runtime API
+#### 4.2.5 Tests for `current_deposit_price` runtime API
 
 `pallets/pallet-midds/src/lib.rs:923`
 
-Pin un test mock : prix retourné == bond effectivement débité par un
-`deposit` immédiat dans le même bloc.
+Pin a mock test: returned price == bond actually debited by an
+immediate `deposit` in the same block.
 
-#### 4.2.6 Test mass-injection avec multipliers actifs
+#### 4.2.6 Mass-injection test with multipliers active
 
 `pallets/pallet-midds/tests/mass_injection.rs`
 
-Nouveau scénario `mass_injection_10k_with_multipliers` ciblant ~1000
-extrinsics/bloc pour faire monter `M_fast` au-dessus de 1.0×. Storage root
-committé. **Sans ça, la logique `economics.md` n'est testée par aucune
+New scenario `mass_injection_10k_with_multipliers` targeting ~1000
+extrinsics/block to push `M_fast` above 1.0×. Storage root
+committed. **Without this, the `economics.md` logic is tested by no
 fixture.**
 
-### 4.3 Critères de validation
+### 4.3 Validation criteria
 
-- Tous les invariants de `plan.md:560-566` ont un test prop dédié.
-- `cargo test -p pallet-midds property_tests --release` passe avec
+- All the invariants from `plan.md:560-566` have a dedicated prop test.
+- `cargo test -p pallet-midds property_tests --release` passes with
   `PROPTEST_CASES=10000`.
-- Aucune borne `<=` / `>` ne reste sur `elapsed` vs `CommitmentWindow`.
-- `force_remove_many` accepte au plus `MaxRemovalsPerCall` ids.
+- No `<=` / `>` bound remains on `elapsed` vs `CommitmentWindow`.
+- `force_remove_many` accepts at most `MaxRemovalsPerCall` ids.
 
 ---
 
-## 5. Sprint C — Génériser `midds-fixtures`, `midds-cli` et `bench/`
+## 5. Sprint C — Genericize `midds-fixtures`, `midds-cli` and `bench/`
 
 ### 5.1 Goal
 
-Tuer toute mention hardcodée de `MusicalWork` dans les outils transverses
-pour qu'**ajouter Recording = définir un struct + impl `Midds` + un
-corpus**, point. Aujourd'hui ce serait copier-coller 3×.
+Kill every hardcoded mention of `MusicalWork` in the cross-cutting tools
+so that **adding Recording = defining a struct + impl `Midds` + a
+corpus**, full stop. Today it would be copy-paste 3×.
 
-### 5.2 Tâches
+### 5.2 Tasks
 
-#### 5.2.1 `midds-fixtures` — trait + sous-modules par type
+#### 5.2.1 `midds-fixtures` — trait + per-type submodules
 
 `crates/midds-fixtures/src/`
 
-Extraire dans `lib.rs` :
+Extract into `lib.rs`:
 
 ```rust
 pub trait MiddsFixtures {
@@ -276,24 +276,24 @@ pub trait MiddsFixtures {
 }
 ```
 
-Refactor `musical_work/{mod,builder,strategy,corpus}.rs` pour implémenter
-`MiddsFixtures for MusicalWorkFixtures`. Helpers transverses
-(`BoundedFieldStrategy<N>`, `ChecksumIdStrategy`) extraits dans
+Refactor `musical_work/{mod,builder,strategy,corpus}.rs` to implement
+`MiddsFixtures for MusicalWorkFixtures`. Cross-cutting helpers
+(`BoundedFieldStrategy<N>`, `ChecksumIdStrategy`) extracted into
 `crates/midds-fixtures/src/common.rs`.
 
-#### 5.2.2 ISRC support dans `midds-validate` + `midds-fixtures`
+#### 5.2.2 ISRC support in `midds-validate` + `midds-fixtures`
 
-Manquant aujourd'hui :
-- `crates/midds-validate/src/parse.rs` : `parse_isrc(s: &str) -> Result<Isrc, ParseError>`
-  (regex tolérante `^[A-Z]{2}-?[A-Z0-9]{3}-?\d{2}-?\d{5}$`).
-- `crates/midds-validate/src/checksum.rs` : `verify_isrc_checksum` (mod-7).
-- `crates/midds-fixtures/src/identifiers.rs` : `isrc_valid_strategy()`,
-  `isrc_invalid_strategy()` + corpus de ~50 ISRC réels (`data/isrc_real_sample.json`).
+Missing today:
+- `crates/midds-validate/src/parse.rs`: `parse_isrc(s: &str) -> Result<Isrc, ParseError>`
+  (tolerant regex `^[A-Z]{2}-?[A-Z0-9]{3}-?\d{2}-?\d{5}$`).
+- `crates/midds-validate/src/checksum.rs`: `verify_isrc_checksum` (mod-7).
+- `crates/midds-fixtures/src/identifiers.rs`: `isrc_valid_strategy()`,
+  `isrc_invalid_strategy()` + a corpus of ~50 real ISRCs (`data/isrc_real_sample.json`).
 
-(Sera consommé par Recording, mais l'effort est ici parce qu'il est
-mécaniquement transverse.)
+(Will be consumed by Recording, but the effort is here because it is
+mechanically cross-cutting.)
 
-#### 5.2.3 `MusicalWorkBuilder` (mandaté `plan.md:425`, jamais fait)
+#### 5.2.3 `MusicalWorkBuilder` (mandated `plan.md:425`, never done)
 
 `crates/midds-validate/src/lib.rs`
 
@@ -307,69 +307,69 @@ impl MusicalWorkBuilder {
 }
 ```
 
-Pattern réutilisable : doc-comment `// Recording/Release suivront ce template`.
+Reusable pattern: doc-comment `// Recording/Release will follow this template`.
 
-#### 5.2.4 CLI + bench paramétrés sur `M: Midds`
+#### 5.2.4 CLI + bench parametrized over `M: Midds`
 
-Cibles :
+Targets:
 
 - `crates/midds-cli/src/bench/{seed,fees,throughput,worker,util}.rs`
 - `crates/midds-cli/src/admin.rs:21,151,171,227`
 
-Approche minimale : enum CLI
+Minimal approach: CLI enum
 
 ```rust
 #[derive(clap::ValueEnum, Clone)]
-enum MiddsKind { MusicalWork /* + Recording, Release plus tard */ }
+enum MiddsKind { MusicalWork /* + Recording, Release later */ }
 ```
 
-Les fonctions de scaffolding (`setup_runner`, `partition_round_robin`,
-`auto_fund`) deviennent génériques sur `M: Midds + Encode`. Les commandes
-CLI prennent `--midds-type <kind>` (default `musical-work`) et dispatchent.
+The scaffolding functions (`setup_runner`, `partition_round_robin`,
+`auto_fund`) become generic over `M: Midds + Encode`. The CLI commands
+take `--midds-type <kind>` (default `musical-work`) and dispatch.
 
-V1 : seul `MusicalWork` est branché — mais l'enum + dispatch en place.
-Recording = ajouter une variante.
+V1: only `MusicalWork` is wired — but the enum + dispatch are in place.
+Recording = adding a variant.
 
-#### 5.2.5 Constantes pallet/event regroupées
+#### 5.2.5 Pallet/event constants grouped together
 
 `crates/midds-client/src/pallet/{api,events}.rs`
 
-Aujourd'hui dispersé (`"DepositBase"`, `"NextMiddsId"`, `"Deposited"`,
-`"TransactionPayment"`…). Regrouper dans un module `pallet::names` (ou
-mieux : injecté via `Midds::KIND` du sprint A pour le préfixe pallet).
+Today scattered (`"DepositBase"`, `"NextMiddsId"`, `"Deposited"`,
+`"TransactionPayment"`…). Group them into a `pallet::names` module (or
+better: injected via `Midds::KIND` from sprint A for the pallet prefix).
 
-### 5.3 Critères de validation
+### 5.3 Validation criteria
 
-- `grep -rn 'MusicalWork' crates/midds-cli/src/bench/` retourne uniquement
-  les variantes d'enum `MiddsKind`.
+- `grep -rn 'MusicalWork' crates/midds-cli/src/bench/` returns only
+  the `MiddsKind` enum variants.
 - `grep -rn 'MusicalWork' crates/midds-fixtures/src/lib.rs crates/midds-fixtures/src/common.rs`
-  retourne 0.
-- `parse_isrc` + `verify_isrc_checksum` ont chacun ≥ 5 cas pass + 5 cas fail.
-- `MusicalWorkBuilder` a un test "happy path" + un test "agrégation de 3 erreurs".
+  returns 0.
+- `parse_isrc` + `verify_isrc_checksum` each have ≥ 5 pass cases + 5 fail cases.
+- `MusicalWorkBuilder` has a "happy path" test + a "3-error aggregation" test.
 
 ---
 
-## 6. Sprint D — CI durcie + dette doc + quick wins
+## 6. Sprint D — Hardened CI + doc debt + quick wins
 
 ### 6.1 Goal
 
-Refermer les trous qui laisseraient passer une régression silencieuse, et
-nettoyer la doc/le repo des incohérences identifiées.
+Close the holes that would let a silent regression slip through, and
+clean the docs/repo of the inconsistencies identified.
 
-### 6.2 Tâches
+### 6.2 Tasks
 
-#### 6.2.1 CI — jobs manquants
+#### 6.2.1 CI — missing jobs
 
 `.github/workflows/ci.yml`
 
-Ajouter :
+Add:
 
 ```yaml
 - name: Check pallet with runtime-benchmarks
   run: cargo check -p pallet-midds --features runtime-benchmarks
 ```
 
-Nouveau workflow `.github/workflows/nightly.yml` (cron quotidien) :
+New workflow `.github/workflows/nightly.yml` (daily cron):
 
 ```yaml
 - name: Mass injection 50k/100k
@@ -381,18 +381,18 @@ Nouveau workflow `.github/workflows/nightly.yml` (cron quotidien) :
 
 #### 6.2.2 `release-plz` — required status checks
 
-`.github/workflows/release-plz.yml:7-10` reconnaît que `GITHUB_TOKEN` ne
-trigger pas CI sur la PR de release. Avant la 1ère release publique :
+`.github/workflows/release-plz.yml:7-10` acknowledges that `GITHUB_TOKEN` does
+not trigger CI on the release PR. Before the 1st public release:
 
-- Soit basculer sur PAT/GitHub App (préféré).
-- Soit ajouter une required-status-check sur `master` qui force un re-run
-  CI manuel avant merge.
+- Either switch to a PAT/GitHub App (preferred).
+- Or add a required-status-check on `master` that forces a manual CI
+  re-run before merge.
 
-#### 6.2.3 `clippy.toml` durci
+#### 6.2.3 Hardened `clippy.toml`
 
 `clippy.toml`
 
-Ajouter :
+Add:
 
 ```toml
 disallowed-methods = [
@@ -401,11 +401,11 @@ disallowed-methods = [
 ]
 ```
 
-(Tests excepted via `#[allow(clippy::disallowed_methods)]` localisé.)
+(Tests excepted via a localized `#[allow(clippy::disallowed_methods)]`.)
 
 #### 6.2.4 `Justfile`
 
-Nouveau fichier racine :
+New root file:
 
 ```makefile
 default:
@@ -430,66 +430,66 @@ bless-fixtures:
     UPDATE_FIXTURES=1 cargo test -p pallet-midds --test mass_injection
 ```
 
-#### 6.2.5 Doc — corriger `plan.md`
+#### 6.2.5 Doc — fix `plan.md`
 
 `docs/plan.md`
 
-- L. 445 : `lookup_by_identifier(id) -> Option<MiddsId>` → `Vec<MiddsId>`
-  (multi-claim acté).
-- Section 5.4 `MusicalWorkBuilder` : si fait au sprint C, marquer ✅,
-  sinon préciser "implémenté dans Sprint C de v1-hardening".
-- Renvoyer vers ce document (`v1-hardening.md`) en haut de section 6.
+- L. 445: `lookup_by_identifier(id) -> Option<MiddsId>` → `Vec<MiddsId>`
+  (multi-claim confirmed).
+- Section 5.4 `MusicalWorkBuilder`: if done in sprint C, mark ✅,
+  otherwise note "implemented in Sprint C of v1-hardening".
+- Point to this document (`v1-hardening.md`) at the top of section 6.
 
 #### 6.2.6 Quick wins
 
-- `seed.json` racine : ajouter `/seed.json` au `.gitignore` et supprimer
-  le fichier (orphelin, jamais lu).
-- `crates/midds-types/src/language.rs:42` : ajouter
+- Root `seed.json`: add `/seed.json` to `.gitignore` and remove
+  the file (orphan, never read).
+- `crates/midds-types/src/language.rs:42`: add
   `from_code_ignore_ascii_case`.
-- `crates/midds-traits/src/identifier.rs` : `static_assertions::const_assert_eq!`
-  sur la `max_encoded_len` de chaque alias (`Iswc`, `Isni`, `Ipi`, `Isrc`,
+- `crates/midds-traits/src/identifier.rs`: `static_assertions::const_assert_eq!`
+  on the `max_encoded_len` of each alias (`Iswc`, `Isni`, `Ipi`, `Isrc`,
   `OffchainHash`).
 
-### 6.3 Critères de validation
+### 6.3 Validation criteria
 
-- CI master : 6 jobs (fmt, clippy, test, wasm, bench-check, commitlint).
-- CI nightly : configurée et passe au moins une fois.
-- `just check` reproduit la CI en local.
-- `seed.json` n'existe plus.
-
----
-
-## 7. Hors scope (volontairement reporté)
-
-- **Refacto `do_force_remove_slash` post-finalisation** (`lib.rs:797-816`) :
-  comportement correct, juste opérations redondantes inoffensives. Pas
-  bloquant.
-- **`apply_multipliers` precision sur petites bases** : faux problème en
-  prod (planck à 10^12 décimales). Test mock peut être ajouté en sprint B
-  si trivial, sinon ignorer.
-- **`SLOW_WINDOW_DAYS = 7` hardcodé** (`lib.rs:79`) : par spec
-  (`economics.md` §4) ce 7j est **identique pour toutes instances**.
-  Configurabilité = YAGNI.
-- **Snapshot-tests `midds-codegen`** : le crate est documenté comme
-  "external consumers only", `midds-client` n'en dépend pas. Pas de valeur
-  à tester sans un runtime cible.
-- **Tests d'intégration `midds-client` contre un node éphémère** : le
-  bench/ E2E dans `midds-cli` couvre déjà le path. À reconsidérer si on
-  introduit une 2e instance sans repasser par `midds-cli`.
+- CI master: 6 jobs (fmt, clippy, test, wasm, bench-check, commitlint).
+- CI nightly: configured and passes at least once.
+- `just check` reproduces CI locally.
+- `seed.json` no longer exists.
 
 ---
 
-## 8. Démarrage suggéré
+## 7. Out of scope (deliberately deferred)
 
-1. Ouvrir 4 issues GitHub (une par sprint) avec ce document en référence.
-2. Sprints A et B en parallèle (deux PRs distinctes, branches séparées).
-3. Sprint C démarre dès que A est mergé (dépendance API client).
-4. Sprint D peut être tronçonné en sous-PRs (CI / clippy / quick wins
-   indépendants).
+- **Refactor `do_force_remove_slash` post-finalization** (`lib.rs:797-816`):
+  correct behavior, just redundant harmless operations. Not
+  blocking.
+- **`apply_multipliers` precision on small bases**: a non-issue in
+  prod (planck at 10^12 decimals). A mock test can be added in sprint B
+  if trivial, otherwise ignore.
+- **`SLOW_WINDOW_DAYS = 7` hardcoded** (`lib.rs:79`): per spec
+  (`economics.md` §4) this 7d is **identical for all instances**.
+  Configurability = YAGNI.
+- **`midds-codegen` snapshot tests**: the crate is documented as
+  "external consumers only", `midds-client` does not depend on it. No value
+  in testing without a target runtime.
+- **`midds-client` integration tests against an ephemeral node**: the
+  E2E bench/ in `midds-cli` already covers the path. To reconsider if we
+  introduce a 2nd instance without going through `midds-cli`.
 
-Critère de "v1 stabilisé, prêt pour Recording" :
+---
 
-- Les 4 sprints mergés sur `master`.
-- Une release `0.2.0` (ou `0.1.x` selon politique semver pré-1.0) cuttée
+## 8. Suggested kickoff
+
+1. Open 4 GitHub issues (one per sprint) referencing this document.
+2. Sprints A and B in parallel (two distinct PRs, separate branches).
+3. Sprint C starts as soon as A is merged (client API dependency).
+4. Sprint D can be split into sub-PRs (CI / clippy / quick wins
+   independent).
+
+Criterion for "v1 stabilized, ready for Recording":
+
+- The 4 sprints merged onto `master`.
+- A `0.2.0` release (or `0.1.x` depending on the pre-1.0 semver policy) cut
   via `release-plz`.
-- CHANGELOG agrégeant les `BREAKING CHANGE` du sprint A.
+- CHANGELOG aggregating the `BREAKING CHANGE` entries from sprint A.

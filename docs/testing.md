@@ -1,155 +1,154 @@
-# MIDDS SDK — Plan testing & mocking
+# MIDDS SDK — Testing & mocking plan
 
-> Document de référence pour la stratégie de tests et de mocking du repo
-> `midds-sdk`. Pendant de `docs/plan.md`. Cible : un harnais stable et
-> professionnel couvrant unitaire, property-based, masse, fees réelles,
-> end-to-end, et seeding de chaînes de dev pour le frontend.
+> Reference document for the testing and mocking strategy of the
+> `midds-sdk` repo. Counterpart to `docs/plan.md`. Goal: a stable and
+> professional harness covering unit, property-based, mass, real fees,
+> end-to-end, and seeding of dev chains for the frontend.
 
 ---
 
-## 1. Principes directeurs
+## 1. Guiding principles
 
-- **`midds-fixtures` est la pierre angulaire** : une seule source de vérité
-  pour "à quoi ressemble un MIDDS plausible". Toutes les couches en
-  dépendent.
-- **Pas de duplication runtime** : couches 1–3 vivent dans `midds-sdk` (mock
-  FRAME), couche 4 vit dans `Allfeat` (melodie-runtime réel), couche 5 est
+- **`midds-fixtures` is the cornerstone**: a single source of truth
+  for "what a plausible MIDDS looks like". Every layer depends on it.
+- **No runtime duplication**: layers 1–3 live in `midds-sdk` (mock
+  FRAME), layer 4 lives in `Allfeat` (real melodie-runtime), layer 5 is
   portable via `midds-cli`.
-- **Déterministe par défaut** : RNG seedé pour qu'un test "10 000 MIDDS
-  générés" soit reproductible bit-à-bit.
-- **Pas de `midds-loadgen` séparé** : on étend `midds-cli` avec des
-  sous-commandes `bench` et `seed` (cohérent avec son rôle de client
-  opérateur).
-- **Une couche = une question distincte**. Pas de chevauchement de
-  responsabilité : si un bug peut être attrapé à plusieurs niveaux, il est
-  attrapé au plus bas.
+- **Deterministic by default**: seeded RNG so that a "10,000 MIDDS
+  generated" test is reproducible bit-for-bit.
+- **No separate `midds-loadgen`**: we extend `midds-cli` with
+  `bench` and `seed` subcommands (consistent with its role as an operator
+  client).
+- **One layer = one distinct question**. No overlap of
+  responsibility: if a bug can be caught at multiple levels, it is
+  caught at the lowest.
 
 ---
 
-## 2. Vue d'ensemble — 5 couches
+## 2. Overview — 5 layers
 
-| Couche | Question à laquelle elle répond | Localisation | Outillage |
+| Layer | Question it answers | Location | Tooling |
 |---|---|---|---|
-| 1. Unit pallet | Le lifecycle marche-t-il ? | `pallets/pallet-midds/src/tests.rs` | mock FRAME, `MockMidds` |
-| 2. Property-based pallet | Les invariants tiennent-ils sur 10k cas générés ? | `pallets/pallet-midds/src/property_tests.rs` | `proptest` sur le mock |
-| 3. Mass injection mock | Storage / weights / bond cumulé scalent-ils ? | `pallets/pallet-midds/tests/mass_injection.rs` | mock FRAME + boucle N=10k–100k |
-| 4. Runtime integration | **Fees réelles** sur melodie-runtime | `Allfeat/runtime/melodie/tests/midds_integration.rs` | `TestExternalities` sur `melodie-runtime` |
-| 5a. E2E inter-crates (tests auto) | Tous les seams SDK parlent la même forme | `crates/midds-e2e/tests/` | node `--dev` externe (`MIDDS_E2E_WS`) + subxt + `midds-client` |
-| 5b. E2E node (outillage opérateur) | Inclusion réelle, fees, throughput, multi-comptes | `crates/midds-cli/src/bench/` | node `--dev` + subxt + `midds-client` |
+| 1. Unit pallet | Does the lifecycle work? | `pallets/pallet-midds/src/tests.rs` | mock FRAME, `MockMidds` |
+| 2. Property-based pallet | Do the invariants hold over 10k generated cases? | `pallets/pallet-midds/src/property_tests.rs` | `proptest` on the mock |
+| 3. Mass injection mock | Do storage / weights / cumulative bond scale? | `pallets/pallet-midds/tests/mass_injection.rs` | mock FRAME + loop N=10k–100k |
+| 4. Runtime integration | **Real fees** on melodie-runtime | `Allfeat/runtime/melodie/tests/midds_integration.rs` | `TestExternalities` on `melodie-runtime` |
+| 5a. Inter-crate E2E (auto tests) | All SDK seams speak the same shape | `crates/midds-e2e/tests/` | external `--dev` node (`MIDDS_E2E_WS`) + subxt + `midds-client` |
+| 5b. E2E node (operator tooling) | Real inclusion, fees, throughput, multi-account | `crates/midds-cli/src/bench/` | `--dev` node + subxt + `midds-client` |
 
 ---
 
 ## 3. Crate `midds-fixtures` (NEW)
 
-Localisation : `crates/midds-fixtures/`. Std-only, pas de no_std.
+Location: `crates/midds-fixtures/`. Std-only, no no_std.
 
 ### 3.1 Layout
 
 ```
 crates/midds-fixtures/
 ├── Cargo.toml
-├── data/                         # JSON committés
-│   ├── iswc_real_sample.json     # ~500 ISWC valides (anonymisés)
+├── data/                         # committed JSON
+│   ├── iswc_real_sample.json     # ~500 valid ISWCs (anonymized)
 │   ├── ipi_codes.json
 │   ├── languages.json
-│   └── titles_corpus.json        # corpus de titres plausibles
+│   └── titles_corpus.json        # corpus of plausible titles
 └── src/
     ├── lib.rs
     ├── musical_work/
     │   ├── strategy.rs           # proptest::Strategy
-    │   ├── builder.rs            # builder pattern (test ergonomique)
-    │   └── corpus.rs             # accès aux fixtures statiques
-    ├── identifiers.rs            # ISWC, IPI, ISNI valides (checksum-correct)
-    ├── pathological.rs           # cas borderline / pathologiques
+    │   ├── builder.rs            # builder pattern (ergonomic test)
+    │   └── corpus.rs             # access to static fixtures
+    ├── identifiers.rs            # valid ISWC, IPI, ISNI (checksum-correct)
+    ├── pathological.rs           # borderline / pathological cases
     └── rng.rs                    # SeededRng helper
 ```
 
-### 3.2 API publique
+### 3.2 Public API
 
-- `MusicalWorkBuilder` : `.with_iswc(...).with_title(...).build()` pour les
-  tests unitaires lisibles.
-- `arb_musical_work()` : `proptest::Strategy<Value = MusicalWork>` pour
+- `MusicalWorkBuilder`: `.with_iswc(...).with_title(...).build()` for
+  readable unit tests.
+- `arb_musical_work()`: `proptest::Strategy<Value = MusicalWork>` for
   property tests.
-- `arb_musical_work_max_size()` : payloads à `MaxEncodedLen` exacte.
-- `arb_musical_work_invalid()` : génère systématiquement des cas qui
-  doivent échouer en validation.
-- `corpus::iter_real_iswcs()` : itérateur sur le dataset réel.
-- `gen_n(seed, count) -> Vec<MusicalWork>` : génération déterministe en
-  masse pour seed/loadgen.
+- `arb_musical_work_max_size()`: payloads at exact `MaxEncodedLen`.
+- `arb_musical_work_invalid()`: systematically generates cases that
+  must fail validation.
+- `corpus::iter_real_iswcs()`: iterator over the real dataset.
+- `gen_n(seed, count) -> Vec<MusicalWork>`: deterministic mass
+  generation for seed/loadgen.
 
-### 3.3 Features Cargo
+### 3.3 Cargo features
 
 - `default = ["proptest"]`
-- `proptest` : active `proptest::Strategy`
-- `corpus` : embarque les JSON dans le binaire (sinon lus à l'exécution
-  depuis `CARGO_MANIFEST_DIR`)
+- `proptest`: enables `proptest::Strategy`
+- `corpus`: embeds the JSON in the binary (otherwise read at runtime
+  from `CARGO_MANIFEST_DIR`)
 
-### 3.4 Datasets statiques
+### 3.4 Static datasets
 
-Les JSON sont anonymisés mais structurellement réalistes (charset, longueur,
-distribution). À régénérer si la spec d'identifiants évolue. Aucune donnée
-RGPD-sensible (pas de noms d'auteurs réels, juste codes industrie).
+The JSON files are anonymized but structurally realistic (charset, length,
+distribution). To be regenerated if the identifier spec evolves. No
+GDPR-sensitive data (no real author names, just industry codes).
 
 ---
 
-## 4. Couche 1 — Unit tests pallet (existant, à raffiner)
+## 4. Layer 1 — Unit tests pallet (existing, to refine)
 
-Fichier : `pallets/pallet-midds/src/tests.rs` (déjà 435 lignes).
+File: `pallets/pallet-midds/src/tests.rs` (already 435 lines).
 
-**Action** : refactor minimal pour consommer `midds-fixtures` au lieu des
-helpers ad-hoc. Garder la liste actuelle de cas (lifecycle, freeze window,
-`force_*`, errors). Vérifier la couverture des branches `MutateHold`
+**Action**: minimal refactor to consume `midds-fixtures` instead of the
+ad-hoc helpers. Keep the current list of cases (lifecycle, freeze window,
+`force_*`, errors). Verify coverage of the `MutateHold` branches
 (hold/release/transfer-on-slash).
 
-Pas d'ajout de cas ici — les nouveaux cas vont dans les couches 2 et 3.
+No adding of cases here — the new cases go in layers 2 and 3.
 
 ---
 
-## 5. Couche 2 — Property-based pallet (NEW)
+## 5. Layer 2 — Property-based pallet (NEW)
 
-Fichier : `pallets/pallet-midds/src/property_tests.rs` (gated `#[cfg(test)]`).
+File: `pallets/pallet-midds/src/property_tests.rs` (gated `#[cfg(test)]`).
 
-### 5.1 Invariants à prouver
+### 5.1 Invariants to prove
 
-Chaque invariant = un `proptest!` block dédié.
+Each invariant = a dedicated `proptest!` block.
 
 | Invariant | Description |
 |---|---|
-| `bond_formula` | `bond_held(account) == DepositBase + DepositPerByte * encoded_size(midds)` après chaque `deposit()` |
-| `force_remove_releases` | `force_remove()` libère exactement le bond initialement tenu (pas plus, pas moins) |
-| `update_preserves_id` | `update()` ne modifie jamais l'identifiant canonique ni `NextMiddsId` |
-| `freeze_window_blocks_update` | Tout `update()` dans `< owned_since + UpdateWindow` retourne `Error::Frozen` |
-| `unique_canonical_id` | Aucune séquence d'opérations ne permet deux `MusicalWork` avec le même ISWC en storage |
-| `encoded_len_consistency` | `midds.encoded_size() <= <Midds as MaxEncodedLen>::max_encoded_len()` pour tout MIDDS issu de `arb_musical_work()` |
-| `events_match_storage` | Pour toute séquence d'extrinsics, les events émis reflètent les diffs storage |
+| `bond_formula` | `bond_held(account) == DepositBase + DepositPerByte * encoded_size(midds)` after each `deposit()` |
+| `force_remove_releases` | `force_remove()` releases exactly the bond initially held (no more, no less) |
+| `update_preserves_id` | `update()` never modifies the canonical identifier nor `NextMiddsId` |
+| `freeze_window_blocks_update` | Any `update()` within `< owned_since + UpdateWindow` returns `Error::Frozen` |
+| `unique_canonical_id` | No sequence of operations allows two `MusicalWork` with the same ISWC in storage |
+| `encoded_len_consistency` | `midds.encoded_size() <= <Midds as MaxEncodedLen>::max_encoded_len()` for any MIDDS coming from `arb_musical_work()` |
+| `events_match_storage` | For any sequence of extrinsics, the emitted events reflect the storage diffs |
 
 ### 5.2 Volume
 
-- Default : `proptest_cases = 256` (PR rapide).
-- Override CI nightly : `PROPTEST_CASES=10000`.
-- Persistance des contre-exemples : `proptest-regressions/` commit dans le
-  repo (pratique standard `proptest`).
+- Default: `proptest_cases = 256` (fast PR).
+- Nightly CI override: `PROPTEST_CASES=10000`.
+- Counter-example persistence: `proptest-regressions/` committed in the
+  repo (standard `proptest` practice).
 
 ---
 
-## 6. Couche 3 — Mass injection sur mock (NEW)
+## 6. Layer 3 — Mass injection on mock (NEW)
 
-Fichier : `pallets/pallet-midds/tests/mass_injection.rs` (test
-d'intégration, hors `#[cfg(test)]`).
+File: `pallets/pallet-midds/tests/mass_injection.rs` (integration
+test, outside `#[cfg(test)]`).
 
-### 6.1 Scénarios
+### 6.1 Scenarios
 
-| Scénario | N | Comptes |
+| Scenario | N | Accounts |
 |---|---|---|
-| `mass_injection_10k` | 10 000 | 1 |
-| `mass_injection_50k` | 50 000 | 100 |
-| `mass_injection_100k` | 100 000 | 1 000 (CI nightly only) |
-| `mass_injection_max_size` | 1 000 | chaque MIDDS à `MaxEncodedLen` |
+| `mass_injection_10k` | 10,000 | 1 |
+| `mass_injection_50k` | 50,000 | 100 |
+| `mass_injection_100k` | 100,000 | 1,000 (CI nightly only) |
+| `mass_injection_max_size` | 1,000 | each MIDDS at `MaxEncodedLen` |
 
-### 6.2 Mesures consignées
+### 6.2 Recorded measurements
 
-Chaque test sort un fichier
-`target/test-reports/mass_injection_<scenario>.json` :
+Each test outputs a file
+`target/test-reports/mass_injection_<scenario>.json`:
 
 ```json
 {
@@ -163,46 +162,46 @@ Chaque test sort un fichier
 }
 ```
 
-### 6.3 Anti-régression
+### 6.3 Anti-regression
 
-`storage_root_hash` est checké contre une fixture committée
-(`tests/fixtures/storage_root_10k.txt`). Si la formule de bond ou
-l'encoding change, le test échoue avec un diff explicite. Force à updater
-consciemment.
+`storage_root_hash` is checked against a committed fixture
+(`tests/fixtures/storage_root_10k.txt`). If the bond formula or the
+encoding changes, the test fails with an explicit diff. Forces a
+conscious update.
 
 ---
 
-## 7. Couche 4 — Runtime integration tests (côté `Allfeat`)
+## 7. Layer 4 — Runtime integration tests (on the `Allfeat` side)
 
-**Hors `midds-sdk`** : vit dans
+**Outside `midds-sdk`**: lives in
 `Allfeat/runtime/melodie/tests/midds_integration.rs`.
 
-### 7.1 Pourquoi ailleurs
+### 7.1 Why elsewhere
 
-`midds-sdk` ne doit pas dépendre de `melodie-runtime` (cf. décision de
-découplage melodie/mainnet). Le runtime côté `Allfeat` consomme déjà le SDK
-en path-dep, donc l'inverse créerait un cycle.
+`midds-sdk` must not depend on `melodie-runtime` (cf. the
+melodie/mainnet decoupling decision). The runtime on the `Allfeat` side already consumes the SDK
+as a path-dep, so the reverse would create a cycle.
 
 ### 7.2 Setup
 
-Dépendances : `melodie-runtime` + `midds-fixtures` + `sp-io`.
+Dependencies: `melodie-runtime` + `midds-fixtures` + `sp-io`.
 
-`TestExternalities` construit depuis `melodie-runtime::GenesisConfig::default()`
-avec balances pré-mintées pour 100 comptes.
+`TestExternalities` built from `melodie-runtime::GenesisConfig::default()`
+with pre-minted balances for 100 accounts.
 
-### 7.3 Scénarios fee-réel
+### 7.3 Real-fee scenarios
 
-| Test | Mesure |
+| Test | Measurement |
 |---|---|
-| `fees_small_musical_work` | bond + tx fee pour MusicalWork ~50 bytes |
-| `fees_avg_musical_work` | bond + tx fee pour MusicalWork ~200 bytes |
-| `fees_max_musical_work` | bond + tx fee pour MusicalWork à `MaxEncodedLen` |
-| `fees_distribution_1000` | distribution complète (p50 / p95 / p99) sur 1k MIDDS issus de `arb_musical_work()` |
+| `fees_small_musical_work` | bond + tx fee for MusicalWork ~50 bytes |
+| `fees_avg_musical_work` | bond + tx fee for MusicalWork ~200 bytes |
+| `fees_max_musical_work` | bond + tx fee for MusicalWork at `MaxEncodedLen` |
+| `fees_distribution_1000` | full distribution (p50 / p95 / p99) over 1k MIDDS coming from `arb_musical_work()` |
 
-### 7.4 Sortie
+### 7.4 Output
 
-`target/test-reports/fees_report.md` — tableau markdown commit-able dans le
-PR :
+`target/test-reports/fees_report.md` — commit-able markdown table in the
+PR:
 
 ```
 | Size (bytes) | Bond (AFT) | Weight fee (AFT) | Length fee (AFT) | Total user cost |
@@ -210,20 +209,21 @@ PR :
 | 50           | ...        | ...              | ...              | ...             |
 ```
 
-Sert de baseline pour décider de tuner `DepositBase` / `DepositPerByte`.
+Serves as a baseline for deciding whether to tune `DepositBase` /
+`DepositPerByte`.
 
 ---
 
-## 8. Couche 5 — E2E node
+## 8. Layer 5 — E2E node
 
-La Couche 5 est scindée en deux livrables séparés mais consommant le même node `--dev` :
+Layer 5 is split into two separate deliverables but consuming the same `--dev` node:
 
-### 8.a Crate `midds-e2e` — tests automatisés inter-crates
+### 8.a Crate `midds-e2e` — automated inter-crate tests
 
-`crates/midds-e2e/` regroupe les `[[test]]` cibles qui font tourner toute la
-stack (`types → pallet → runtime-api → rpc → client → cli`) contre un node
-externe — sa raison d'être est de garantir que tous les seams parlent la
-même forme.
+`crates/midds-e2e/` gathers the `[[test]]` targets that run the whole
+stack (`types → pallet → runtime-api → rpc → client → cli`) against an external
+node — its reason for being is to guarantee that all seams speak the
+same shape.
 
 #### 8.a.1 Layout
 
@@ -231,45 +231,46 @@ même forme.
 crates/midds-e2e/
 ├── Cargo.toml          # publish = false
 ├── src/
-│   ├── lib.rs          # re-exporte le scaffolding
+│   ├── lib.rs          # re-exports the scaffolding
 │   ├── env.rs          # MIDDS_E2E_WS lookup
-│   ├── client.rs       # try_connect() → skip silencieux si pas de node
+│   ├── client.rs       # try_connect() → silent skip if no node
 │   ├── signer.rs       # //Alice, //Bob
-│   ├── session.rs      # base index = nanos % 10^9, atomic slot par test
-│   └── tx.rs           # helpers raw (update, force_remove_refund, sudo,
-│                       #   free_balance) qui contournent midds-client
+│   ├── session.rs      # base index = nanos % 10^9, atomic slot per test
+│   └── tx.rs           # raw helpers (update, force_remove_refund, sudo,
+│                       #   free_balance) that bypass midds-client
 └── tests/
-    ├── happy_path.rs       # deposit → lookup → get → assert payload identique
-    ├── update_window.rs    # update dans la fenêtre → assert payload muté
-    ├── force_admin.rs      # sudo force_remove_refund → assert bond restitué
-    ├── rpc_namespace.rs    # appels JSON-RPC midds_musicalWorks_*
+    ├── happy_path.rs       # deposit → lookup → get → assert identical payload
+    ├── update_window.rs    # update within the window → assert mutated payload
+    ├── force_admin.rs      # sudo force_remove_refund → assert bond refunded
+    ├── rpc_namespace.rs    # JSON-RPC calls midds_musicalWorks_*
     └── cli_smoke.rs        # `cargo run -p midds-cli -- seed --count 5`
 ```
 
-#### 8.a.2 Contrat de skip
+#### 8.a.2 Skip contract
 
-Pas de node = `cargo test -p midds-e2e` reste vert. Chaque test commence par
-`let Some(client) = client::try_connect().await else { return; }`. La
-résolution de l'URL :
+No node = `cargo test -p midds-e2e` stays green. Each test starts with
+`let Some(client) = client::try_connect().await else { return; }`. URL
+resolution:
 
 ```
-MIDDS_E2E_WS=ws://… cargo test -p midds-e2e   # node explicite
-cargo test -p midds-e2e                       # ws://127.0.0.1:9944 par défaut
+MIDDS_E2E_WS=ws://… cargo test -p midds-e2e   # explicit node
+cargo test -p midds-e2e                       # ws://127.0.0.1:9944 by default
 ```
 
-#### 8.a.3 Isolation des runs
+#### 8.a.3 Run isolation
 
-Tous les tests partagent la même chaîne, donc l'état s'accumule entre runs.
-`session::fresh_musical_work()` mint des ISWC déterministes via
-`base_index = nanos_since_epoch % 10^9` + un slot atomique par test, ce qui
-garantit qu'aucun run successif ne tape `AlreadyExists` et qu'aucun test
-parallèle ne se piétine.
+All tests share the same chain, so state accumulates between runs.
+`session::fresh_musical_work()` mints deterministic ISWCs via
+`base_index = nanos_since_epoch % 10^9` + an atomic slot per test, which
+guarantees that no successive run hits `AlreadyExists` and that no
+parallel test steps on another.
 
-#### 8.a.4 Wiring contre Allfeat
+#### 8.a.4 Wiring against Allfeat
 
-Le node `allfeat --dev` est lancé séparément par l'opérateur (ou un job CI
-qui le démarre en background avant le `cargo test`). Aucune dépendance Rust
-vers `../Allfeat` côté SDK — la frontière reste le WS RPC.
+The `allfeat --dev` node is launched separately by the operator (or a CI
+job that starts it in the background before the `cargo test`). No Rust
+dependency on `../Allfeat` from the SDK side — the boundary stays the WS
+RPC.
 
 ```bash
 # Terminal 1
@@ -279,20 +280,20 @@ vers `../Allfeat` côté SDK — la frontière reste le WS RPC.
 cargo test -p midds-e2e
 ```
 
-### 8.b Outillage opérateur — `midds-cli`
+### 8.b Operator tooling — `midds-cli`
 
-Indépendamment des tests, la CLI continue d'exposer des sous-commandes
-opérateur pour les usages live-node manuels.
+Independently of the tests, the CLI keeps exposing operator
+subcommands for manual live-node use.
 
-#### 8.b.1 Sous-commandes ajoutées
+#### 8.b.1 Added subcommands
 
 ```
 midds-cli seed
   --node ws://localhost:9944
   --count 50000
-  --rng-seed 0xABCD...                # optionnel, défaut = déterministe
+  --rng-seed 0xABCD...                # optional, default = deterministic
   --concurrency 16                     # extrinsics in-flight
-  --signers alice,bob,//Alice//1..100  # multi-comptes
+  --signers alice,bob,//Alice//1..100  # multi-account
   --report seed_report.json
 
 midds-cli bench fees
@@ -313,33 +314,33 @@ midds-cli verify-state
   --expected-storage-root 0x...
 ```
 
-#### 8.b.2 Architecture interne
+#### 8.b.2 Internal architecture
 
 - Module `crates/midds-cli/src/bench/` (mod.rs, seed.rs, fees.rs,
   throughput.rs, verify.rs).
-- Réutilise `midds-client` pour les extrinsics, `midds-fixtures` pour la
-  génération.
-- Les rapports de seed sont rejoués-vérifiables via `verify-state`.
+- Reuses `midds-client` for the extrinsics, `midds-fixtures` for the
+  generation.
+- The seed reports are replay-verifiable via `verify-state`.
 
-#### 8.b.3 Multi-comptes
+#### 8.b.3 Multi-account
 
-Dérivation déterministe `//Alice//<N>` (jusqu'à plusieurs milliers).
-Pré-funding via une sous-commande dédiée :
+Deterministic derivation `//Alice//<N>` (up to several thousand).
+Pre-funding via a dedicated subcommand:
 
 ```
 midds-cli admin pre-fund-signers --count 1000 --amount 1000AFT
 ```
 
-Implémentée via une extrinsic `force_set_balance` (sudo) côté chain dev. À
-documenter clairement comme outil de dev uniquement.
+Implemented via a `force_set_balance` (sudo) extrinsic on the dev chain
+side. To be documented clearly as a dev-only tool.
 
 ---
 
-## 9. Workflow snapshot pour frontend
+## 9. Snapshot workflow for frontend
 
-Documenté dans `docs/seeding.md` (à créer en parallèle).
+Documented in `docs/seeding.md` (to be created in parallel).
 
-### 9.1 Workflow type
+### 9.1 Typical workflow
 
 ```bash
 # 1. Boot dev node
@@ -361,197 +362,197 @@ allfeat export-state --chain melodie-dev > seeded-state.json
 allfeat --chain ./seeded-state.json
 ```
 
-### 9.2 Distribution du snapshot
+### 9.2 Snapshot distribution
 
-Le fichier `seeded-state.json` peut être :
-- commit dans un repo fixtures séparé (si <100 Mo),
-- ou release-asset GitHub attaché à un tag du SDK (recommandé pour la
-  taille >100 Mo).
+The `seeded-state.json` file can be:
+- committed in a separate fixtures repo (if <100 MB),
+- or a GitHub release-asset attached to a SDK tag (recommended for sizes
+  >100 MB).
 
-**Reproductibilité** : `--rng-seed` fixé garantit que le snapshot est
-régénérable bit-à-bit. CI peut produire un nouveau snapshot à chaque
+**Reproducibility**: a fixed `--rng-seed` guarantees that the snapshot is
+regenerable bit-for-bit. CI can produce a new snapshot at each
 release.
 
 ---
 
-## 10. Benchmarks weights (existant, à étendre)
+## 10. Weights benchmarks (existing, to extend)
 
-Fichier : `pallets/pallet-midds/src/benchmarking.rs` (108 lignes
-actuellement).
+File: `pallets/pallet-midds/src/benchmarking.rs` (currently 108
+lines).
 
-**Action** : ajouter le worst-case avec `MaxEncodedLen` (utilise
-`midds-fixtures::arb_musical_work_max_size`) pour tous les extrinsics.
-Régénérer les weights via `frame-omni-bencher` une fois par release SDK.
+**Action**: add the worst-case with `MaxEncodedLen` (uses
+`midds-fixtures::arb_musical_work_max_size`) for all extrinsics.
+Regenerate the weights via `frame-omni-bencher` once per SDK release.
 
-**Orthogonal** aux benchmarks de perf utilisateur (Couche 5 throughput) —
-ne pas confondre. Ici on calibre les weights FRAME, pas le débit réseau.
+**Orthogonal** to the user perf benchmarks (Layer 5 throughput) —
+do not confuse. Here we calibrate the FRAME weights, not the network throughput.
 
 ---
 
 ## 11. CI cadence
 
-| Étape | Trigger | Durée cible |
+| Step | Trigger | Target duration |
 |---|---|---|
-| Couches 1 + 2 (default proptest cases) | Chaque PR | <2 min |
-| Couche 3 (10k seulement) | Chaque PR | <5 min |
-| Couche 3 (100k) + property avec `PROPTEST_CASES=10000` | Nightly | <30 min |
-| Couche 4 (côté Allfeat) | Nightly Allfeat | <10 min |
-| Couche 5a (`midds-e2e`) | Manuel local pour V1, à wirer en CI plus tard | <2 min après boot du node |
-| Couche 5b throughput | Manuel + tag release | variable |
-| Régénération weights + snapshot seeded | Tag release | <1h |
+| Layers 1 + 2 (default proptest cases) | Each PR | <2 min |
+| Layer 3 (10k only) | Each PR | <5 min |
+| Layer 3 (100k) + property with `PROPTEST_CASES=10000` | Nightly | <30 min |
+| Layer 4 (Allfeat side) | Nightly Allfeat | <10 min |
+| Layer 5a (`midds-e2e`) | Manual local for V1, to wire in CI later | <2 min after node boot |
+| Layer 5b throughput | Manual + release tag | variable |
+| Weights regeneration + seeded snapshot | Release tag | <1h |
 
 ---
 
-## 12. Cas pathologiques à couvrir explicitement
+## 12. Pathological cases to cover explicitly
 
-À distribuer dans les bonnes couches, mais listés une fois pour ne rien
-oublier :
+To be distributed across the right layers, but listed once so nothing is
+forgotten:
 
-- MIDDS à `MaxEncodedLen` exact (bond max).
-- MIDDS minimal (bond min, mais ≥ ED).
-- Charset borderline (caractères ASCII limites).
-- Compte sans funds suffisants pour le bond.
-- Update pile à `owned_since + UpdateWindow` (off-by-one).
-- 10k MIDDS depuis un seul compte (bond cumulé énorme).
-- Concurrence : deux updates simultanés sur même MIDDS (transactionnalité).
-- Storage migration fictive V1→V2 (test que la mécanique
-  `OnRuntimeUpgrade` marche).
-- ID canonique avec collision (rejet propre).
-- `force_remove` d'un MIDDS en freeze window (doit passer, prouve que
-  sudo bypass marche).
+- MIDDS at exact `MaxEncodedLen` (max bond).
+- Minimal MIDDS (min bond, but ≥ ED).
+- Borderline charset (boundary ASCII characters).
+- Account without sufficient funds for the bond.
+- Update exactly at `owned_since + UpdateWindow` (off-by-one).
+- 10k MIDDS from a single account (huge cumulative bond).
+- Concurrency: two simultaneous updates on the same MIDDS (transactionality).
+- Fictitious V1→V2 storage migration (test that the
+  `OnRuntimeUpgrade` mechanism works).
+- Canonical ID with collision (clean rejection).
+- `force_remove` of a MIDDS in freeze window (must pass, proves that
+  sudo bypass works).
 
 ---
 
-## 13. Plan d'exécution
+## 13. Execution plan
 
-Ordre qui maximise la valeur incrémentale. Chaque étape est mergeable
-indépendamment.
+Order that maximizes incremental value. Each step is mergeable
+independently.
 
-| # | Étape | Bénéfice immédiat |
+| # | Step | Immediate benefit |
 |---|---|---|
-| 1 | `midds-fixtures` skeleton + datasets + `MusicalWorkBuilder` | Débloque tout le reste |
-| 2 | Refactor Couche 1 pour utiliser fixtures | Valide l'API |
-| 3 | Couche 2 property tests | Trouve probablement des bugs latents |
-| 4 | Couche 3 mass injection | Pose le baseline `storage_root` (anti-régression solide) |
-| 5 | `midds-cli seed` + `verify-state` | Débloque le frontend immédiatement |
-| 6 | Couche 4 côté Allfeat | Fees report concret pour décisions de tuning |
-| 7 | `midds-cli bench fees` + `bench throughput` | Outillage opérateur |
-| 8 | Workflow snapshot doc + CI release artifact | Industrialisation |
-| 9 | Audit final cas pathologiques | Filet de sécurité |
+| 1 | `midds-fixtures` skeleton + datasets + `MusicalWorkBuilder` | Unblocks everything else |
+| 2 | Refactor Layer 1 to use fixtures | Validates the API |
+| 3 | Layer 2 property tests | Likely finds latent bugs |
+| 4 | Layer 3 mass injection | Sets the `storage_root` baseline (solid anti-regression) |
+| 5 | `midds-cli seed` + `verify-state` | Unblocks the frontend immediately |
+| 6 | Layer 4 Allfeat side | Concrete fees report for tuning decisions |
+| 7 | `midds-cli bench fees` + `bench throughput` | Operator tooling |
+| 8 | Snapshot workflow doc + CI release artifact | Industrialization |
+| 9 | Final audit of pathological cases | Safety net |
 
 ---
 
 ## 14. Conventions
 
-- Tous les rapports de tests : `target/test-reports/<scenario>.{json,md}`,
-  format stable, parsable par CI.
-- `proptest_cases` configurable via env var, jamais hardcodé.
-- RNG : `SmallRng` seedé, jamais `thread_rng()` dans les tests
-  reproductibles.
-- Multi-comptes en E2E : dérivation `//Alice//<N>`, jamais de clé hardcodée
-  hors `Alice`/`Bob`.
-- Datasets fixtures : aucune donnée réelle nominative. Codes industrie
-  uniquement (ISWC/IPI/ISNI synthétiques mais checksum-correct).
+- All test reports: `target/test-reports/<scenario>.{json,md}`,
+  stable format, parsable by CI.
+- `proptest_cases` configurable via env var, never hardcoded.
+- RNG: seeded `SmallRng`, never `thread_rng()` in reproducible
+  tests.
+- Multi-account in E2E: `//Alice//<N>` derivation, never a hardcoded key
+  outside `Alice`/`Bob`.
+- Fixture datasets: no real nominative data. Industry codes
+  only (synthetic but checksum-correct ISWC/IPI/ISNI).
 
 ---
 
-## 15. Tests cross-crate (hors pallet)
+## 15. Cross-crate tests (outside pallet)
 
-Les Couches 1–5 couvrent le flux on-chain. Mais le SDK héberge plusieurs
-crates dont chacune mérite sa propre couverture. Récapitulatif par crate.
+Layers 1–5 cover the on-chain flow. But the SDK hosts several
+crates, each of which deserves its own coverage. Recap per crate.
 
 ### 15.1 `midds-traits` (no_std, pure)
 
-- Tests unitaires sur chaque `validate_*_format` (charset, longueur, structure).
-- Cas négatifs explicites pour chaque branche de `MiddsFormatError`.
-- Pas de proptest dédié : surface trop petite pour le ROI.
-- Localisation : `crates/midds-traits/src/identifier/tests.rs` (déjà partiel).
+- Unit tests on each `validate_*_format` (charset, length, structure).
+- Explicit negative cases for each branch of `MiddsFormatError`.
+- No dedicated proptest: surface too small for the ROI.
+- Location: `crates/midds-traits/src/identifier/tests.rs` (already partial).
 
 ### 15.2 `midds-types` (no_std)
 
-- Roundtrip SCALE encode/decode pour tout MIDDS issu de `arb_musical_work()`.
-- Invariant : `encoded_size(midds) <= <Midds as MaxEncodedLen>::max_encoded_len()`.
-- Roundtrip serde JSON sous `--features serde` (sérialisé puis désérialisé,
-  bit-identique).
-- Localisation : `crates/midds-types/tests/encoding.rs`.
+- SCALE encode/decode roundtrip for any MIDDS coming from `arb_musical_work()`.
+- Invariant: `encoded_size(midds) <= <Midds as MaxEncodedLen>::max_encoded_len()`.
+- serde JSON roundtrip under `--features serde` (serialized then deserialized,
+  bit-identical).
+- Location: `crates/midds-types/tests/encoding.rs`.
 
 ### 15.3 `midds-validate` (std, offline)
 
-Couverture critique car c'est l'API publique pour les outils amont
-(éditeurs de catalog, importers).
+Critical coverage because it is the public API for the upstream tools
+(catalog editors, importers).
 
-- Pour chaque parseur tolérant : `valid` / `canonicalisable` / `invalid`.
-- Vérificateurs de checksum : warnings émis, jamais bloquants.
-- `MusicalWorkBuilder` : tout build réussi produit un payload qui passe
-  aussi `<MusicalWork as Midds>::validate_format`.
-- **Invariant clé** : on-chain ⊆ off-chain. Tout payload qui passe on-chain
-  passe off-chain ; l'inverse n'est pas vrai (off-chain accepte des
+- For each tolerant parser: `valid` / `canonicalisable` / `invalid`.
+- Checksum verifiers: warnings emitted, never blocking.
+- `MusicalWorkBuilder`: every successful build produces a payload that also
+  passes `<MusicalWork as Midds>::validate_format`.
+- **Key invariant**: on-chain ⊆ off-chain. Any payload that passes on-chain
+  passes off-chain; the reverse is not true (off-chain accepts
   warnings).
-- Localisation : `crates/midds-validate/src/musical_work/tests.rs`.
+- Location: `crates/midds-validate/src/musical_work/tests.rs`.
 
 ### 15.4 `midds-rpc` (std)
 
-- Test d'intégration avec un `impl MiddsRuntimeApi for TestApi` minimal
-  (stub en mémoire, pas de node).
-- Assert sur le shape JSON : `lookup_by_identifier` sur un ID inexistant
-  renvoie `null`, pas une erreur.
-- Localisation : `crates/midds-rpc/tests/rpc.rs`.
+- Integration test with a minimal `impl MiddsRuntimeApi for TestApi`
+  (in-memory stub, no node).
+- Assert on the JSON shape: `lookup_by_identifier` on a nonexistent ID
+  returns `null`, not an error.
+- Location: `crates/midds-rpc/tests/rpc.rs`.
 
 ### 15.5 `midds-client` (std)
 
-- Couvert essentiellement par la Couche 5 (subxt::dynamic exécuté contre
-  un node `--dev`).
-- Un test unitaire utile : `codec_bridge::EncodedCall` roundtrip avec
-  `parity_scale_codec::Encode` (sécurité contre une régression du bridge).
-- Pas de mock node, pas de subxt mocké — toute la valeur du choix dynamic
-  vient de l'exécution réelle, mocker la dégrade.
+- Covered essentially by Layer 5 (subxt::dynamic executed against
+  a `--dev` node).
+- One useful unit test: `codec_bridge::EncodedCall` roundtrip with
+  `parity_scale_codec::Encode` (safety against a regression of the bridge).
+- No mock node, no mocked subxt — all the value of the dynamic choice
+  comes from real execution, mocking it degrades it.
 
 ### 15.6 `midds-codegen` (std bin)
 
-Surface ici (CLI smoke) :
+Surface here (CLI smoke):
 
-- Smoke CLI : `--help` / `--version` / args manquants / chemin metadata
-  inexistant. Garde-fou sur la couche wrapper (clap, `is_url`,
-  `from_file_blocking`) — le seul code que `midds-codegen` possède
-  réellement.
-- Localisation : `crates/midds-codegen/tests/cli_smoke.rs`.
+- CLI smoke: `--help` / `--version` / missing args / nonexistent
+  metadata path. Guardrail on the wrapper layer (clap, `is_url`,
+  `from_file_blocking`) — the only code that `midds-codegen` actually
+  owns.
+- Location: `crates/midds-codegen/tests/cli_smoke.rs`.
 
-Snapshot codegen complet (déféré côté Allfeat) :
+Full codegen snapshot (deferred to the Allfeat side):
 
-- L'idée originelle (génération réussie depuis une metadata SCALE committée
-  + `cargo check` sur le binding produit) demande la metadata réelle de
-  `melodie-runtime`. La committer ici contredirait le découplage SDK /
-  runtime verrouillé par `CLAUDE.md` ("the runtime side is in
-  `../Allfeat`") et la metadata dérive à chaque release runtime, donc le
-  rythme de refresh appartient au runtime, pas au SDK.
-- Localisation cible : `Allfeat/runtime/melodie/tests/codegen_snapshot.rs`
-  (ou un step CI qui regénère + diff les bindings depuis un node
-  `melodie-dev`).
+- The original idea (successful generation from a committed SCALE metadata
+  + `cargo check` on the produced binding) requires the real metadata of
+  `melodie-runtime`. Committing it here would contradict the SDK / runtime
+  decoupling locked by `CLAUDE.md` ("the runtime side is in
+  `../Allfeat`") and the metadata drifts at each runtime release, so the
+  refresh cadence belongs to the runtime, not the SDK.
+- Target location: `Allfeat/runtime/melodie/tests/codegen_snapshot.rs`
+  (or a CI step that regenerates + diffs the bindings from a
+  `melodie-dev` node).
 
 ### 15.7 `midds-runtime-api` (no_std)
 
-Pas de test direct — declarations only. Implicitement couvert par la
-Couche 4 (impl côté runtime) et la Couche 5 (consommé via RPC).
+No direct test — declarations only. Implicitly covered by
+Layer 4 (impl on the runtime side) and Layer 5 (consumed via RPC).
 
 ---
 
-## 16. Tests de migration / versioning
+## 16. Migration / versioning tests
 
-La stratégie verrouille des enums top-level versionnés
-(`enum MusicalWork { V1(...), V2(...) }`). L'ajout d'une variante est
-additif. Mais il faut prouver mécaniquement que c'est non-breakable.
+The strategy locks in versioned top-level enums
+(`enum MusicalWork { V1(...), V2(...) }`). Adding a variant is
+additive. But it must be mechanically proven that this is non-breakable.
 
-### 16.1 Invariants à prouver à chaque ajout de variante
+### 16.1 Invariants to prove at each variant addition
 
 | Invariant | Description |
 |---|---|
-| Wire stability | Un `MusicalWorkV1` encodé en SCALE reste decodable comme `MusicalWork::V1` après ajout de V2 |
-| Storage stability | `Items<MiddsId, MusicalWork>` ne nécessite aucune migration sur ajout pur de variante |
-| Identifier stability | `identifier()` retourne la même valeur pour un V1, indépendamment des variantes ajoutées |
+| Wire stability | A SCALE-encoded `MusicalWorkV1` stays decodable as `MusicalWork::V1` after adding V2 |
+| Storage stability | `Items<MiddsId, MusicalWork>` requires no migration on a pure variant addition |
+| Identifier stability | `identifier()` returns the same value for a V1, independently of the added variants |
 
-### 16.2 Mécanique
+### 16.2 Mechanics
 
-Fichier : `crates/midds-types/tests/version_stability.rs`.
+File: `crates/midds-types/tests/version_stability.rs`.
 
 ```rust
 #[test]
@@ -562,46 +563,46 @@ fn v1_payload_stays_decodable() {
 }
 ```
 
-`musical_work_v1.scale` est commit comme **fixture immuable**. Toute
-modification accidentelle du wire format V1 fait échouer le test — c'est
-exactement le filet recherché.
+`musical_work_v1.scale` is committed as an **immutable fixture**. Any
+accidental modification of the V1 wire format makes the test fail — that's
+exactly the net being sought.
 
 ### 16.3 OnRuntimeUpgrade
 
-Quand une vraie migration deviendra nécessaire (changement structurel
-forcé par contrainte business), elle vivra dans
-`Allfeat/runtime/melodie/migrations/` avec son test dans
-`Allfeat/runtime/melodie/tests/migrations.rs`. Pas dans le SDK.
+When a real migration becomes necessary (structural change
+forced by a business constraint), it will live in
+`Allfeat/runtime/melodie/migrations/` with its test in
+`Allfeat/runtime/melodie/tests/migrations.rs`. Not in the SDK.
 
-**Règle** : le SDK garantit le wire format des MIDDS ; le runtime gère
-ses propres migrations de storage. Frontière nette.
+**Rule**: the SDK guarantees the wire format of the MIDDS; the runtime manages
+its own storage migrations. Clean boundary.
 
 ---
 
-## 17. Artefacts & commit policy
+## 17. Artifacts & commit policy
 
-| Artefact | Localisation | Commit ? |
+| Artifact | Location | Commit? |
 |---|---|---|
-| Rapports `target/test-reports/*.{json,md}` | local + CI artifact | **non** (gitignored) |
-| `proptest-regressions/` | repo | **oui** (pratique standard proptest) |
-| `tests/fixtures/storage_root_*.txt` | repo | **oui** (anti-régression Couche 3) |
-| Datasets `crates/midds-fixtures/data/*.json` | repo | **oui** (déterminisme) |
-| `crates/midds-types/tests/fixtures/musical_work_v1.scale` | repo | **oui** (wire stability) |
-| `crates/midds-codegen/tests/fixtures/metadata.scale` | repo | **oui** (snapshot codegen) |
-| `seeded-state.json` (chain dev seedée) | release asset GitHub | **non** (taille) |
-| `seed_report.json` | local | **non** (régénérable depuis seed) |
+| Reports `target/test-reports/*.{json,md}` | local + CI artifact | **no** (gitignored) |
+| `proptest-regressions/` | repo | **yes** (standard proptest practice) |
+| `tests/fixtures/storage_root_*.txt` | repo | **yes** (Layer 3 anti-regression) |
+| Datasets `crates/midds-fixtures/data/*.json` | repo | **yes** (determinism) |
+| `crates/midds-types/tests/fixtures/musical_work_v1.scale` | repo | **yes** (wire stability) |
+| `crates/midds-codegen/tests/fixtures/metadata.scale` | repo | **yes** (codegen snapshot) |
+| `seeded-state.json` (seeded dev chain) | GitHub release asset | **no** (size) |
+| `seed_report.json` | local | **no** (regenerable from seed) |
 
-**Règle générale** : si c'est régénérable de manière 100 % déterministe
-depuis le code + un seed, on ne commit pas. Sinon on commit. Le `.gitignore`
-doit refléter cette règle, pas la contredire.
+**General rule**: if it is 100% deterministically regenerable
+from the code + a seed, we do not commit it. Otherwise we commit it. The `.gitignore`
+must reflect this rule, not contradict it.
 
 ---
 
-## 18. Items ouverts
+## 18. Open items
 
-- Choix précis de la lib mass injection (subxt direct vs `txwrapper`).
-- Format exact du `seed_report.json` (à figer après PR de la Couche 5).
-- Politique de rotation des snapshots seeded sur les releases (combien on
-  en garde, combien on en publie).
-- Intégration `criterion` ou `divan` pour les vrais benchmarks de perf
-  utilisateur (Couche 5) — à trancher quand on attaquera l'étape 7.
+- Precise choice of the mass injection lib (subxt direct vs `txwrapper`).
+- Exact format of the `seed_report.json` (to be frozen after the Layer 5 PR).
+- Rotation policy for seeded snapshots on releases (how many we
+  keep, how many we publish).
+- `criterion` or `divan` integration for the real user perf
+  benchmarks (Layer 5) — to be decided when we tackle step 7.

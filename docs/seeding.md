@@ -1,6 +1,6 @@
 # MIDDS SDK — seeding & snapshot workflow
 
-> Companion to `docs/testing.md` (Couche 5 / étape 8). Documents the
+> Companion to `docs/testing.md` (Layer 5 / step 8). Documents the
 > end-to-end recipe for producing a deterministically-seeded Allfeat dev
 > chain that the frontend (or any downstream consumer) can boot against.
 
@@ -142,7 +142,7 @@ ship the seed parameters instead of the raw JSON.
 
 ## 6. Related operator commands
 
-Once a chain is seeded, two adjacent commands round out Couche 5 of
+Once a chain is seeded, two adjacent commands round out Layer 5 of
 `docs/testing.md`:
 
 - **`midds bench fees`** — measures real bond + tx fee per `deposit`,

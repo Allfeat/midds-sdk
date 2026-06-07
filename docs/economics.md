@@ -1,134 +1,134 @@
-# MIDDS SDK — Modèle économique
+# MIDDS SDK — Economic model
 
-> Document de référence pour l'économie du `pallet-midds` : bond, pricing
-> dynamique, fenêtre de finalisation, destination des fonds. Pendant de
-> `docs/plan.md` (architecture) et `docs/testing.md` (tests).
-> Cible : un modèle sain, sybil-résistant par construction, aligné avec la
-> tokenomics Allfeat (supply cappée à 1 B AFT, jamais d'émission au-delà).
-
----
-
-## 1. Contexte et objectifs
-
-Le pallet-midds doit servir un produit qui a **trois caractéristiques
-structurantes** :
-
-1. **Permissionless dès J0** — pas de whitelist, n'importe qui peut déposer.
-2. **Pas de filtre qualité on-chain pendant plusieurs mois** — le mécanisme
-   PoM (Proof of Metadata) arrivera plus tard ; en standalone, le format est
-   le seul check.
-3. **Promesse marketing** : *"minimal cost per million metadata records"*
-   (whitepaper §1.1) — l'ingestion à grande échelle doit rester abordable.
-
-Trois contraintes économiques additionnelles cadrent la conception :
-
-- **Supply cappée à 1 000 000 000 AFT, jamais réémise.** Aucun mécanisme ne
-  doit détruire de supply de manière irréversible (pas de burn).
-- **Web3 = pas d'anti-spam per-account** — un attaquant crée 10 K wallets
-  pour < 1 K AFT (juste l'ED). Toute défense indexée sur l'identité du
-  compte est défaite par sybil.
-- **Doublons d'identifier autorisés** — plusieurs parties peuvent déposer
-  leur version d'un même ISWC. Seuls les doublons exacts (même payload)
-  sont rejetés. Le squat de namespace n'existe pas comme menace.
-
-→ La conception économique doit donc fonctionner **au niveau communautaire**
-(jamais per-account), être **honnête sur ce qu'elle ne fait pas** (pas
-d'anti-sybil absolu sans curation), et **préserver la supply** en
-recyclant tout AFT collecté plutôt qu'en le brûlant.
+> Reference document for the `pallet-midds` economics: bond, dynamic
+> pricing, finalization window, destination of funds. Counterpart to
+> `docs/plan.md` (architecture) and `docs/testing.md` (tests).
+> Target: a sound model, sybil-resistant by construction, aligned with the
+> Allfeat tokenomics (supply capped at 1 B AFT, never any issuance beyond).
 
 ---
 
-## 2. Décisions verrouillées
+## 1. Context and objectives
 
-| # | Sujet | Décision |
+The pallet-midds must serve a product that has **three structuring
+characteristics**:
+
+1. **Permissionless from day 0** — no whitelist, anyone can deposit.
+2. **No on-chain quality filter for several months** — the PoM (Proof of
+   Metadata) mechanism will come later; in standalone, the format is the
+   only check.
+3. **Marketing promise**: *"minimal cost per million metadata records"*
+   (whitepaper §1.1) — large-scale ingestion must stay affordable.
+
+Three additional economic constraints frame the design:
+
+- **Supply capped at 1 000 000 000 AFT, never reissued.** No mechanism
+  should destroy supply irreversibly (no burn).
+- **Web3 = no per-account anti-spam** — an attacker creates 10 K wallets
+  for < 1 K AFT (just the ED). Any defense indexed on the account's
+  identity is defeated by sybil.
+- **Identifier duplicates allowed** — several parties may deposit their
+  version of the same ISWC. Only exact duplicates (same payload) are
+  rejected. Namespace squatting does not exist as a threat.
+
+→ The economic design must therefore work **at the community level**
+(never per-account), be **honest about what it does not do** (no absolute
+anti-sybil without curation), and **preserve the supply** by recycling
+any AFT collected rather than burning it.
+
+---
+
+## 2. Locked decisions
+
+| # | Topic | Decision |
 |---|---|---|
-| 1 | Modèle de paiement | **Bond avec fenêtre refundable de 7 jours**, puis transfert à la Foundation Treasury |
-| 2 | Préservation supply | **Pas de burn**. Bond finalisé → Foundation Treasury (recyclage via gouvernance) |
-| 3 | Pricing dynamique | **Deux multiplicateurs superposés** : `M_fast` (par bloc, anti-DoS) + `M_slow` (fenêtre 7j glissante, anti-flood) |
-| 4 | Cycle de finalisation | 7 jours après deposit, bond auto-converti via `on_initialize` borné, fallback `finalize(id)` permissionless |
-| 5 | Identifier non unique | `IdentifierClaims: DoubleMap<Identifier, MiddsId, ()>` — multi-claim natif |
-| 6 | Anti-doublon exact | `PayloadHashes: Map<H256, MiddsId>` — hash SCALE-encodé du payload |
-| 7 | Distinction sudo remove | **Deux extrinsics séparés** : `force_remove_refund` (typo) et `force_remove_slash` (abus) |
-| 8 | Fenêtre 7j | Alignée sur le cycle hebdomadaire de release musicale (vendredi IFPI Global Release Day) |
-| 9 | Cible débit V1 | `SlowTargetPerWindow = 200 000` deposits/semaine (~30 K/jour). Calibrage prudent, ajustable par gouvernance |
-| 10 | Tx fees runtime | `TransactionByteFee` ÷10 vs actuel (1 µAFT/B), `WeightFeeFactor` inchangé |
-| 11 | Migration | **Aucune** — pallet pas en mainnet, reset testnet melodie au déploiement |
-| 12 | Anti-sybil | **Non garanti au protocole**. Filtre qualité = off-chain (indexers, front-end) en attendant PoM |
+| 1 | Payment model | **Bond with a 7-day refundable window**, then transfer to the Foundation Treasury |
+| 2 | Supply preservation | **No burn**. Finalized bond → Foundation Treasury (recycled via governance) |
+| 3 | Dynamic pricing | **Two superposed multipliers**: `M_fast` (per block, anti-DoS) + `M_slow` (rolling 7d window, anti-flood) |
+| 4 | Finalization cycle | 7 days after deposit, bond auto-converted via bounded `on_initialize`, fallback permissionless `finalize(id)` |
+| 5 | Non-unique identifier | `IdentifierClaims: DoubleMap<Identifier, MiddsId, ()>` — native multi-claim |
+| 6 | Exact anti-duplicate | `PayloadHashes: Map<H256, MiddsId>` — SCALE-encoded hash of the payload |
+| 7 | Sudo remove distinction | **Two separate extrinsics**: `force_remove_refund` (typo) and `force_remove_slash` (abuse) |
+| 8 | 7d window | Aligned with the weekly music release cycle (Friday IFPI Global Release Day) |
+| 9 | V1 throughput target | `SlowTargetPerWindow = 200 000` deposits/week (~30 K/day). Conservative calibration, adjustable by governance |
+| 10 | Runtime tx fees | `TransactionByteFee` ÷10 vs current (1 µAFT/B), `WeightFeeFactor` unchanged |
+| 11 | Migration | **None** — pallet not on mainnet, melodie testnet reset on deployment |
+| 12 | Anti-sybil | **Not guaranteed at the protocol level**. Quality filter = off-chain (indexers, front-end) until PoM |
 
-Les décisions précédentes du `plan.md` § 2 (#4 bond simple, #5 formule statique, #10 unicité par identifier) sont **superseded** par celles ci-dessus.
-
----
-
-## 3. Principe en une phrase
-
-> **Tout le monde paye un bond au deposit. Le bond est intégralement
-> remboursable pendant 7 jours, puis transféré à la Foundation Treasury à la
-> finalisation. Le montant du bond est multiplié par deux multiplicateurs
-> dynamiques qui poussent toute la communauté à étaler ses deposits dans le
-> temps plutôt qu'à les bursté.**
-
-Trois propriétés émergent :
-
-1. **Refund réel** (pas vaporware) — le user a 7 jours pour annuler une
-   erreur ou se rétracter, avec remboursement intégral.
-2. **Pas de supply lock permanent** — au-delà de 7 jours, le bond sort du
-   compte du user vers la Treasury, qui peut le redistribuer (rewards
-   top-up, grants, opérations).
-3. **Auto-régulation** — le pricing dynamique aligne mécaniquement
-   honnêtes et attaquants sur le même incentive : **étaler dans le temps**.
-   Un acteur qui burst paye plus, qu'il vienne d'un wallet ou de mille.
+The previous decisions from `plan.md` § 2 (#4 simple bond, #5 static formula, #10 uniqueness per identifier) are **superseded** by those above.
 
 ---
 
-## 4. Cycle de vie d'un MIDDS
+## 3. Principle in one sentence
+
+> **Everyone pays a bond at deposit. The bond is fully refundable for 7
+> days, then transferred to the Foundation Treasury at finalization. The
+> bond amount is multiplied by two dynamic multipliers that push the whole
+> community to spread its deposits over time rather than bursting them.**
+
+Three properties emerge:
+
+1. **Real refund** (not vaporware) — the user has 7 days to cancel a
+   mistake or to back out, with a full refund.
+2. **No permanent supply lock** — beyond 7 days, the bond leaves the
+   user's account toward the Treasury, which can redistribute it (rewards
+   top-up, grants, operations).
+3. **Self-regulation** — dynamic pricing mechanically aligns honest
+   parties and attackers on the same incentive: **spread over time**.
+   An actor who bursts pays more, whether they come from one wallet or a
+   thousand.
+
+---
+
+## 4. Lifecycle of a MIDDS
 
 ```
 t0       deposit(item)
          → HOLD bond = base × M_fast(t0) × M_slow(t0)
-         → MIDDS publié, lisible immédiatement
-         → push (t0 + 7j, MiddsId) dans PendingFinalization
+         → MIDDS published, readable immediately
+         → push (t0 + 7d, MiddsId) into PendingFinalization
 
-[t0, t0 + 7j]  — fenêtre refundable
-         remove_own(id)  → refund 100 % du bond, MIDDS supprimé
-         update(id, payload) → modifie le payload, fenêtre inchangée (ancrage sur t0)
+[t0, t0 + 7d]  — refundable window
+         remove_own(id)  → 100 % bond refund, MIDDS deleted
+         update(id, payload) → modifies the payload, window unchanged (anchored on t0)
 
-t0 + 7j  — finalisation automatique
-         on_initialize consomme PendingFinalization[t0 + 7j]
-         → release du HOLD vers Treasury
+t0 + 7d  — automatic finalization
+         on_initialize consumes PendingFinalization[t0 + 7d]
+         → release of the HOLD to the Treasury
          → DepositInfo.finalized = true
-         → MIDDS devient permanent
+         → MIDDS becomes permanent
 
-> t0 + 7j  — gestion sudo uniquement
-         force_remove_refund(id) → retiré, dépossesseur indemnisé (typo)
-         force_remove_slash(id)  → retiré, pas de refund (abus)
-         force_edit(id, payload) → modifié sans toucher l'économie
+> t0 + 7d  — sudo management only
+         force_remove_refund(id) → removed, dispossessed party indemnified (typo)
+         force_remove_slash(id)  → removed, no refund (abuse)
+         force_edit(id, payload) → modified without touching the economics
 ```
 
-### 4.1 Ancrage de la fenêtre
+### 4.1 Anchoring of the window
 
-La fenêtre est ancrée sur `deposited_at` (timestamp original du deposit).
-**`update` ne reset pas la fenêtre.** Sinon un user pourrait update tous
-les 6 jours pour garder son bond éligible au refund à perpétuité.
+The window is anchored on `deposited_at` (original timestamp of the
+deposit). **`update` does not reset the window.** Otherwise a user could
+update every 6 days to keep their bond eligible for refund in perpetuity.
 
-### 4.2 Trigger de finalisation
+### 4.2 Finalization trigger
 
-Architecture **eager + fallback** :
+**Eager + fallback** architecture:
 
-- **`on_initialize(n)`** : consomme jusqu'à `MaxFinalizationsPerBlock`
-  entries de `PendingFinalization::iter_prefix(n)`. Garantit la
-  finalisation auto dans le cas nominal.
-- **`finalize(id)` permissionless** : fallback si la queue déborde
-  (catch-up manuel, ou via crank tiers / oracle).
+- **`on_initialize(n)`**: consumes up to `MaxFinalizationsPerBlock`
+  entries of `PendingFinalization::iter_prefix(n)`. Guarantees automatic
+  finalization in the nominal case.
+- **`finalize(id)` permissionless**: fallback if the queue overflows
+  (manual catch-up, or via a third-party crank / oracle).
 
-Une queue indexée par bloc permet une lecture O(1) des items à finaliser
-au bloc courant. Le poids `on_initialize` est borné par
+A queue indexed by block allows an O(1) read of the items to finalize at
+the current block. The `on_initialize` weight is bounded by
 `MaxFinalizationsPerBlock × W::finalize_one()`.
 
 ---
 
-## 5. Modèle de pricing dynamique
+## 5. Dynamic pricing model
 
-Le bond effectif au moment du deposit est :
+The effective bond at deposit time is:
 
 ```
 final_bond(t) = MiddsBondBase
@@ -137,176 +137,173 @@ final_bond(t) ×= M_fast(t)
 final_bond(t) ×= M_slow(t)
 ```
 
-avec deux multiplicateurs aux dynamiques différentes :
+with two multipliers with different dynamics:
 
-### 5.1 `M_fast` — anti-DoS instantané
+### 5.1 `M_fast` — instantaneous anti-DoS
 
-| Paramètre | Valeur |
+| Parameter | Value |
 |---|---|
-| Cible | 100 deposits par bloc (≈ 17/s à 6s/bloc) |
-| Pas d'ajustement | ±12.5 % par bloc |
+| Target | 100 deposits per block (≈ 17/s at 6s/block) |
+| Adjustment step | ±12.5 % per block |
 | Floor | 0.1× |
 | Ceiling | 20× |
-| Réactivité | Multiplicateur double / divise par 2 en ~6 blocs (~36 s) |
+| Reactivity | Multiplier doubles / halves in ~6 blocks (~36 s) |
 
-**Effet** : un burst de 1000 deposits dans un bloc fait spiker `M_fast` à
-~5–10× ; le bloc suivant sans charge le ramène vers 1× en quelques
-minutes. Empêche le block stuffing sans pénaliser le régime nominal.
+**Effect**: a burst of 1000 deposits in a block spikes `M_fast` to
+~5–10×; the next block without load brings it back toward 1× within a few
+minutes. Prevents block stuffing without penalizing the nominal regime.
 
-### 5.2 `M_slow` — anti-flood et incentive d'étalement
+### 5.2 `M_slow` — anti-flood and spreading incentive
 
-| Paramètre | Valeur |
+| Parameter | Value |
 |---|---|
-| Fenêtre | 7 jours glissants (rolling window) |
-| Cible | 200 000 deposits / semaine (~30 K/jour) |
-| Pas d'ajustement | ±5 % par jour |
+| Window | 7 rolling days (rolling window) |
+| Target | 200 000 deposits / week (~30 K/day) |
+| Adjustment step | ±5 % per day |
 | Floor | 0.1× |
 | Ceiling | 50× |
-| Réactivité | Atteint 5× en ~7 jours sous flood soutenu, redescend en ~7 jours après |
+| Reactivity | Reaches 5× in ~7 days under sustained flood, comes back down in ~7 days afterward |
 
-**Effet** : la fenêtre voit toute la communauté, peu importe le nombre de
-wallets utilisés. Un attaquant patient avec 1000 wallets et un user
-honnête avec 1 wallet sont traités exactement pareil.
+**Effect**: the window sees the whole community, regardless of the number
+of wallets used. A patient attacker with 1000 wallets and an honest user
+with 1 wallet are treated exactly the same.
 
-### 5.3 Profils de coût attendus
+### 5.3 Expected cost profiles
 
-Bond effectif pour un MusicalWork typique (~150 B encodés) avec la
-calibration **hybride payload-aware** (base 100 mAFT, per-byte 250 µAFT/B,
-cf §6) :
+Effective bond for a typical MusicalWork (~150 B encoded) with the
+**hybrid payload-aware** calibration (base 100 mAFT, per-byte 250 µAFT/B,
+cf §6):
 
-| Profil | M_fast | M_slow | Bond payé |
+| Profile | M_fast | M_slow | Bond paid |
 |---|---|---|---|
-| Régime nominal | 1× | 1× | ~138 mAFT (~$0.003) |
-| Artiste indé, 5 deposits étalés | 1× | 1× | ~138 mAFT |
-| Label, 10K records sur 1 mois | 1× moy | ~1× | ~138 mAFT moy |
-| Mass ingest CMO, 1M sur 60j | 1× | ~1.5× | ~207 mAFT moy |
-| Burst 1 bloc plein | ~10× | 1× | ~1,4 AFT (sur ce bloc) |
-| Flood patient 1M en 7j | 1× moy | ~10× | ~1,4 AFT pendant 7j |
-| Flood très patient 1M en 60j | 1× | ~1,5× | ~207 mAFT (≈ honnête) |
+| Nominal regime | 1× | 1× | ~138 mAFT (~$0.003) |
+| Indie artist, 5 spread deposits | 1× | 1× | ~138 mAFT |
+| Label, 10K records over 1 month | 1× avg | ~1× | ~138 mAFT avg |
+| CMO mass ingest, 1M over 60d | 1× | ~1.5× | ~207 mAFT avg |
+| Burst of 1 full block | ~10× | 1× | ~1.4 AFT (on that block) |
+| Patient flood 1M in 7d | 1× avg | ~10× | ~1.4 AFT for 7d |
+| Very patient flood 1M in 60d | 1× | ~1.5× | ~207 mAFT (≈ honest) |
 
-Le dernier cas est intéressant : un attaquant **vraiment patient**
-finit par ressembler à un user légitime, économiquement parlant. À ce
-moment-là, la défense bascule sur le filtrage qualité (off-chain, ou
-PoM future). C'est le bon transfert de problème.
+The last case is interesting: a **truly patient** attacker ends up
+looking like a legitimate user, economically speaking. At that point, the
+defense shifts to quality filtering (off-chain, or future PoM). That is
+the right transfer of the problem.
 
-### 5.3.1 Effet payload-aware
+### 5.3.1 Payload-aware effect
 
-Contrairement à un bond flat, la calibration B fait diverger sensiblement
-le coût en fonction de la taille du payload. Pour un même multiplicateur
-1×, à $0.02/AFT :
+Unlike a flat bond, calibration B makes the cost diverge appreciably
+depending on the payload size. For the same 1× multiplier, at $0.02/AFT:
 
-| Type | Encoded typique | Encoded max | Bond typique | Bond max |
+| Type | Typical encoded | Max encoded | Typical bond | Max bond |
 |---|---:|---:|---:|---:|
 | MusicalWork | 137 B | 1 416 B | ~$0.003 | ~$0.009 |
 | Recording | 222 B | 4 722 B | ~$0.003 | ~$0.026 |
 | Release | 197 B | 9 030 B | ~$0.003 | ~$0.047 |
 
-Un Release saturé (tracklist longue, métadonnées riches) paye ~17× le
-prix d'un MusicalWork typique — c'est l'anti-stuffing incentive. Les
-MIDDS sains restent autour de $0.003, indépendamment du type.
+A saturated Release (long tracklist, rich metadata) pays ~17× the price
+of a typical MusicalWork — that is the anti-stuffing incentive. Healthy
+MIDDS stay around $0.003, regardless of the type.
 
-### 5.4 Pourquoi 7 jours
+### 5.4 Why 7 days
 
-Aligné sur le rythme métier de l'industrie musicale :
+Aligned with the business rhythm of the music industry:
 
-- **Vendredi = Global Release Day** (IFPI standard depuis 2015)
-- Les labels préparent leurs releases la semaine, déposent en avance
-- Une fenêtre 7j capture exactement le cycle de release hebdomadaire
-- Le mécanisme **éduque** la communauté à enregistrer ses MIDDS *avant*
-  le release day — comportement opérationnellement sain
+- **Friday = Global Release Day** (IFPI standard since 2015)
+- Labels prepare their releases during the week, deposit in advance
+- A 7d window captures exactly the weekly release cycle
+- The mechanism **educates** the community to register its MIDDS *before*
+  release day — an operationally sound behavior
 
-### 5.5 Refund et multiplicateur
+### 5.5 Refund and multiplier
 
-Le refund pendant la fenêtre (`remove_own`) rend la **base de chaque
-couche** à son payeur respectif. La prime de multiplicateur (au-delà du
-base bond) banked dans chaque couche est transférée vers la Treasury à la
-finalisation, même si l'item est ensuite refundé.
+The refund during the window (`remove_own`) returns the **base of each
+layer** to its respective payer. The multiplier premium (beyond the base
+bond) banked in each layer is transferred to the Treasury at
+finalization, even if the item is subsequently refunded.
 
-Justification : empêcher l'arbitrage *deposit-burst-cher → remove → re-deposit-creux*. Sans cette règle, un user attendrait que `M_slow` baisse et resoumettrait à moindre coût en récupérant l'intégralité de son bond initial. Avec cette règle, la prime payée pour bursté reste perdue même après refund — ce qui aligne l'incentive sur "ne pas burst en premier lieu".
+Rationale: prevent the *expensive-burst-deposit → remove → cheap-re-deposit* arbitrage. Without this rule, a user would wait for `M_slow` to drop and resubmit at lower cost while recovering the entirety of their initial bond. With this rule, the premium paid to burst stays lost even after refund — which aligns the incentive with "don't burst in the first place".
 
-Implémentation : `remove_own` rend `sponsor.base` au sponsor + `owner.base` au depositor (le cas échéant). Le delta `(M_fast × M_slow − 1) × base` capté par chaque couche est transféré à la Treasury immédiatement, **par couche** — ainsi un sponsor et un depositor qui ont posté chacun leur part ne se partagent pas mutuellement la pénalité de burst.
+Implementation: `remove_own` returns `sponsor.base` to the sponsor + `owner.base` to the depositor (where applicable). The `(M_fast × M_slow − 1) × base` delta captured by each layer is transferred to the Treasury immediately, **per layer** — so a sponsor and a depositor who each posted their share don't share each other's burst penalty.
 
-### 5.6 Bond stratifié et escape hatch web3
+### 5.6 Stratified bond and web3 escape hatch
 
-Un MIDDS porte deux couches de bond, indépendantes :
+A MIDDS carries two bond layers, independent of each other:
 
-- **`sponsor_layer`** (toujours présente) — la base + prime payée au
-  `deposit` initial. Sur un self-deposit, le payeur est le depositor ; sur
-  un `deposit_on_behalf`, c'est l'opérateur sponsor.
-- **`owner_layer`** (`Option`) — apparaît uniquement quand le **depositor
-  d'un record sponsorisé** étend la donnée via `update` plain. À cette
-  occasion, le depositor paie le `Δbase × M_courant` sur ses propres fonds
-  ; sa couche bank sa propre prime.
+- **`sponsor_layer`** (always present) — the base + premium paid at the
+  initial `deposit`. On a self-deposit, the payer is the depositor; on a
+  `deposit_on_behalf`, it is the sponsor operator.
+- **`owner_layer`** (`Option`) — appears only when the **depositor of a
+  sponsored record** extends the data via a plain `update`. On that
+  occasion, the depositor pays the `Δbase × M_current` from their own
+  funds; their layer banks its own premium.
 
-Cette stratification implémente l'**escape hatch web3** : un artiste
-onboardé via une plateforme SaaS (sponsor) peut à tout moment reprendre la
-main sur sa donnée sans dépendre de la balance du sponsor. La règle :
+This stratification implements the **web3 escape hatch**: an artist
+onboarded via a SaaS platform (sponsor) can at any time take back control
+of their data without depending on the sponsor's balance. The rule:
 
-- `update` (caller = depositor) sur record sponsorisé → la couche cible
-  est `owner_layer` (créée à la première extension solo, étendue ensuite
-  sans nouvelle prime).
-- `update_on_behalf` (caller = sponsor) → la couche cible est
-  `sponsor_layer`. Compatible avec l'existence d'une `owner_layer` —
-  sponsor et owner co-existent (Q2.b).
-- Sur un shrink où le `Δbase` à libérer dépasse la couche du caller, la
-  réduction overflow LIFO sur l'autre couche, qui se voit alors refundée.
-- `remove_own_on_behalf` ferme la boucle meta-tx : caller libre (relayer
-  tiers, sponsor, ou peu importe), signature owner suffit pour autoriser
-  la rétractation. Un owner qui n'a *jamais* tenu d'AFT peut donc
-  reprendre tous ses fonds sans se soucier des fees on-chain.
+- `update` (caller = depositor) on a sponsored record → the target layer
+  is `owner_layer` (created on the first solo extension, then extended
+  without a new premium).
+- `update_on_behalf` (caller = sponsor) → the target layer is
+  `sponsor_layer`. Compatible with the existence of an `owner_layer` —
+  sponsor and owner co-exist (Q2.b).
+- On a shrink where the `Δbase` to release exceeds the caller's layer, the
+  reduction overflows LIFO onto the other layer, which is then refunded.
+- `remove_own_on_behalf` closes the meta-tx loop: free caller (third-party
+  relayer, sponsor, or whatever), the owner signature suffices to authorize
+  the retraction. An owner who has *never* held any AFT can thus take back
+  all their funds without worrying about on-chain fees.
 
-Sur `remove_own` / `remove_own_on_behalf` / `force_remove_refund`, chaque
-couche se réconcilie indépendamment avec son `payer` ; sur `finalize` /
-`force_remove_slash`, chaque couche transfère son montant complet à la
-Treasury. La séparation
-financière est intégrale : aucun fonds d'une couche ne paie pour la
-pénalité de l'autre.
+On `remove_own` / `remove_own_on_behalf` / `force_remove_refund`, each
+layer reconciles independently with its `payer`; on `finalize` /
+`force_remove_slash`, each layer transfers its full amount to the
+Treasury. The financial separation is complete: no funds from one layer
+pay for the other's penalty.
 
-Préservation de prime per-layer : sur `update`, la base d'une couche
-existante évolue par la formule `new_amount = new_base + max(0,
-old_amount − old_base)`. La prime banked à la création est sticky et ne
-se re-prix pas au multiplicateur courant (anti-arbitrage §5.5). Une couche
-créée sous `M < 1` (cas dégénéré, multiplicateurs au plancher) est
-sous-payée à la création — son extension ultérieure rebase la couche au
-nouveau total base, ce qui peut faire grossir le hold ; ce comportement
-miroite la pré-stratification.
+Per-layer premium preservation: on `update`, the base of an existing layer
+evolves by the formula `new_amount = new_base + max(0, old_amount −
+old_base)`. The premium banked at creation is sticky and is not re-priced
+at the current multiplier (anti-arbitrage §5.5). A layer created under
+`M < 1` (degenerate case, multipliers at the floor) is underpaid at
+creation — its subsequent extension rebases the layer to the new base
+total, which may grow the hold; this behavior mirrors the
+pre-stratification.
 
-### 5.6.1 Exposition du sponsor à la prime (risque assumé)
+### 5.6.1 Sponsor exposure to the premium (assumed risk)
 
-Sur un record sponsorisé, l'autorité de rétractation appartient à
-l'**owner** (`remove_own` / `remove_own_on_behalf`). Si l'owner annule
-pendant une période de `M > 1`, la base du sponsor lui est rendue, mais
-**la prime de multiplicateur que le sponsor a payée part en Treasury**
-(règle anti-arbitrage §5.5, appliquée par couche). Un owner peut donc, à
-coût nul pour lui (via un relayer en `remove_own_on_behalf`), faire perdre
-au sponsor la prime payée au `deposit_on_behalf`.
+On a sponsored record, the retraction authority belongs to the **owner**
+(`remove_own` / `remove_own_on_behalf`). If the owner cancels during a
+period of `M > 1`, the sponsor's base is returned to them, but **the
+multiplier premium that the sponsor paid goes to the Treasury**
+(anti-arbitrage rule §5.5, applied per layer). An owner can therefore, at
+zero cost to themselves (via a relayer in `remove_own_on_behalf`), make
+the sponsor lose the premium paid at `deposit_on_behalf`.
 
-C'est le **pendant assumé** de l'escape hatch web3 : rendre la prime au
-sponsor rouvrirait l'arbitrage de burst par collusion sponsor↔owner
-(burst cher → owner annule → prime récupérée). La perte est nulle à `M = 1`
-(régime nominal) et n'apparaît que sous charge.
+This is the **assumed counterpart** of the web3 escape hatch: returning
+the premium to the sponsor would reopen burst arbitrage by sponsor↔owner
+collusion (expensive burst → owner cancels → premium recovered). The loss
+is zero at `M = 1` (nominal regime) and only appears under load.
 
-**Mitigation, côté opérateur** : ne pas auto-sponsoriser quand `M` est
-élevé. Les RPC `current_multipliers` / `current_deposit_price` (§12.2)
-sont exposés précisément pour gater le `deposit_on_behalf` sur le
-multiplicateur courant avant de signer — l'équivalent d'un *slippage
-limit*.
+**Mitigation, on the operator side**: do not auto-sponsor when `M` is
+high. The `current_multipliers` / `current_deposit_price` RPCs (§12.2)
+are exposed precisely to gate `deposit_on_behalf` on the current
+multiplier before signing — the equivalent of a *slippage limit*.
 
 ---
 
-## 6. Constants runtime
+## 6. Runtime constants
 
-> **Note** — `MiddsDepositBase` et `MiddsDepositPerByte` sont en cours de
-> migration vers des `StorageValue` ajustables par sudo (cf §13.4). Les
-> valeurs ci-dessous restent celles initialisées en genesis sur Melodie ;
-> une fois §13.4 livré, elles deviennent paramètres mutables sans runtime
-> upgrade. La structure du Config trait du pallet `parameter_types!`
-> change en conséquence (breaking change `0.1 → 0.2`).
+> **Note** — `MiddsDepositBase` and `MiddsDepositPerByte` are being
+> migrated to `StorageValue`s adjustable by sudo (cf §13.4). The values
+> below remain those initialized at genesis on Melodie; once §13.4 is
+> delivered, they become mutable parameters without a runtime upgrade. The
+> structure of the pallet's Config trait `parameter_types!` changes
+> accordingly (breaking change `0.1 → 0.2`).
 
-### 6.1 Calibration hybride payload-aware (variante B)
+### 6.1 Hybrid payload-aware calibration (variant B)
 
 ```rust
-// runtime/melodie/src/pallets/midds.rs (valeurs initialisées en genesis)
+// runtime/melodie/src/pallets/midds.rs (values initialized at genesis)
 
 parameter_types! {
     // Bond formula (unmultiplied) — hybrid payload-aware: `DepositBase`
@@ -319,76 +316,76 @@ parameter_types! {
     pub const MiddsDepositBase: Balance = 100 * MILLIAFT;
     pub const MiddsDepositPerByte: Balance = 250 * MICROAFT;
 
-    // Fenêtre refundable
+    // Refundable window
     pub const MiddsCommitmentWindow: BlockNumber = 7 * DAYS;
     pub const MiddsMaxFinalizationsPerBlock: u32 = 100;
 
-    // Multiplicateur fast
+    // Fast multiplier
     pub const FastTargetPerBlock: u32 = 100;
     pub const FastAdjustmentRate: Perbill = Perbill::from_parts(125_000_000);
     pub const FastMultiplierMin: FixedU128 = FixedU128::from_rational(1, 10);
     pub const FastMultiplierMax: FixedU128 = FixedU128::from_u32(20);
 
-    // Multiplicateur slow
+    // Slow multiplier
     pub const SlowWindow: BlockNumber = 7 * DAYS;
     pub const SlowTargetPerWindow: u32 = 200_000;
     pub const SlowAdjustmentRate: Perbill = Perbill::from_percent(5);
     pub const SlowMultiplierMin: FixedU128 = FixedU128::from_rational(1, 10);
     pub const SlowMultiplierMax: FixedU128 = FixedU128::from_u32(50);
 
-    // Destination du bond finalisé
+    // Destination of the finalized bond
     pub MiddsTreasuryAccount: AccountId =
         PalletId(*b"af/midds").into_account_truncating();
 }
 ```
 
-Tx fees standard runtime (à ajuster dans `transaction_payment.rs`) :
+Standard runtime tx fees (to adjust in `transaction_payment.rs`):
 
 ```rust
 parameter_types! {
-    pub const TransactionByteFee: Balance = MICROAFT;          // ÷10 vs actuel
-    pub const OperationalFeeMultiplier: u8 = 5;                // inchangé
-    pub const WeightFeeFactor: Balance = 10 * MILLIAFT;        // inchangé
+    pub const TransactionByteFee: Balance = MICROAFT;          // ÷10 vs current
+    pub const OperationalFeeMultiplier: u8 = 5;                // unchanged
+    pub const WeightFeeFactor: Balance = 10 * MILLIAFT;        // unchanged
 }
 ```
 
 ---
 
-## 7. Surface d'extrinsics
+## 7. Extrinsics surface
 
-| Extrinsic | Origin | Effet | Refund | Sudo |
+| Extrinsic | Origin | Effect | Refund | Sudo |
 |---|---|---|---|---|
-| `deposit(item)` | `ProviderOrigin` (signed) | HOLD bond sur `sponsor_layer` (= depositor), insert MIDDS, queue finalisation | — | — |
-| `deposit_on_behalf(owner, item, nonce, sig)` | `ProviderOrigin` (operator) + signature owner | HOLD bond sur `sponsor_layer` (= operator), attribution = owner | — | — |
-| `update(id, item)` | depositor, ≤ 7j | Sur self-deposit : étend `sponsor_layer`. Sur record sponsorisé : étend ou crée `owner_layer` (escape hatch web3) | — | — |
-| `update_on_behalf(id, item, nonce, sig)` | original sponsor + signature owner, ≤ 7j | Étend `sponsor_layer`. Co-existe avec une `owner_layer` déjà créée | — | — |
-| `remove_own(id)` | depositor, ≤ 7j | Refund base de chaque couche à son payeur, primes vers Treasury | ✅ partiel | — |
-| `remove_own_on_behalf(id, nonce, sig)` | n'importe quel `ProviderOrigin` (relayer) + signature owner, ≤ 7j | Idem `remove_own` mais pilotable par tout relayer ; closes meta-tx loop pour owner sans AFT | ✅ partiel | — |
-| `finalize(id)` | n'importe qui, > 7j | Release HOLD de chaque couche vers Treasury | — | — |
-| `force_edit(id, item)` | sudo | Update via `sponsor_layer` (governance ne crée jamais d'`owner_layer`) | — | ✅ |
-| `force_remove_refund(id)` | sudo, ≤ 7j | Cleanup + refund total à chaque payeur (typo bonne foi) | ✅ total | ✅ |
-| `force_remove_slash(id)` | sudo | Cleanup, holds de chaque couche → Treasury (abus signalé) | ❌ | ✅ |
-| `force_remove_many(Vec<id>)` | sudo | Batch cleanup, weight linéaire | dépend du flag | ✅ |
+| `deposit(item)` | `ProviderOrigin` (signed) | HOLD bond on `sponsor_layer` (= depositor), insert MIDDS, queue finalization | — | — |
+| `deposit_on_behalf(owner, item, nonce, sig)` | `ProviderOrigin` (operator) + owner signature | HOLD bond on `sponsor_layer` (= operator), attribution = owner | — | — |
+| `update(id, item)` | depositor, ≤ 7d | On a self-deposit: extends `sponsor_layer`. On a sponsored record: extends or creates `owner_layer` (web3 escape hatch) | — | — |
+| `update_on_behalf(id, item, nonce, sig)` | original sponsor + owner signature, ≤ 7d | Extends `sponsor_layer`. Co-exists with an already-created `owner_layer` | — | — |
+| `remove_own(id)` | depositor, ≤ 7d | Refund base of each layer to its payer, premiums to the Treasury | ✅ partial | — |
+| `remove_own_on_behalf(id, nonce, sig)` | any `ProviderOrigin` (relayer) + owner signature, ≤ 7d | Same as `remove_own` but drivable by any relayer; closes the meta-tx loop for an owner without AFT | ✅ partial | — |
+| `finalize(id)` | anyone, > 7d | Release HOLD of each layer to the Treasury | — | — |
+| `force_edit(id, item)` | sudo | Update via `sponsor_layer` (governance never creates an `owner_layer`) | — | ✅ |
+| `force_remove_refund(id)` | sudo, ≤ 7d | Cleanup + full refund to each payer (good-faith typo) | ✅ full | ✅ |
+| `force_remove_slash(id)` | sudo | Cleanup, holds of each layer → Treasury (reported abuse) | ❌ | ✅ |
+| `force_remove_many(Vec<id>)` | sudo | Batch cleanup, linear weight | depends on the flag | ✅ |
 
-### 7.1 Hooks runtime
+### 7.1 Runtime hooks
 
 ```rust
 fn on_initialize(n: BlockNumberFor<T>) -> Weight {
     let mut weight = T::DbWeight::get().reads(1);
 
-    // Reset compteur fast
+    // Reset fast counter
     let fast_count = DepositsThisBlock::<T, I>::take();
     Self::adjust_fast_multiplier(fast_count);
     weight += /* ... */;
 
-    // Slow : rotation bucket à minuit
+    // Slow: bucket rotation at midnight
     if n % T::BlocksPerDay::get() == 0 {
         Self::rotate_slow_bucket();
         Self::adjust_slow_multiplier();
         weight += /* ... */;
     }
 
-    // Finalisations dues
+    // Due finalizations
     let to_finalize = PendingFinalization::<T, I>::iter_prefix(n)
         .take(T::MaxFinalizationsPerBlock::get() as usize)
         .map(|(id, _)| id)
@@ -404,21 +401,21 @@ fn on_initialize(n: BlockNumberFor<T>) -> Weight {
 
 ---
 
-## 8. Layout de stockage
+## 8. Storage layout
 
 ```rust
-// Inchangé
+// Unchanged
 Items: StorageMap<_, Blake2_128Concat, MiddsId, T::Midds>;
 NextMiddsId: StorageValue<_, MiddsId, ValueQuery>;
 
-// MODIFIÉ : multi-claim sur identifier (remplace IdentifierIndex)
+// MODIFIED: multi-claim on identifier (replaces IdentifierIndex)
 IdentifierClaims:
     StorageDoubleMap<_, Blake2_128Concat, Identifier, Twox64Concat, MiddsId, ()>;
 
-// NOUVEAU : anti-doublon exact
+// NEW: exact anti-duplicate
 PayloadHashes: StorageMap<_, Identity, T::Hash, MiddsId>;
 
-// MODIFIÉ : payload_hash + finalized
+// MODIFIED: payload_hash + finalized
 DepositInfo: StorageMap<_, Blake2_128Concat, MiddsId, Deposit<T, I>>;
 pub struct Deposit<T, I> {
     pub depositor: T::AccountId,
@@ -428,11 +425,11 @@ pub struct Deposit<T, I> {
     pub finalized: bool,
 }
 
-// NOUVEAU : queue de finalisation indexée par bloc d'échéance
+// NEW: finalization queue indexed by expiry block
 PendingFinalization:
     StorageDoubleMap<_, Twox64Concat, BlockNumberFor<T>, Identity, MiddsId, ()>;
 
-// NOUVEAU : multiplicateurs dynamiques
+// NEW: dynamic multipliers
 DepositsThisBlock: StorageValue<_, u32, ValueQuery>;
 FastMultiplier: StorageValue<_, FixedU128, ValueQuery>;
 
@@ -441,7 +438,7 @@ SlowWindowHead: StorageValue<_, u8, ValueQuery>;
 SlowMultiplier: StorageValue<_, FixedU128, ValueQuery>;
 ```
 
-### 8.1 Coût storage par deposit
+### 8.1 Storage cost per deposit
 
 - 1 write `Items`
 - 1 write `IdentifierClaims`
@@ -451,143 +448,142 @@ SlowMultiplier: StorageValue<_, FixedU128, ValueQuery>;
 - 1 write `NextMiddsId`
 - 1 read+write `DepositsThisBlock`
 - 1 read+write bucket `SlowWindowBuckets`
-- 1 hold sur le balance (1 read+write `Holds`)
+- 1 hold on the balance (1 read+write `Holds`)
 
-→ ~9 writes par deposit. Pris en compte dans le benchmark.
-
----
-
-## 9. Destination du bond finalisé : Foundation Treasury
-
-### 9.1 Pourquoi pas burn
-
-La supply AFT est **cappée à 1 B et jamais réémise** (whitepaper §2.1).
-Brûler du bond réduirait définitivement la supply en circulation, ce qui
-n'est pas souhaité — la supply doit pouvoir être recyclée vers les usages
-productifs du réseau (rewards, grants, opérations).
-
-### 9.2 Pourquoi Treasury et pas validateurs
-
-Les validateurs sont déjà rémunérés par les **tx fees** (`DealWithFees` dans
-`transaction_payment.rs` envoie 100 % au block author). Le bond MIDDS est
-un revenu protocole distinct — il finance la maintenance du **registre
-lui-même**, pas du consensus.
-
-### 9.3 Modèle de gouvernance Treasury
-
-Le compte Treasury (`MiddsTreasuryAccount`) reçoit tous les bonds finalisés
-et les deltas non-refundés. Sa gestion est gouvernée :
-
-- **Top-up du pool community rewards** quand le 260 M initial s'épuise (cf.
-  whitepaper §5.3 *buybacks and redistribution* : ce mécanisme implémente
-  exactement la promesse de réinjection)
-- **Grants** aux contributeurs de l'écosystème (data quality, indexers,
-  outils, intégrations)
-- **Opérations Foundation** (audits, infrastructure, support)
-- **Buybacks** ponctuels si la situation marché le justifie (rachat AFT
-  hors marché → réinjection en rewards)
-
-L'allocation précise est hors scope de ce document — pilotée par la
-Foundation via un pallet de gouvernance ou multisig dans un premier temps.
+→ ~9 writes per deposit. Accounted for in the benchmark.
 
 ---
 
-## 10. Ce que le modèle ne fait PAS
+## 9. Destination of the finalized bond: Foundation Treasury
 
-À documenter explicitement pour calibrer les attentes (et les promesses
-publiques) :
+### 9.1 Why not burn
 
-### 10.1 Pas de défense anti-sybil au protocole
+The AFT supply is **capped at 1 B and never reissued** (whitepaper §2.1).
+Burning bond would permanently reduce the circulating supply, which is not
+desired — the supply must be able to be recycled toward the network's
+productive uses (rewards, grants, operations).
 
-Pendant la phase standalone (avant PoM), un acteur patient avec budget peut
-déposer du contenu de qualité douteuse au prix plancher en étalant sur des
-semaines. Le filtre qualité est **strictement off-chain** :
+### 9.2 Why Treasury and not validators
 
-- Indexers de référence (Allfeat, partenaires)
-- Front-ends qui n'affichent que les MIDDS conformes à des règles publiées
-- Heuristiques de réputation depositor (âge du compte, historique)
-- Cleanup ponctuel via `force_remove_slash` sur des patterns identifiés
+Validators are already compensated by **tx fees** (`DealWithFees` in
+`transaction_payment.rs` sends 100 % to the block author). The MIDDS bond
+is a distinct protocol revenue — it funds the maintenance of the
+**registry itself**, not of the consensus.
 
-Ce n'est pas un bug — c'est la **conséquence assumée** du choix
-permissionless sans curation. PoM apportera la curation on-chain à terme.
+### 9.3 Treasury governance model
 
-### 10.2 Pas de récupération de bond après 7 jours
+The Treasury account (`MiddsTreasuryAccount`) receives all finalized bonds
+and the non-refunded deltas. Its management is governed:
 
-Intentionnel. La fenêtre courte force un commitment rapide ; après 7 jours,
-le record est *permanent* et le bond appartient à la Treasury.
-`force_remove_refund` existe pour les cas exceptionnels où la Foundation
-veut indemniser une erreur de bonne foi, mais c'est une opération de
-gouvernance, pas un droit du depositor.
+- **Top-up of the community rewards pool** when the initial 260 M runs out
+  (cf. whitepaper §5.3 *buybacks and redistribution*: this mechanism
+  implements exactly the reinjection promise)
+- **Grants** to ecosystem contributors (data quality, indexers, tools,
+  integrations)
+- **Foundation operations** (audits, infrastructure, support)
+- **Occasional buybacks** if the market situation justifies it (off-market
+  AFT buyback → reinjection into rewards)
 
-### 10.3 Pas de refund automatique sur sudo après finalisation
-
-Si un MIDDS finalisé est `force_remove`'d ensuite (abus tardif détecté), le
-bond est déjà à la Treasury — aucune restitution n'est faite. Sudo nettoie
-juste le storage. Le coût de l'abus a été payé via le bond initial ; la
-sanction additionnelle est la perte du record on-chain.
-
-### 10.4 Pas de partage avec les validateurs
-
-Les bonds MIDDS ne vont **jamais** au block author. C'est une séparation
-nette : tx fees → consensus, bonds → produit. Évite les incitations
-perverses (validateur qui force-include du spam pour son propre bond).
-
-### 10.5 Pas de réservation prioritaire (Coretime-style)
-
-Pas de tier subscription / credits dans la V1. Le marché spot
-EIP-1559-style avec deux multiplicateurs est suffisant pour la phase de
-bootstrap. Un tier subscription pourra être ajouté post-launch si une
-demande institutionnelle s'observe — voir §12.2.
+The precise allocation is out of scope for this document — driven by the
+Foundation via a governance pallet or multisig at first.
 
 ---
 
-## 11. Alignement avec le whitepaper tokenomics
+## 10. What the model does NOT do
 
-| Section whitepaper | Comment le modèle s'y aligne |
+To be documented explicitly to calibrate expectations (and public
+promises):
+
+### 10.1 No anti-sybil defense at the protocol level
+
+During the standalone phase (before PoM), a patient actor with a budget
+can deposit content of dubious quality at the floor price by spreading it
+over weeks. The quality filter is **strictly off-chain**:
+
+- Reference indexers (Allfeat, partners)
+- Front-ends that only display MIDDS conforming to published rules
+- Depositor reputation heuristics (account age, history)
+- Occasional cleanup via `force_remove_slash` on identified patterns
+
+This is not a bug — it is the **assumed consequence** of the
+permissionless choice without curation. PoM will eventually bring on-chain
+curation.
+
+### 10.2 No bond recovery after 7 days
+
+Intentional. The short window forces a fast commitment; after 7 days, the
+record is *permanent* and the bond belongs to the Treasury.
+`force_remove_refund` exists for the exceptional cases where the
+Foundation wants to indemnify a good-faith mistake, but it is a governance
+operation, not a depositor's right.
+
+### 10.3 No automatic refund on sudo after finalization
+
+If a finalized MIDDS is `force_remove`'d afterward (late abuse detected),
+the bond is already at the Treasury — no restitution is made. Sudo just
+cleans up the storage. The cost of the abuse was paid via the initial
+bond; the additional sanction is the loss of the on-chain record.
+
+### 10.4 No sharing with the validators
+
+MIDDS bonds **never** go to the block author. It is a clean separation: tx
+fees → consensus, bonds → product. Avoids perverse incentives (a
+validator who force-includes spam for their own bond).
+
+### 10.5 No priority reservation (Coretime-style)
+
+No subscription tier / credits in V1. The EIP-1559-style spot market with
+two multipliers is sufficient for the bootstrap phase. A subscription tier
+may be added post-launch if institutional demand is observed — see §12.2.
+
+---
+
+## 11. Alignment with the tokenomics whitepaper
+
+| Whitepaper section | How the model aligns with it |
 |---|---|
-| §1.1 *minimal cost per million* | Bond ~500 mAFT/record en régime nominal = ~$10K/million. Reste compatible avec mass-ingest institutionnel. |
-| §2.1 *supply 1 B, jamais émis au-delà* | Bond va à Treasury (recyclage), jamais brûlé. Supply préservée. |
-| §2.2 *26 % community rewards (260 M)* | La Treasury MIDDS peut top-up ce pool quand il s'épuisera (~10-14 ans). |
-| §4 *vesting / sell pressure* | Le bond crée un *lock circulation pendant 7j minimum* — petite mais réelle réduction de la pression de vente immédiate. |
-| §5.3 *buyback and redistribution* | La Treasury MIDDS est l'instrument naturel de cette stratégie. Les bonds finalisés financent les buybacks/redistribution sans nécessiter d'inflation. |
+| §1.1 *minimal cost per million* | Bond ~500 mAFT/record in the nominal regime = ~$10K/million. Stays compatible with institutional mass-ingest. |
+| §2.1 *supply 1 B, never issued beyond* | Bond goes to the Treasury (recycling), never burned. Supply preserved. |
+| §2.2 *26 % community rewards (260 M)* | The MIDDS Treasury can top up this pool when it runs out (~10-14 years). |
+| §4 *vesting / sell pressure* | The bond creates a *circulation lock for at least 7d* — a small but real reduction of immediate sell pressure. |
+| §5.3 *buyback and redistribution* | The MIDDS Treasury is the natural instrument of this strategy. Finalized bonds fund the buybacks/redistribution without requiring inflation. |
 
-### 11.1 Estimation revenue Treasury à différents niveaux d'adoption
+### 11.1 Estimate of Treasury revenue at different adoption levels
 
-À bond moyen 500 mAFT (régime nominal) :
+At an average bond of 500 mAFT (nominal regime):
 
-| Scenario | Deposits/an | Revenue Treasury/an | % supply |
+| Scenario | Deposits/year | Treasury revenue/year | % supply |
 |---|---|---|---|
-| Bootstrap an 1 | 100 K | 50 K AFT | 0.005 % |
-| Adoption modeste | 1 M | 500 K AFT | 0.05 % |
-| Adoption forte | 10 M | 5 M AFT | 0.5 % |
-| Saturation cible V1 | 10 M (200 K/semaine) | 5 M AFT | 0.5 % |
-| Adoption massive | 100 M | 50 M AFT | 5 % |
+| Bootstrap year 1 | 100 K | 50 K AFT | 0.005 % |
+| Modest adoption | 1 M | 500 K AFT | 0.05 % |
+| Strong adoption | 10 M | 5 M AFT | 0.5 % |
+| V1 target saturation | 10 M (200 K/week) | 5 M AFT | 0.5 % |
+| Massive adoption | 100 M | 50 M AFT | 5 % |
 
-À 100 M deposits/an avec un multiplicateur moyen ~2× sous charge, on
-parle de ~100 M AFT/an de revenue Treasury — équivalent à ~38 % du pool
-community rewards initial chaque année. Largement suffisant pour
-pérenniser les incentives au-delà de l'épuisement de l'allocation
-initiale, et financer significativement la R&D / opérations Foundation.
+At 100 M deposits/year with an average multiplier of ~2× under load, we
+are talking about ~100 M AFT/year of Treasury revenue — equivalent to
+~38 % of the initial community rewards pool each year. Largely sufficient
+to sustain the incentives beyond the depletion of the initial allocation,
+and to significantly fund the Foundation's R&D / operations.
 
 ---
 
-## 12. UX et communication user-facing
+## 12. UX and user-facing communication
 
-### 12.1 Pitch externe
+### 12.1 External pitch
 
-> *"Le réseau Allfeat ingère jusqu'à ~200 000 MIDDS par semaine au prix
-> plancher (~140 mAFT, ~$0.003 pour un titre standard). Le tarif augmente
-> avec la taille du payload — un single typique coûte ~$0.003, un album
-> complet avec tracklist fournie peut atteindre ~$0.05. Le prix monte
-> aussi avec la charge réseau ; conseil : enregistrez vos métadonnées en
-> début de semaine pour le tarif optimal, comme pour préparer votre
-> setlist avant le concert. Vous avez 7 jours après le deposit pour
-> corriger ou annuler avec remboursement intégral."*
+> *"The Allfeat network ingests up to ~200 000 MIDDS per week at the floor
+> price (~140 mAFT, ~$0.003 for a standard title). The rate increases with
+> the size of the payload — a typical single costs ~$0.003, a full album
+> with a rich tracklist can reach ~$0.05. The price also rises with the
+> network load; tip: register your metadata at the start of the week for
+> the optimal rate, like preparing your setlist before the concert. You
+> have 7 days after the deposit to correct or cancel with a full refund."*
 
-Volontairement non-technique. Aucune mention de "EIP-1559",
-"multiplicateur" ou "payload-aware" dans la com publique.
+Deliberately non-technical. No mention of "EIP-1559", "multiplier" or
+"payload-aware" in the public communication.
 
-### 12.2 RPC à exposer
+### 12.2 RPC to expose
 
 ```rust
 // midds-runtime-api v2
@@ -597,123 +593,124 @@ fn weekly_target() -> u32;
 fn weekly_actual() -> u32;
 ```
 
-Permet aux dashboards / wallets / front-ends d'afficher en live :
-- "Tarif actuel : 520 mAFT pour ce MIDDS"
-- "Charge réseau cette semaine : 87 % de la cible"
-- Graphique 24h du multiplicateur
+Allows dashboards / wallets / front-ends to display live:
+- "Current rate: 520 mAFT for this MIDDS"
+- "Network load this week: 87 % of the target"
+- 24h chart of the multiplier
 
-C'est ce qui rend le mécanisme **lisible** côté user. Sans cet RPC, le
-prix dynamique semble arbitraire ; avec, il devient un signal de marché
-compréhensible.
+This is what makes the mechanism **legible** on the user side. Without
+this RPC, the dynamic price seems arbitrary; with it, it becomes an
+understandable market signal.
 
 ---
 
-## 13. Évolutions futures (hors scope V1)
+## 13. Future evolutions (out of scope for V1)
 
-### 13.1 Tier subscription pour institutionnels
+### 13.1 Subscription tier for institutions
 
-Quand une demande institutionnelle stable est observée (CMOs, agrégateurs
-ingérant > 10 K MIDDS/mois sur plusieurs mois), ajouter un mécanisme de
-pré-paiement de *credits* :
+When a stable institutional demand is observed (CMOs, aggregators
+ingesting > 10 K MIDDS/month over several months), add a *credits*
+pre-payment mechanism:
 
-- Achat de N credits à un prix fixe (= prix moyen de la dernière époque)
-- Chaque credit consomme un slot de deposit au prix plancher
-- Remise dégressive par volume (ex: -10 % à partir de 10 K credits)
-- Lock le prix pour le buyer, garantit du revenue pour la Treasury
+- Purchase of N credits at a fixed price (= average price of the last
+  epoch)
+- Each credit consumes a deposit slot at the floor price
+- Volume-based degressive discount (e.g.: -10 % from 10 K credits)
+- Locks the price for the buyer, guarantees revenue for the Treasury
 
-À calibrer post-launch, sur données réelles d'usage.
+To be calibrated post-launch, on real usage data.
 
-### 13.2 Intégration PoM
+### 13.2 PoM integration
 
-Quand le pallet PoM existera :
+When the PoM pallet exists:
 
-- Les MIDDS *certifiés* par PoM peuvent éventuellement bénéficier d'une
-  réduction sur leur bond (récompense la qualité)
-- Le `force_remove_slash` peut être déclenché par un consensus PoM négatif
-  plutôt que sudo
-- Le pool reward PoM peut être partiellement financé par la Treasury MIDDS
+- MIDDS *certified* by PoM may possibly benefit from a reduction on their
+  bond (rewards quality)
+- `force_remove_slash` can be triggered by a negative PoM consensus rather
+  than sudo
+- The PoM reward pool can be partially funded by the MIDDS Treasury
 
-L'interface entre les deux pallets sera spec'd dans `docs/plan-pom.md` (à
-créer).
+The interface between the two pallets will be spec'd in `docs/plan-pom.md`
+(to be created).
 
-### 13.3 Multi-instance et coûts différenciés
+### 13.3 Multi-instance and differentiated costs
 
-Quand Recording et Release seront ajoutés (chacun comme nouvelle Instance
-du pallet), les constantes économiques peuvent diverger :
+When Recording and Release are added (each as a new pallet Instance), the
+economic constants may diverge:
 
-- Recording probablement plus volumineux que MusicalWork → bond per-byte
-  pèse plus
-- Release encore plus complexe → peut justifier un base bond plus élevé
-- Chaque Instance porte ses propres `parameter_types!`
+- Recording probably more voluminous than MusicalWork → the per-byte bond
+  weighs more
+- Release even more complex → may justify a higher base bond
+- Each Instance carries its own `parameter_types!`
 
-L'architecture multi-instance le permet sans refacto.
+The multi-instance architecture allows it without refactoring.
 
-### 13.4 Auto-calibrage du `MiddsDepositBase` *(in progress)*
+### 13.4 Auto-calibration of `MiddsDepositBase` *(in progress)*
 
-Plutôt que de figer `MiddsDepositBase` et `MiddsDepositPerByte` dans le
-runtime, les passer en `StorageValue` ajustables par sudo selon des
-observations long-terme (mois, trimestres). Permet de recaler la cible
-par gouvernance sans runtime upgrade — utile si le ratio AFT/USD bouge
-significativement.
+Rather than freezing `MiddsDepositBase` and `MiddsDepositPerByte` in the
+runtime, move them to `StorageValue`s adjustable by sudo based on
+long-term observations (months, quarters). Allows recalibrating the target
+by governance without a runtime upgrade — useful if the AFT/USD ratio
+moves significantly.
 
-**Statut** : implémentation en cours sur `pallet-midds` v0.2.0. Le Config
-trait perd `type DepositBase` / `type DepositPerByte` (breaking change
-pré-1.0), remplacés par deux `StorageValue<BalanceOf<T, I>>` initialisés
-via `GenesisConfig` et mutables via deux extrinsics sudo
-(`force_set_deposit_base`, `force_set_deposit_per_byte`). La formule de
-bond et les RPC pricing lisent maintenant les storages au lieu d'appeler
+**Status**: implementation in progress on `pallet-midds` v0.2.0. The
+Config trait loses `type DepositBase` / `type DepositPerByte` (breaking
+change pre-1.0), replaced by two `StorageValue<BalanceOf<T, I>>`
+initialized via `GenesisConfig` and mutable via two sudo extrinsics
+(`force_set_deposit_base`, `force_set_deposit_per_byte`). The bond formula
+and the pricing RPCs now read the storages instead of calling
 `T::DepositBase::get()`.
 
-**Pourquoi maintenant** : à $0.02/AFT la calibration B est saine, mais un
-mouvement de prix AFT de 5× (très plausible sur testnet → mainnet) forcerait
-sinon un runtime upgrade juste pour rétablir le pricing cible. Mieux vaut
-poser le rail gouvernable avant que le besoin devienne urgent.
+**Why now**: at $0.02/AFT calibration B is sound, but an AFT price move of
+5× (very plausible on testnet → mainnet) would otherwise force a runtime
+upgrade just to restore the target pricing. Better to lay the governable
+rail before the need becomes urgent.
 
 ---
 
-## 14. Roadmap d'implémentation
+## 14. Implementation roadmap
 
-| Phase | Tâches | Effort estimé |
+| Phase | Tasks | Estimated effort |
 |---|---|---|
-| **A. Décision** | Ce document mergé dans `docs/`, `plan.md` § 2 mis à jour pour pointer vers les nouvelles décisions | ✅ ce PR |
-| **B. Storage refacto** | `IdentifierClaims`, `PayloadHashes`, `Deposit` struct étendue, `PendingFinalization`, multiplicateurs | 4 h |
-| **C. Extrinsics core** | `deposit` (avec multiplicateurs + queue), `update`, `remove_own`, `finalize` | 4 h |
-| **D. Extrinsics sudo** | `force_edit`, `force_remove_refund`, `force_remove_slash`, `force_remove_many` | 3 h |
-| **E. Hooks runtime** | `on_initialize` (finalisations + ajustement multiplicateurs), helpers | 3 h |
-| **F. Tests unitaires** | Cas multi-claim, refund, finalize, prime non-refundée, sudo split | 6 h |
-| **G. Property tests** | Invariants storage, monotonie multiplicateurs, conservation supply | 5 h |
-| **H. Mass injection** | Profils de charge réalistes (release patterns musique), recalibrage `storage_root_hash` | 3 h |
-| **I. Benchmarks** | Re-bench de tous les extrinsics + `on_initialize` paramétré | 5 h |
-| **J. Runtime API v2** | `current_deposit_price`, `current_multipliers`, `weekly_target/actual`, lookup multi-claim | 3 h |
-| **K. Runtime melodie** | Câblage des nouvelles `parameter_types!`, MiddsTreasuryAccount, transaction_payment update | 2 h |
-| **L. Doc & comments** | Mise à jour `plan.md` § 2, commentaires runtime, README crates | 2 h |
-| **Total** | | **~40 h ≈ 1 semaine** |
+| **A. Decision** | This document merged into `docs/`, `plan.md` § 2 updated to point to the new decisions | ✅ this PR |
+| **B. Storage refactor** | `IdentifierClaims`, `PayloadHashes`, extended `Deposit` struct, `PendingFinalization`, multipliers | 4 h |
+| **C. Core extrinsics** | `deposit` (with multipliers + queue), `update`, `remove_own`, `finalize` | 4 h |
+| **D. Sudo extrinsics** | `force_edit`, `force_remove_refund`, `force_remove_slash`, `force_remove_many` | 3 h |
+| **E. Runtime hooks** | `on_initialize` (finalizations + multiplier adjustment), helpers | 3 h |
+| **F. Unit tests** | Multi-claim, refund, finalize, non-refunded premium, sudo split cases | 6 h |
+| **G. Property tests** | Storage invariants, multiplier monotonicity, supply conservation | 5 h |
+| **H. Mass injection** | Realistic load profiles (music release patterns), `storage_root_hash` recalibration | 3 h |
+| **I. Benchmarks** | Re-bench of all extrinsics + parametrized `on_initialize` | 5 h |
+| **J. Runtime API v2** | `current_deposit_price`, `current_multipliers`, `weekly_target/actual`, multi-claim lookup | 3 h |
+| **K. Melodie runtime** | Wiring of the new `parameter_types!`, MiddsTreasuryAccount, transaction_payment update | 2 h |
+| **L. Doc & comments** | Update of `plan.md` § 2, runtime comments, crates README | 2 h |
+| **Total** | | **~40 h ≈ 1 week** |
 
 ---
 
-## 15. Questions ouvertes (à trancher avant la phase B)
+## 15. Open questions (to settle before phase B)
 
-1. **Pourcentage de revenue tx fee redirigé vers Treasury** : actuellement
-   100 % au block author. Faut-il en récupérer une fraction (ex: 20 %) pour
-   doubler la base de revenue Treasury ? Hors scope direct mais à arbitrer
-   en parallèle.
+1. **Percentage of tx fee revenue redirected to the Treasury**: currently
+   100 % to the block author. Should we recover a fraction (e.g.: 20 %) to
+   double the Treasury's revenue base? Out of direct scope but to be
+   arbitrated in parallel.
 
-2. **Multi-instance : bond commun ou per-instance ?** Quand Recording arrive,
-   doit-il partager `MiddsTreasuryAccount` ou avoir son propre compte ?
-   Recommandation : partagé, simplicité.
+2. **Multi-instance: common or per-instance bond?** When Recording
+   arrives, should it share `MiddsTreasuryAccount` or have its own
+   account? Recommendation: shared, simplicity.
 
-3. **Métrique de "santé" exposée publiquement** : faut-il un événement on-chain
+3. **Publicly exposed "health" metric**: should there be an on-chain event
    `WeeklyMetricsSnapshot { deposits, avg_multiplier, treasury_balance }`
-   chaque dimanche, pour faciliter le suivi par les indexers et dashboards ?
-   Recommandation : oui, peu de poids et grand bénéfice transparence.
+   every Sunday, to ease tracking by indexers and dashboards?
+   Recommendation: yes, little weight and great transparency benefit.
 
-4. **Comportement `update` quand `M_slow` a changé** : si le user update et
-   que le nouveau bond calculé est inférieur à l'ancien (multiplicateur
-   redescendu), refund-t-on la différence ? Ou on garde le bond initial ?
-   Recommandation : refund partiel pour cohérence avec le principe "tu
-   payes le prix du marché courant" — mais à arbitrer.
+4. **`update` behavior when `M_slow` has changed**: if the user updates and
+   the new computed bond is lower than the old one (multiplier came back
+   down), do we refund the difference? Or do we keep the initial bond?
+   Recommendation: partial refund for consistency with the principle "you
+   pay the current market price" — but to be arbitrated.
 
-5. **Affichage du tarif côté CLI** : `midds-cli deposit` doit-il faire un
-   round-trip RPC pour montrer le prix avant confirmation ? Recommandation :
-   oui, avec flag `--max-price` pour fail si le prix dépasse un seuil
-   (UX similaire à un slippage limit).
+5. **Rate display on the CLI side**: should `midds-cli deposit` do an RPC
+   round-trip to show the price before confirmation? Recommendation: yes,
+   with a `--max-price` flag to fail if the price exceeds a threshold (UX
+   similar to a slippage limit).

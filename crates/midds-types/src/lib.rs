@@ -26,6 +26,6 @@ pub use recording::{
 pub use release::{
     COVER_CONTRIBUTORS_MAX, CoverContributorName, CoverContributors, DistributorName, Producer,
     Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
-    TRACKS_MAX, Tracks,
+    TRACKS_MAX, Track, Tracks,
 };
 pub use shared::{PartyId, PerformerId, RecordingRef, WorkRef};

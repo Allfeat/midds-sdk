@@ -3,8 +3,9 @@ pub mod v1;
 pub use v1::{
     CATALOG_NUMBER_MAX_LEN, COVER_CONTRIBUTOR_NAME_MAX_LEN, COVER_CONTRIBUTORS_MAX, CatalogNumber,
     CoverContributorName, CoverContributors, DISTRIBUTOR_NAME_MAX_LEN, DistributorName,
-    PRODUCERS_MAX, Producer, Producers, ReleaseDate, ReleaseFormat, ReleasePackaging,
-    ReleaseStatus, ReleaseType, ReleaseV1, TITLE_ALIASES_MAX, TRACKS_MAX, TitleAliases, Tracks,
+    FEATURING_MAX, Featuring, PRODUCERS_MAX, Producer, Producers, ReleaseDate, ReleaseFormat,
+    ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1, TITLE_ALIASES_MAX, TRACKS_MAX,
+    TitleAliases, Track, Tracks,
 };
 
 use midds_traits::{Midds, MiddsFormatError, Upc};
@@ -62,8 +63,12 @@ mod tests {
             title: bv(b"My Release Title"),
             title_aliases: BoundedVec::default(),
             artist: PartyId::Ipi(bv::<11>(b"123456789")),
-            tracks: BoundedVec::try_from(vec![RecordingRef::Isrc(bv::<12>(b"FRABC2412345"))])
-                .expect("one track"),
+            featuring: BoundedVec::default(),
+            tracks: BoundedVec::try_from(vec![Track {
+                number: 1,
+                recording: RecordingRef::Isrc(bv::<12>(b"FRABC2412345")),
+            }])
+            .expect("one track"),
             producers: BoundedVec::default(),
             status: ReleaseStatus::Official,
             release_date: ReleaseDate {
@@ -111,9 +116,20 @@ mod tests {
         v.upc = bv(b"036000291452");
         v.title_aliases = BoundedVec::try_from(vec![bv(b"Alt Title"), bv(b"Titre FR")]).unwrap();
         v.artist = PartyId::Isni(bv::<16>(b"0000000121032683"));
+        v.featuring = BoundedVec::try_from(vec![
+            PartyId::Ipi(bv::<11>(b"987654321")),
+            PartyId::Isni(bv::<16>(b"000000012146438X")),
+        ])
+        .unwrap();
         v.tracks = BoundedVec::try_from(vec![
-            RecordingRef::Isrc(bv::<12>(b"FRABC2412345")),
-            RecordingRef::Midds(42),
+            Track {
+                number: 1,
+                recording: RecordingRef::Isrc(bv::<12>(b"FRABC2412345")),
+            },
+            Track {
+                number: 2,
+                recording: RecordingRef::Midds(42),
+            },
         ])
         .unwrap();
         v.producers = BoundedVec::try_from(vec![Producer {
@@ -195,8 +211,11 @@ mod tests {
     #[test]
     fn validate_fails_invalid_track_isrc() {
         let mut v = sample_v1();
-        v.tracks =
-            BoundedVec::try_from(vec![RecordingRef::Isrc(bv::<12>(b"frABC2412345"))]).unwrap();
+        v.tracks = BoundedVec::try_from(vec![Track {
+            number: 1,
+            recording: RecordingRef::Isrc(bv::<12>(b"frABC2412345")),
+        }])
+        .unwrap();
         assert_eq!(
             Release::V1(v).validate_format(),
             Err(MiddsFormatError::InvalidCharset),
@@ -206,7 +225,11 @@ mod tests {
     #[test]
     fn validate_pass_track_midds_ref() {
         let mut v = sample_v1();
-        v.tracks = BoundedVec::try_from(vec![RecordingRef::Midds(7)]).unwrap();
+        v.tracks = BoundedVec::try_from(vec![Track {
+            number: 1,
+            recording: RecordingRef::Midds(7),
+        }])
+        .unwrap();
         assert!(Release::V1(v).validate_format().is_ok());
     }
 
@@ -312,8 +335,12 @@ mod json_tests {
             title: bv(b"My Release Title"),
             title_aliases: BoundedVec::default(),
             artist: PartyId::Ipi(bv::<11>(b"123456789")),
-            tracks: BoundedVec::try_from(vec![RecordingRef::Isrc(bv::<12>(b"FRABC2412345"))])
-                .expect("one track"),
+            featuring: BoundedVec::default(),
+            tracks: BoundedVec::try_from(vec![Track {
+                number: 1,
+                recording: RecordingRef::Isrc(bv::<12>(b"FRABC2412345")),
+            }])
+            .expect("one track"),
             producers: BoundedVec::default(),
             status: ReleaseStatus::Official,
             release_date: ReleaseDate {
@@ -340,7 +367,9 @@ mod json_tests {
         assert_eq!(json["title"], "My Release Title");
         assert_eq!(json["title_aliases"], serde_json::json!([]));
         assert_eq!(json["artist"]["Ipi"], "123456789");
-        assert_eq!(json["tracks"][0]["Isrc"], "FRABC2412345");
+        assert_eq!(json["featuring"], serde_json::json!([]));
+        assert_eq!(json["tracks"][0]["number"], 1);
+        assert_eq!(json["tracks"][0]["recording"]["Isrc"], "FRABC2412345");
         assert_eq!(json["producers"], serde_json::json!([]));
         assert_eq!(json["status"], "Official");
         assert_eq!(json["release_date"]["year"], 2024);
@@ -367,9 +396,16 @@ mod json_tests {
     fn shape_full() {
         let mut v = minimal_v1();
         v.title_aliases = BoundedVec::try_from(vec![bv(b"Alt"), bv(b"Titre")]).unwrap();
+        v.featuring = BoundedVec::try_from(vec![PartyId::Ipi(bv::<11>(b"987654321"))]).unwrap();
         v.tracks = BoundedVec::try_from(vec![
-            RecordingRef::Midds(42),
-            RecordingRef::Isrc(bv::<12>(b"USRC17607839")),
+            Track {
+                number: 1,
+                recording: RecordingRef::Midds(42),
+            },
+            Track {
+                number: 2,
+                recording: RecordingRef::Isrc(bv::<12>(b"USRC17607839")),
+            },
         ])
         .unwrap();
         v.producers = BoundedVec::try_from(vec![Producer {
@@ -387,8 +423,11 @@ mod json_tests {
 
         let json = serde_json::to_value(Release::V1(v)).unwrap();
         assert_eq!(json["title_aliases"], serde_json::json!(["Alt", "Titre"]));
-        assert_eq!(json["tracks"][0]["Midds"], 42);
-        assert_eq!(json["tracks"][1]["Isrc"], "USRC17607839");
+        assert_eq!(json["featuring"][0]["Ipi"], "987654321");
+        assert_eq!(json["tracks"][0]["number"], 1);
+        assert_eq!(json["tracks"][0]["recording"]["Midds"], 42);
+        assert_eq!(json["tracks"][1]["number"], 2);
+        assert_eq!(json["tracks"][1]["recording"]["Isrc"], "USRC17607839");
         assert_eq!(json["producers"][0]["isni"], "000000012103268X");
         assert_eq!(json["producers"][0]["catalog_number"], "88985456971");
         assert_eq!(json["status"], "Bootleg");
@@ -406,7 +445,13 @@ mod json_tests {
     #[test]
     fn roundtrip_full() {
         let mut v = minimal_v1();
-        v.tracks = BoundedVec::try_from(vec![RecordingRef::Midds(99)]).unwrap();
+        v.featuring =
+            BoundedVec::try_from(vec![PartyId::Isni(bv::<16>(b"0000000121032683"))]).unwrap();
+        v.tracks = BoundedVec::try_from(vec![Track {
+            number: 1,
+            recording: RecordingRef::Midds(99),
+        }])
+        .unwrap();
         v.producers = BoundedVec::try_from(vec![Producer {
             isni: bv::<16>(b"0000000121032683"),
             catalog_number: bv(b"CAT-001"),
@@ -428,7 +473,8 @@ mod json_tests {
             "title":"x",
             "title_aliases":[],
             "artist":{"Ipi":"123456789"},
-            "tracks":[{"Isrc":"FRABC2412345"}],
+            "featuring":[],
+            "tracks":[{"number":1,"recording":{"Isrc":"FRABC2412345"}}],
             "producers":[],
             "status":"Official",
             "release_date":{"year":2024,"month":3,"day":15},
@@ -452,7 +498,8 @@ mod json_tests {
             "title":"x",
             "title_aliases":[],
             "artist":{"Ipi":"123456789"},
-            "tracks":[{"Isrc":"FRABC2412345"}],
+            "featuring":[],
+            "tracks":[{"number":1,"recording":{"Isrc":"FRABC2412345"}}],
             "producers":[],
             "status":"Official",
             "release_date":{"year":2024,"month":3,"day":15},

@@ -1347,7 +1347,7 @@ use midds_types::release::{
 };
 use midds_types::{
     Country, Producer, RecordingRef, Release, ReleaseDate, ReleaseFormat, ReleasePackaging,
-    ReleaseStatus, ReleaseType, ReleaseV1,
+    ReleaseStatus, ReleaseType, ReleaseV1, Track,
 };
 
 use crate::parse::parse_upc;
@@ -1384,6 +1384,7 @@ pub struct ReleaseBuilder {
     title_raw: Option<String>,
     title_aliases_raw: Vec<String>,
     artist: Option<PartyInput>,
+    featuring_raw: Vec<PartyInput>,
     tracks: Vec<TrackInput>,
     producers_raw: Vec<ProducerInput>,
     status: Option<ReleaseStatus>,
@@ -1435,6 +1436,24 @@ impl ReleaseBuilder {
     /// Artist identified by an ISNI (any [`parse_isni`]-accepted format).
     pub fn artist_isni(mut self, isni: &str) -> Self {
         self.artist = Some(PartyInput {
+            raw: isni.to_string(),
+            kind: PartyKind::Isni,
+        });
+        self
+    }
+
+    /// Append a featured artist ("feat.") identified by an IPI.
+    pub fn add_featured_artist_ipi(mut self, ipi: &str) -> Self {
+        self.featuring_raw.push(PartyInput {
+            raw: ipi.to_string(),
+            kind: PartyKind::Ipi,
+        });
+        self
+    }
+
+    /// Append a featured artist ("feat.") identified by an ISNI.
+    pub fn add_featured_artist_isni(mut self, isni: &str) -> Self {
+        self.featuring_raw.push(PartyInput {
             raw: isni.to_string(),
             kind: PartyKind::Isni,
         });
@@ -1578,6 +1597,8 @@ impl ReleaseBuilder {
 
         let title_aliases = self.build_title_aliases(&mut errors);
         let artist = parse_party(artist_in, "artist", &mut errors);
+        let featuring =
+            parse_party_list(&self.featuring_raw, "featuring", FEATURING_MAX, &mut errors);
         let tracks = self.build_tracks(&mut errors);
         let producers = self.build_producers(&mut errors);
 
@@ -1630,6 +1651,7 @@ impl ReleaseBuilder {
             title: title.expect("no errors → title parsed"),
             title_aliases: title_aliases.expect("no errors → aliases bounded"),
             artist: artist.expect("no errors → artist parsed"),
+            featuring: featuring.expect("no errors → featuring parsed"),
             tracks: tracks.expect("no errors → tracks resolved"),
             producers: producers.expect("no errors → producers bounded"),
             status,
@@ -1684,17 +1706,28 @@ impl ReleaseBuilder {
     }
 
     fn build_tracks(&self, errors: &mut Vec<FieldError>) -> Option<midds_types::release::Tracks> {
-        let mut tracks: Vec<RecordingRef> = Vec::with_capacity(self.tracks.len());
+        let mut tracks: Vec<Track> = Vec::with_capacity(self.tracks.len());
         for (i, t) in self.tracks.iter().enumerate() {
-            match t {
-                TrackInput::Midds(id) => tracks.push(RecordingRef::Midds(*id)),
+            let recording = match t {
+                TrackInput::Midds(id) => Some(RecordingRef::Midds(*id)),
                 TrackInput::Isrc(raw) => match parse_isrc(raw) {
-                    Ok(isrc) => tracks.push(RecordingRef::Isrc(isrc)),
-                    Err(e) => errors.push(FieldError {
-                        field: "tracks",
-                        message: format!("#{i} `{raw}`: {e}"),
-                    }),
+                    Ok(isrc) => Some(RecordingRef::Isrc(isrc)),
+                    Err(e) => {
+                        errors.push(FieldError {
+                            field: "tracks",
+                            message: format!("#{i} `{raw}`: {e}"),
+                        });
+                        None
+                    }
                 },
+            };
+            if let Some(recording) = recording {
+                // Numbered 1-based by input order; the on-chain validator then
+                // enforces positivity and uniqueness of those numbers.
+                tracks.push(Track {
+                    number: (tracks.len() + 1) as u16,
+                    recording,
+                });
             }
         }
         if tracks.len() > TRACKS_MAX as usize {
@@ -1818,6 +1851,7 @@ mod release_tests {
             .title("  Transformer  ")
             .add_title_alias("Transformeur")
             .artist_isni("0000 0001 2103 2683")
+            .add_featured_artist_isni("0000 0001 2146 438X")
             .add_track_isrc("US-RC1-72-00312")
             .add_track_midds(7)
             .add_producer("000000012103268X", "RCA LSP-4807")
@@ -1838,7 +1872,10 @@ mod release_tests {
         let Release::V1(v) = release;
         assert_eq!(v.upc.as_slice(), b"036000291452");
         assert_eq!(v.title.as_slice(), b"Transformer");
+        assert_eq!(v.featuring.len(), 1);
         assert_eq!(v.tracks.len(), 2);
+        assert_eq!(v.tracks[0].number, 1);
+        assert_eq!(v.tracks[1].number, 2);
         assert_eq!(v.producers.len(), 1);
     }
 

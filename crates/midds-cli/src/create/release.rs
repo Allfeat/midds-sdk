@@ -4,11 +4,11 @@ use anyhow::Result;
 use midds_traits::{Isni, Upc};
 use midds_types::release::{
     self, CATALOG_NUMBER_MAX_LEN as REL_CATALOG_MAX, COVER_CONTRIBUTOR_NAME_MAX_LEN,
-    DISTRIBUTOR_NAME_MAX_LEN,
+    DISTRIBUTOR_NAME_MAX_LEN, FEATURING_MAX, Featuring,
 };
 use midds_types::{
     COVER_CONTRIBUTORS_MAX, CoverContributors, Producer, Release, ReleaseFormat, ReleasePackaging,
-    ReleaseStatus, ReleaseType, ReleaseV1, TITLE_MAX_LEN, TRACKS_MAX, Tracks,
+    ReleaseStatus, ReleaseType, ReleaseV1, TITLE_MAX_LEN, TRACKS_MAX, Track, Tracks,
 };
 
 use crate::create::{prompts, shared};
@@ -24,8 +24,9 @@ pub fn build() -> Result<Release> {
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
     let title_aliases = build_title_aliases()?;
 
-    ui::step(2, STEPS, "Artist");
+    ui::step(2, STEPS, "Artist & featuring");
     let artist = shared::party_id("Main artist identifier")?;
+    let featuring = build_featuring()?;
 
     ui::step(3, STEPS, "Tracklist");
     let tracks = build_tracks()?;
@@ -113,6 +114,7 @@ pub fn build() -> Result<Release> {
         title,
         title_aliases,
         artist,
+        featuring,
         tracks,
         producers,
         status,
@@ -138,11 +140,29 @@ fn build_title_aliases() -> Result<release::TitleAliases> {
         .map_err(|_| anyhow::anyhow!("more than {} title aliases", release::TITLE_ALIASES_MAX))
 }
 
-fn build_tracks() -> Result<Tracks> {
-    ui::info("a release needs at least one track; a recording must not appear twice");
-    let tracks = prompts::collect_bounded("track", 1, TRACKS_MAX as usize, |idx| {
-        shared::recording_ref(&format!("Track #{} recording", idx + 1))
+fn build_featuring() -> Result<Featuring> {
+    let featuring = prompts::collect_bounded("featured artist", 0, FEATURING_MAX as usize, |_| {
+        shared::party_id("Featured artist identifier")
     })?;
+    Featuring::try_from(featuring)
+        .map_err(|_| anyhow::anyhow!("more than {FEATURING_MAX} featured artists"))
+}
+
+fn build_tracks() -> Result<Tracks> {
+    ui::info(
+        "a release needs at least one track; track numbers and recordings must each be unique",
+    );
+    let tracks =
+        prompts::collect_bounded("track", 1, TRACKS_MAX as usize, |idx| -> Result<Track> {
+            let number = prompts::int_in_range::<u16>(
+                "Track number",
+                1,
+                TRACKS_MAX as u16,
+                Some((idx + 1) as u16),
+            )?;
+            let recording = shared::recording_ref(&format!("Track #{number} recording"))?;
+            Ok(Track { number, recording })
+        })?;
     Tracks::try_from(tracks).map_err(|_| anyhow::anyhow!("more than {TRACKS_MAX} tracks"))
 }
 

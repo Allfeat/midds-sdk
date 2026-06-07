@@ -16,7 +16,7 @@ use midds_types::{
     PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, Performer, PerformerId, PitchClass,
     Producer, ProductionPlaces, Recording, RecordingRef, RecordingV1, RecordingVersion, Release,
     ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
-    SAMPLES_MAX, TITLE_ALIASES_MAX, TITLE_MAX_LEN, WORK_REFERENCES_MAX, WorkRef, WorkType,
+    SAMPLES_MAX, TITLE_ALIASES_MAX, TITLE_MAX_LEN, Track, WORK_REFERENCES_MAX, WorkRef, WorkType,
 };
 
 use crate::identifiers::{
@@ -317,7 +317,12 @@ pub fn min_size_release() -> Release {
         title: BoundedVec::try_from(b"x".to_vec()).expect("1 byte"),
         title_aliases: BoundedVec::default(),
         artist: PartyId::Ipi(ipi_from_stem(0, 9)),
-        tracks: BoundedVec::try_from(vec![RecordingRef::Midds(0)]).expect("one track"),
+        featuring: BoundedVec::default(),
+        tracks: BoundedVec::try_from(vec![Track {
+            number: 1,
+            recording: RecordingRef::Midds(0),
+        }])
+        .expect("one track"),
         producers: BoundedVec::default(),
         status: ReleaseStatus::Official,
         release_date: ReleaseDate {
@@ -350,8 +355,16 @@ pub fn max_size_release() -> Release {
         let body: [u8; 15] = core::array::from_fn(|j| ((i + j as u32 + 1) % 10) as u8);
         isni_from_body(body)
     };
-    let tracks: Vec<RecordingRef> = (0..rel::TRACKS_MAX)
-        .map(|i| RecordingRef::Isrc(isrc_for_index(i)))
+    let party_both_at = |i: u32| PartyId::Both {
+        ipi: ipi_from_stem(i as u64 * 1_000_000_007 + 1, 11),
+        isni: isni_at(i),
+    };
+    let featuring: Vec<PartyId> = (0..rel::FEATURING_MAX).map(party_both_at).collect();
+    let tracks: Vec<Track> = (0..rel::TRACKS_MAX)
+        .map(|i| Track {
+            number: (i + 1) as u16,
+            recording: RecordingRef::Isrc(isrc_for_index(i)),
+        })
         .collect();
     let producers: Vec<Producer> = (0..rel::PRODUCERS_MAX)
         .map(|i| Producer {
@@ -375,6 +388,7 @@ pub fn max_size_release() -> Release {
             ipi: ipi_from_stem(99 * 1_000_000_007, 11),
             isni: isni_at(99),
         },
+        featuring: BoundedVec::try_from(featuring).expect("featuring at bound"),
         tracks: BoundedVec::try_from(tracks).expect("tracks at bound"),
         producers: BoundedVec::try_from(producers).expect("producers at bound"),
         status: ReleaseStatus::Official,
@@ -433,6 +447,36 @@ pub fn invalid_release_bad_date() -> (Release, MiddsFormatError) {
         day: 1,
     };
     (Release::V1(v1), MiddsFormatError::OutOfBounds)
+}
+
+/// `Release` whose only track carries the reserved track number 0. Triggers
+/// `OutOfBounds` (track numbers must be `>= 1`).
+pub fn invalid_release_zero_track_number() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.tracks = BoundedVec::try_from(vec![Track {
+        number: 0,
+        recording: RecordingRef::Midds(0),
+    }])
+    .expect("one track");
+    (Release::V1(v1), MiddsFormatError::OutOfBounds)
+}
+
+/// `Release` reusing the same track number on two distinct recordings.
+/// Triggers `CrossFieldInconsistency` (track numbers must be unique).
+pub fn invalid_release_duplicate_track_number() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.tracks = BoundedVec::try_from(vec![
+        Track {
+            number: 1,
+            recording: RecordingRef::Midds(0),
+        },
+        Track {
+            number: 1,
+            recording: RecordingRef::Midds(1),
+        },
+    ])
+    .expect("two tracks");
+    (Release::V1(v1), MiddsFormatError::CrossFieldInconsistency)
 }
 
 #[cfg(test)]
@@ -555,6 +599,8 @@ mod tests {
             invalid_release_empty_title,
             invalid_release_empty_tracklist,
             invalid_release_bad_date,
+            invalid_release_zero_track_number,
+            invalid_release_duplicate_track_number,
         ] {
             let (release, expected) = ctor();
             let err = release.validate_format().expect_err("payload must fail");

@@ -22,7 +22,7 @@ use bounded_collections::BoundedVec;
 use midds_traits::Midds as _;
 use midds_types::{
     Country, PartyId, Producer, RecordingRef, Release, ReleaseDate, ReleaseFormat,
-    ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1,
+    ReleasePackaging, ReleaseStatus, ReleaseType, ReleaseV1, Track,
 };
 use parity_scale_codec::{Decode, Encode};
 
@@ -36,7 +36,9 @@ fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
 ///
 /// Hits enough variants to make accidental wire reshuffles visible:
 /// - `PartyId::Isni` artist (the longer variant).
-/// - Both `RecordingRef` variants in the tracklist (ISRC then on-chain id).
+/// - A non-empty `featuring` list mixing `PartyId::Ipi` and `PartyId::Both`.
+/// - Both `RecordingRef` variants in the tracklist (ISRC then on-chain id),
+///   each wrapped in a numbered `Track`.
 /// - A populated `Producer` (ISNI + catalog number) pair.
 /// - Non-empty `title_aliases` and `cover_contributors`.
 /// - A non-`Album` `ReleaseType`, non-`Cd` `format`, non-`None` packaging.
@@ -48,9 +50,23 @@ fn reference_v1() -> ReleaseV1 {
         title_aliases: BoundedVec::try_from(vec![bv(b"Transformer"), bv(b"Transformeur")])
             .expect("aliases within bound"),
         artist: PartyId::Isni(bv(b"0000000121032683")),
+        featuring: BoundedVec::try_from(vec![
+            PartyId::Ipi(bv(b"00052210040")),
+            PartyId::Both {
+                ipi: bv(b"00073050873"),
+                isni: bv(b"0000000368571195"),
+            },
+        ])
+        .expect("featuring within bound"),
         tracks: BoundedVec::try_from(vec![
-            RecordingRef::Isrc(bv(b"USRC17200312")),
-            RecordingRef::Midds(880_017),
+            Track {
+                number: 1,
+                recording: RecordingRef::Isrc(bv(b"USRC17200312")),
+            },
+            Track {
+                number: 2,
+                recording: RecordingRef::Midds(880_017),
+            },
         ])
         .expect("tracks within bound"),
         producers: BoundedVec::try_from(vec![Producer {

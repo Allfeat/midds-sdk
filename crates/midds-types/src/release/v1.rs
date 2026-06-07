@@ -11,8 +11,10 @@ use crate::shared::{PartyId, RecordingRef, Title};
 
 /// Maximum number of alternative / localized titles on a release.
 pub const TITLE_ALIASES_MAX: u32 = 8;
+/// Maximum number of featured artists ("feat.") credited on the release.
+pub const FEATURING_MAX: u32 = 16;
 /// Maximum number of recordings (tracks) referenced by a release. Sized for
-/// large box sets; the per-track [`RecordingRef`] is at most 14 SCALE bytes.
+/// large box sets; the per-track [`Track`] is at most 16 SCALE bytes.
 pub const TRACKS_MAX: u32 = 256;
 /// Maximum number of producers / labels credited on a release.
 pub const PRODUCERS_MAX: u32 = 16;
@@ -27,9 +29,13 @@ pub const COVER_CONTRIBUTOR_NAME_MAX_LEN: u32 = 128;
 
 /// Alternative / localized titles for the release.
 pub type TitleAliases = BoundedVec<Title, ConstU32<TITLE_ALIASES_MAX>>;
-/// Ordered tracklist: each entry references a recording on-chain (MIDDS id)
-/// or externally (ISRC). Position in the vector is the track order.
-pub type Tracks = BoundedVec<RecordingRef, ConstU32<TRACKS_MAX>>;
+/// Featured artists ("feat.") credited on the release. Each is a [`PartyId`]
+/// (IPI / ISNI / both) exactly like the main `artist`, mirroring
+/// `Recording.featuring`.
+pub type Featuring = BoundedVec<PartyId, ConstU32<FEATURING_MAX>>;
+/// Ordered tracklist: each [`Track`] pairs its 1-based track number with the
+/// recording it references (on-chain MIDDS id or external ISRC).
+pub type Tracks = BoundedVec<Track, ConstU32<TRACKS_MAX>>;
 /// A label / release catalog number (free-text within the bound).
 pub type CatalogNumber = MiddsString<CATALOG_NUMBER_MAX_LEN>;
 /// Producers credited on the release, each with their own catalog number.
@@ -40,6 +46,35 @@ pub type DistributorName = MiddsString<DISTRIBUTOR_NAME_MAX_LEN>;
 pub type CoverContributorName = MiddsString<COVER_CONTRIBUTOR_NAME_MAX_LEN>;
 /// Cover-artwork contributor names (photographers, designers, …).
 pub type CoverContributors = BoundedVec<CoverContributorName, ConstU32<COVER_CONTRIBUTORS_MAX>>;
+
+/// A numbered entry in a release tracklist: the track number paired with the
+/// recording it references.
+///
+/// `number` is the human-facing 1-based track number (not the vector index).
+/// It must be `>= 1` and unique across the tracklist; gaps are allowed (a
+/// release may legitimately skip a number). The recording is referenced
+/// on-chain (MIDDS id) or externally (ISRC) via [`RecordingRef`] and must also
+/// be unique across the tracklist. Both invariants are enforced by
+/// [`ReleaseV1::validate_format`].
+#[derive(
+    Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Track {
+    /// 1-based track number; `>= 1` and unique within the tracklist.
+    pub number: u16,
+    /// The recording this track points to.
+    pub recording: RecordingRef,
+}
+
+impl Track {
+    pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
+        if self.number == 0 {
+            return Err(MiddsFormatError::OutOfBounds);
+        }
+        self.recording.validate_format()
+    }
+}
 
 /// A producer / label credited on the release. Producers are legal persons
 /// identified by ISNI in industry metadata (not IPI), each carrying the
@@ -223,8 +258,9 @@ impl ReleaseDate {
 /// Mandatory fields: `upc`, `title`, `artist`, `tracks` (non-empty),
 /// `status`, `release_date`, `country`, `distributor_name`, `release_type`,
 /// `format`, `packaging`. The rest are optional / collection-empty-by-default.
-/// Identity (artist) reuses the shared [`PartyId`]; the tracklist reuses the
-/// shared [`RecordingRef`]; producers are ISNI-keyed pairs.
+/// Identity (artist) and featured artists reuse the shared [`PartyId`]; each
+/// tracklist entry is a [`Track`] pairing a number with a shared
+/// [`RecordingRef`]; producers are ISNI-keyed pairs.
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
@@ -240,6 +276,7 @@ pub struct ReleaseV1 {
     )]
     pub title_aliases: TitleAliases,
     pub artist: PartyId,
+    pub featuring: Featuring,
     pub tracks: Tracks,
     pub producers: Producers,
     pub status: ReleaseStatus,
@@ -277,19 +314,26 @@ impl ReleaseV1 {
             }
         }
         self.artist.validate_format()?;
+        for f in &self.featuring {
+            f.validate_format()?;
+        }
         if self.tracks.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
+        // Per-track format (number `>= 1`, recording-ref structure) plus two
+        // tracklist-wide uniqueness invariants: no `RecordingRef` and no track
+        // `number` may appear twice (gaps between numbers are allowed). Both
+        // use a `BTreeSet` (O(n log n) over the ≤ TRACKS_MAX = 256 entries)
+        // instead of an O(n²) pairwise scan, so the worst-case cost of this
+        // on-chain check stays bounded.
+        let mut seen_recordings = alloc::collections::BTreeSet::new();
+        let mut seen_numbers = alloc::collections::BTreeSet::new();
         for t in &self.tracks {
             t.validate_format()?;
-        }
-        // Tracklist uniqueness: no `RecordingRef` may appear twice. A
-        // `BTreeSet` of references is O(n log n) over the (≤ TRACKS_MAX = 256)
-        // entries, replacing the previous O(n²) pairwise scan so the
-        // worst-case cost of this on-chain check stays bounded.
-        let mut seen = alloc::collections::BTreeSet::new();
-        for t in &self.tracks {
-            if !seen.insert(t) {
+            if !seen_recordings.insert(&t.recording) {
+                return Err(MiddsFormatError::CrossFieldInconsistency);
+            }
+            if !seen_numbers.insert(t.number) {
                 return Err(MiddsFormatError::CrossFieldInconsistency);
             }
         }
@@ -327,7 +371,8 @@ mod tests {
             title: BoundedVec::try_from(b"x".to_vec()).expect("1-byte title"),
             title_aliases: BoundedVec::default(),
             artist: PartyId::Ipi(BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI")),
-            tracks: BoundedVec::try_from(vec![RecordingRef::Midds(1)]).expect("1 track"),
+            featuring: BoundedVec::default(),
+            tracks: BoundedVec::try_from(vec![track(1, RecordingRef::Midds(1))]).expect("1 track"),
             producers: BoundedVec::default(),
             status: ReleaseStatus::Official,
             release_date: ReleaseDate {
@@ -349,6 +394,10 @@ mod tests {
         RecordingRef::Isrc(BoundedVec::try_from(s.to_vec()).expect("12-byte ISRC"))
     }
 
+    fn track(number: u16, recording: RecordingRef) -> Track {
+        Track { number, recording }
+    }
+
     #[test]
     fn base_is_valid() {
         base().validate_format().expect("base payload validates");
@@ -358,20 +407,60 @@ mod tests {
     fn distinct_tracks_validate() {
         let mut r = base();
         r.tracks = BoundedVec::try_from(vec![
-            RecordingRef::Midds(1),
-            RecordingRef::Midds(2),
-            isrc(b"USRC17607839"),
-            isrc(b"GBAYE0601477"),
+            track(1, RecordingRef::Midds(1)),
+            track(2, RecordingRef::Midds(2)),
+            track(3, isrc(b"USRC17607839")),
+            track(4, isrc(b"GBAYE0601477")),
         ])
         .expect("4 distinct tracks");
         r.validate_format().expect("distinct tracklist validates");
     }
 
     #[test]
-    fn duplicate_midds_track_rejected() {
+    fn gapped_track_numbers_validate() {
+        // "Unique & >= 1": gaps between numbers are allowed, only positivity
+        // and uniqueness are enforced.
         let mut r = base();
-        r.tracks = BoundedVec::try_from(vec![RecordingRef::Midds(7), RecordingRef::Midds(7)])
-            .expect("2 tracks");
+        r.tracks = BoundedVec::try_from(vec![
+            track(1, RecordingRef::Midds(1)),
+            track(5, RecordingRef::Midds(2)),
+            track(42, isrc(b"USRC17607839")),
+        ])
+        .expect("3 tracks");
+        r.validate_format().expect("gapped numbering validates");
+    }
+
+    #[test]
+    fn zero_track_number_rejected() {
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![track(0, RecordingRef::Midds(1))]).expect("1 track");
+        assert_eq!(r.validate_format(), Err(MiddsFormatError::OutOfBounds));
+    }
+
+    #[test]
+    fn duplicate_track_number_rejected() {
+        // Same number on two distinct recordings → CrossFieldInconsistency.
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![
+            track(7, RecordingRef::Midds(1)),
+            track(7, RecordingRef::Midds(2)),
+        ])
+        .expect("2 tracks");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency),
+        );
+    }
+
+    #[test]
+    fn duplicate_midds_track_rejected() {
+        // Same recording under two different numbers → CrossFieldInconsistency.
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![
+            track(1, RecordingRef::Midds(7)),
+            track(2, RecordingRef::Midds(7)),
+        ])
+        .expect("2 tracks");
         assert_eq!(
             r.validate_format(),
             Err(MiddsFormatError::CrossFieldInconsistency),
@@ -382,14 +471,33 @@ mod tests {
     fn duplicate_isrc_track_rejected() {
         let mut r = base();
         r.tracks = BoundedVec::try_from(vec![
-            RecordingRef::Midds(1),
-            isrc(b"USRC17607839"),
-            isrc(b"USRC17607839"),
+            track(1, RecordingRef::Midds(1)),
+            track(2, isrc(b"USRC17607839")),
+            track(3, isrc(b"USRC17607839")),
         ])
         .expect("3 tracks");
         assert_eq!(
             r.validate_format(),
             Err(MiddsFormatError::CrossFieldInconsistency),
         );
+    }
+
+    #[test]
+    fn featuring_validates_each_party() {
+        // A well-formed featured artist passes; a malformed one is rejected
+        // through the same `PartyId` structure check as the main artist.
+        let mut r = base();
+        r.featuring = BoundedVec::try_from(vec![PartyId::Isni(
+            BoundedVec::try_from(b"0000000121032683".to_vec()).expect("16-byte ISNI"),
+        )])
+        .expect("one featured artist");
+        r.validate_format()
+            .expect("valid featured artist validates");
+
+        r.featuring = BoundedVec::try_from(vec![PartyId::Ipi(
+            BoundedVec::try_from(b"12345A789".to_vec()).expect("9 bytes"),
+        )])
+        .expect("one featured artist");
+        assert_eq!(r.validate_format(), Err(MiddsFormatError::InvalidCharset));
     }
 }

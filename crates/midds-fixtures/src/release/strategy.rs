@@ -14,8 +14,8 @@
 use frame_support::BoundedVec;
 use midds_traits::{MiddsFormatError, Upc};
 use midds_types::release::{
-    CATALOG_NUMBER_MAX_LEN, CatalogNumber, DISTRIBUTOR_NAME_MAX_LEN, PRODUCERS_MAX, Producers,
-    TITLE_ALIASES_MAX, TitleAliases, Tracks,
+    CATALOG_NUMBER_MAX_LEN, CatalogNumber, DISTRIBUTOR_NAME_MAX_LEN, FEATURING_MAX, Featuring,
+    PRODUCERS_MAX, Producers, TITLE_ALIASES_MAX, TitleAliases, Track, Tracks,
 };
 use midds_types::{
     COVER_CONTRIBUTORS_MAX, Country, CoverContributors, DistributorName, PartyId, Producer,
@@ -160,15 +160,32 @@ fn arb_title_aliases() -> impl Strategy<Value = TitleAliases> {
         .prop_map(|v| BoundedVec::try_from(v).expect("title aliases within bound"))
 }
 
+/// Featured artists (0..=`FEATURING_MAX`), each a well-formed [`PartyId`].
+fn arb_featuring() -> impl Strategy<Value = Featuring> {
+    proptest::collection::vec(arb_party_id(), 0..=(FEATURING_MAX as usize))
+        .prop_map(|v| BoundedVec::try_from(v).expect("featuring within bound"))
+}
+
 fn arb_tracks() -> impl Strategy<Value = Tracks> {
     proptest::collection::vec(arb_recording_ref(), 1..=(TRACKS_MAX as usize)).prop_map(|v| {
+        // Dedup recordings, then number the survivors 1..=N — a contiguous
+        // sequence is trivially "unique & >= 1", the rule stabilised in
+        // `docs/validation.md` §6.
         let mut unique: Vec<RecordingRef> = Vec::with_capacity(v.len());
         for r in v {
             if !unique.contains(&r) {
                 unique.push(r);
             }
         }
-        BoundedVec::try_from(unique).expect("tracks within bound")
+        let tracks: Vec<Track> = unique
+            .into_iter()
+            .enumerate()
+            .map(|(i, recording)| Track {
+                number: (i + 1) as u16,
+                recording,
+            })
+            .collect();
+        BoundedVec::try_from(tracks).expect("tracks within bound")
     })
 }
 
@@ -196,9 +213,9 @@ fn arb_cover_contributors() -> impl Strategy<Value = CoverContributors> {
 
 /// Strategy producing valid `ReleaseV1` payloads.
 ///
-/// `ReleaseV1` has 15 fields; proptest only implements `Strategy` for tuples
-/// up to arity 12, so the fields are split into an 8-tuple and a 7-tuple and
-/// flattened in the `prop_map`.
+/// `ReleaseV1` has 16 fields; proptest only implements `Strategy` for tuples
+/// up to arity 12, so the fields are split into two 8-tuples and flattened in
+/// the `prop_map`.
 pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
     let head = (
         arb_upc(),
@@ -211,6 +228,7 @@ pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
         arb_release_date(),
     );
     let tail = (
+        arb_featuring(),
         arb_country(),
         arb_distributor_name(),
         arb_release_type(),
@@ -223,6 +241,7 @@ pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
         |(
             (upc, title, title_aliases, artist, tracks, producers, status, release_date),
             (
+                featuring,
                 country,
                 distributor_name,
                 release_type,
@@ -236,6 +255,7 @@ pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
             title,
             title_aliases,
             artist,
+            featuring,
             tracks,
             producers,
             status,
@@ -260,10 +280,10 @@ pub fn arb_release() -> impl Strategy<Value = Release> {
 /// Strategy producing payloads saturated to `MaxEncodedLen`.
 ///
 /// Every bounded field is filled to its bound and every `Option` is `Some`,
-/// using the larger enum variant wherever a choice exists: `artist` as
-/// `PartyId::Both` (30 bytes vs ≤ 18 for single-id), every track as
-/// `RecordingRef::Isrc` (14 bytes vs 9 for the MIDDS id). The byte content is
-/// randomised so shrinking still has work to do.
+/// using the larger enum variant wherever a choice exists: `artist` and every
+/// `featuring` entry as `PartyId::Both` (30 bytes vs ≤ 18 for single-id), every
+/// track as `RecordingRef::Isrc` (the larger reference variant). The byte
+/// content is randomised so shrinking still has work to do.
 pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
     (
         proptest::collection::vec(ascii_digit(), 13),
@@ -288,6 +308,7 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
             COVER_CONTRIBUTORS_MAX as usize,
         ),
         proptest::collection::vec(printable_ascii(), 64usize),
+        proptest::collection::vec((any::<u64>(), any::<[u8; 15]>()), FEATURING_MAX as usize),
     )
         .prop_map(
             |(
@@ -301,16 +322,27 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                 distributor,
                 cover_bodies,
                 hash,
+                feat_pairs,
             )| {
                 let title = BoundedVec::try_from(title).expect("title at bound");
                 let title_aliases: Vec<_> = aliases
                     .into_iter()
                     .map(|a| BoundedVec::try_from(a).expect("alias at bound"))
                     .collect();
-                let tracks: Vec<RecordingRef> = track_idxs
+                let tracks: Vec<Track> = track_idxs
                     .iter()
                     .enumerate()
-                    .map(|(idx, _)| RecordingRef::Isrc(isrc_for_index(idx as u32)))
+                    .map(|(idx, _)| Track {
+                        number: (idx + 1) as u16,
+                        recording: RecordingRef::Isrc(isrc_for_index(idx as u32)),
+                    })
+                    .collect();
+                let featuring: Vec<PartyId> = feat_pairs
+                    .into_iter()
+                    .map(|(stem, body)| PartyId::Both {
+                        ipi: ipi_from_stem(stem, 11),
+                        isni: isni_from_body(body),
+                    })
                     .collect();
                 let producers: Vec<Producer> = producer_bodies
                     .into_iter()
@@ -331,6 +363,7 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                         ipi: ipi_from_stem(artist_stem, 11),
                         isni: isni_from_body(artist_body),
                     },
+                    featuring: BoundedVec::try_from(featuring).expect("featuring at bound"),
                     tracks: BoundedVec::try_from(tracks).expect("tracks at bound"),
                     producers: BoundedVec::try_from(producers).expect("producers at bound"),
                     status: ReleaseStatus::Official,
@@ -359,43 +392,87 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
 /// Strategy producing payloads that systematically fail
 /// `Midds::validate_format`, paired with the expected diagnostic so callers
 /// can assert exact-error matches.
+///
+/// A single valid base is generated and then corrupted one of nine ways,
+/// selected by `pick`. Mutating one shared base (rather than wrapping
+/// [`arb_release_v1`] in a wide `prop_oneof!`) keeps the strategy tree shallow
+/// — the many-armed form builds nine independent copies of the now-larger
+/// release strategy and overflows the test stack in debug builds.
 pub fn arb_release_invalid() -> impl Strategy<Value = (Release, MiddsFormatError)> {
-    prop_oneof![
-        arb_release_v1().prop_map(|mut v1| {
-            v1.upc = BoundedVec::try_from(b"12345678".to_vec()).expect("8 bytes ≤ 13");
-            (Release::V1(v1), MiddsFormatError::OutOfBounds)
-        }),
-        arb_release_v1().prop_map(|mut v1| {
-            v1.upc = BoundedVec::try_from(b"40063813339X1".to_vec()).expect("13 bytes");
-            (Release::V1(v1), MiddsFormatError::InvalidCharset)
-        }),
-        arb_release_v1().prop_map(|mut v1| {
-            v1.title = BoundedVec::default();
-            (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
-        }),
-        arb_release_v1().prop_map(|mut v1| {
-            v1.tracks = BoundedVec::default();
-            (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
-        }),
-        arb_release_v1().prop_map(|mut v1| {
-            v1.release_date = ReleaseDate {
-                year: 2024,
-                month: 0,
-                day: 1,
-            };
-            (Release::V1(v1), MiddsFormatError::OutOfBounds)
-        }),
-        arb_release_v1().prop_map(|mut v1| {
-            v1.distributor_name = BoundedVec::default();
-            (Release::V1(v1), MiddsFormatError::EmptyMandatoryField)
-        }),
-        arb_release_v1().prop_map(|mut v1| {
-            let dup = v1.tracks[0].clone();
-            v1.tracks =
-                BoundedVec::try_from(vec![dup.clone(), dup]).expect("2 tracks ≤ TRACKS_MAX");
-            (Release::V1(v1), MiddsFormatError::CrossFieldInconsistency)
-        }),
-    ]
+    (arb_release_v1(), 0u8..9).prop_map(|(mut v1, pick)| {
+        let err = match pick {
+            0 => {
+                v1.upc = BoundedVec::try_from(b"12345678".to_vec()).expect("8 bytes ≤ 13");
+                MiddsFormatError::OutOfBounds
+            }
+            1 => {
+                v1.upc = BoundedVec::try_from(b"40063813339X1".to_vec()).expect("13 bytes");
+                MiddsFormatError::InvalidCharset
+            }
+            2 => {
+                v1.title = BoundedVec::default();
+                MiddsFormatError::EmptyMandatoryField
+            }
+            3 => {
+                v1.tracks = BoundedVec::default();
+                MiddsFormatError::EmptyMandatoryField
+            }
+            4 => {
+                v1.release_date = ReleaseDate {
+                    year: 2024,
+                    month: 0,
+                    day: 1,
+                };
+                MiddsFormatError::OutOfBounds
+            }
+            5 => {
+                v1.distributor_name = BoundedVec::default();
+                MiddsFormatError::EmptyMandatoryField
+            }
+            6 => {
+                // Same recording under two different numbers → recording-uniqueness.
+                let rec = v1.tracks[0].recording.clone();
+                v1.tracks = BoundedVec::try_from(vec![
+                    Track {
+                        number: 1,
+                        recording: rec.clone(),
+                    },
+                    Track {
+                        number: 2,
+                        recording: rec,
+                    },
+                ])
+                .expect("2 tracks ≤ TRACKS_MAX");
+                MiddsFormatError::CrossFieldInconsistency
+            }
+            7 => {
+                // Same number on two distinct recordings → number-uniqueness.
+                v1.tracks = BoundedVec::try_from(vec![
+                    Track {
+                        number: 7,
+                        recording: RecordingRef::Midds(1),
+                    },
+                    Track {
+                        number: 7,
+                        recording: RecordingRef::Midds(2),
+                    },
+                ])
+                .expect("2 tracks ≤ TRACKS_MAX");
+                MiddsFormatError::CrossFieldInconsistency
+            }
+            _ => {
+                // Reserved track number 0 → OutOfBounds.
+                let rec = v1.tracks[0].recording.clone();
+                v1.tracks = BoundedVec::try_from(vec![Track {
+                    number: 0,
+                    recording: rec,
+                }])
+                .expect("1 track");
+                MiddsFormatError::OutOfBounds
+            }
+        };
+        (Release::V1(v1), err)
+    })
 }
 
 #[cfg(test)]

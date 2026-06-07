@@ -95,6 +95,9 @@ pub fn random_with_upc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Releas
 
     let artist = random_party_id(rng);
 
+    let featuring_count = rng.gen_range(0..=2usize);
+    let featuring: Vec<PartyId> = (0..featuring_count).map(|_| random_party_id(rng)).collect();
+
     let track_count = rng.gen_range(1..=12usize);
     let tracks: Vec<RecordingRef> = (0..track_count)
         .map(|i| {
@@ -136,6 +139,7 @@ pub fn random_with_upc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Releas
         .upc(upc)
         .title(&title_bytes)
         .artist(artist)
+        .featuring_unchecked(featuring)
         .tracks_unchecked(tracks)
         .producers_unchecked(producers)
         .status(pick_status(rng))

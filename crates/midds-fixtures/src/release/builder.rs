@@ -9,11 +9,11 @@
 
 use frame_support::BoundedVec;
 use midds_traits::{OffchainHash, Upc};
-use midds_types::release::{Producers, TitleAliases, Tracks};
+use midds_types::release::{Featuring, Producers, TitleAliases, Tracks};
 use midds_types::{
     Country, CoverContributorName, CoverContributors, DistributorName, PartyId, Producer,
     RecordingRef, Release, ReleaseDate, ReleaseFormat, ReleasePackaging, ReleaseStatus,
-    ReleaseType, ReleaseV1, Title,
+    ReleaseType, ReleaseV1, Title, Track,
 };
 
 /// Fluent builder over already-canonical inputs.
@@ -23,6 +23,7 @@ pub struct ReleaseBuilder {
     title: Title,
     title_aliases: Vec<Title>,
     artist: PartyId,
+    featuring: Vec<PartyId>,
     tracks: Vec<RecordingRef>,
     producers: Vec<Producer>,
     status: ReleaseStatus,
@@ -50,6 +51,7 @@ impl ReleaseBuilder {
             title: BoundedVec::try_from(b"Untitled Release".to_vec()).expect("16 bytes < 256"),
             title_aliases: Vec::new(),
             artist: PartyId::Ipi(crate::identifiers::ipi_from_stem(123_456_789, 9)),
+            featuring: Vec::new(),
             tracks: vec![RecordingRef::Midds(0)],
             producers: Vec::new(),
             status: ReleaseStatus::Official,
@@ -90,6 +92,13 @@ impl ReleaseBuilder {
 
     pub fn artist(mut self, artist: PartyId) -> Self {
         self.artist = artist;
+        self
+    }
+
+    /// Replace the featured-artist list. Panics at `build()` if
+    /// `featuring.len() > FEATURING_MAX`.
+    pub fn featuring_unchecked(mut self, featuring: Vec<PartyId>) -> Self {
+        self.featuring = featuring;
         self
     }
 
@@ -172,7 +181,18 @@ impl ReleaseBuilder {
             title_aliases: TitleAliases::try_from(self.title_aliases)
                 .expect("title aliases within bound"),
             artist: self.artist,
-            tracks: Tracks::try_from(self.tracks).expect("tracks within bound"),
+            featuring: Featuring::try_from(self.featuring).expect("featuring within bound"),
+            tracks: Tracks::try_from(
+                self.tracks
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, recording)| Track {
+                        number: (i + 1) as u16,
+                        recording,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .expect("tracks within bound"),
             producers: Producers::try_from(self.producers).expect("producers within bound"),
             status: self.status,
             release_date: self.release_date,

@@ -1343,11 +1343,14 @@ use midds_types::{
 use crate::parse::parse_upc;
 
 /// How a track was referenced by the user: by on-chain MIDDS id (no parsing)
-/// or by a free-form ISRC string (tolerant-parsed at build).
+/// or by a free-form ISRC string (tolerant-parsed at build). `number` is the
+/// explicit 1-based track number when set; `None` means "auto-number by emit
+/// order" (the legacy behaviour of [`ReleaseBuilder::add_track_midds`] /
+/// [`ReleaseBuilder::add_track_isrc`]).
 #[derive(Debug, Clone)]
 enum TrackInput {
-    Midds(u64),
-    Isrc(String),
+    Midds { number: Option<u16>, id: u64 },
+    Isrc { number: Option<u16>, raw: String },
 }
 
 /// A producer entry the user typed: an ISNI string plus its catalog number,
@@ -1450,15 +1453,50 @@ impl ReleaseBuilder {
         self
     }
 
-    /// Append a track referenced by its on-chain MIDDS id.
+    /// Append a track referenced by its on-chain MIDDS id, auto-numbered
+    /// 1-based by emit order. Use
+    /// [`add_numbered_track_midds`](Self::add_numbered_track_midds) to set the
+    /// track number explicitly.
     pub fn add_track_midds(mut self, id: u64) -> Self {
-        self.tracks.push(TrackInput::Midds(id));
+        self.tracks.push(TrackInput::Midds { number: None, id });
         self
     }
 
-    /// Append a track referenced by a free-form ISRC string.
+    /// Append a track referenced by a free-form ISRC string, auto-numbered
+    /// 1-based by emit order. Use
+    /// [`add_numbered_track_isrc`](Self::add_numbered_track_isrc) to set the
+    /// track number explicitly.
     pub fn add_track_isrc(mut self, isrc: &str) -> Self {
-        self.tracks.push(TrackInput::Isrc(isrc.to_string()));
+        self.tracks.push(TrackInput::Isrc {
+            number: None,
+            raw: isrc.to_string(),
+        });
+        self
+    }
+
+    /// Append a track referenced by its on-chain MIDDS id with an explicit
+    /// 1-based track number, carried verbatim to the on-chain [`Track`]. Gaps
+    /// are allowed (e.g. `1` then `3`), but every number must be `>= 1` and
+    /// unique across the tracklist — both invariants are enforced by
+    /// `validate_format`, not at build time (mixing auto- and
+    /// explicitly-numbered tracks can collide and is rejected there).
+    pub fn add_numbered_track_midds(mut self, number: u16, id: u64) -> Self {
+        self.tracks.push(TrackInput::Midds {
+            number: Some(number),
+            id,
+        });
+        self
+    }
+
+    /// Append a track referenced by a free-form ISRC string with an explicit
+    /// 1-based track number. See
+    /// [`add_numbered_track_midds`](Self::add_numbered_track_midds) for the
+    /// numbering rules.
+    pub fn add_numbered_track_isrc(mut self, number: u16, isrc: &str) -> Self {
+        self.tracks.push(TrackInput::Isrc {
+            number: Some(number),
+            raw: isrc.to_string(),
+        });
         self
     }
 
@@ -1698,24 +1736,28 @@ impl ReleaseBuilder {
     fn build_tracks(&self, errors: &mut Vec<FieldError>) -> Option<midds_types::release::Tracks> {
         let mut tracks: Vec<Track> = Vec::with_capacity(self.tracks.len());
         for (i, t) in self.tracks.iter().enumerate() {
-            let recording = match t {
-                TrackInput::Midds(id) => Some(RecordingRef::Midds(*id)),
-                TrackInput::Isrc(raw) => match parse_isrc(raw) {
-                    Ok(isrc) => Some(RecordingRef::Isrc(isrc)),
-                    Err(e) => {
-                        errors.push(FieldError {
-                            field: "tracks",
-                            message: format!("#{i} `{raw}`: {e}"),
-                        });
-                        None
-                    }
-                },
+            let (number, recording) = match t {
+                TrackInput::Midds { number, id } => (*number, Some(RecordingRef::Midds(*id))),
+                TrackInput::Isrc { number, raw } => (
+                    *number,
+                    match parse_isrc(raw) {
+                        Ok(isrc) => Some(RecordingRef::Isrc(isrc)),
+                        Err(e) => {
+                            errors.push(FieldError {
+                                field: "tracks",
+                                message: format!("#{i} `{raw}`: {e}"),
+                            });
+                            None
+                        }
+                    },
+                ),
             };
             if let Some(recording) = recording {
-                // Numbered 1-based by input order; the on-chain validator then
-                // enforces positivity and uniqueness of those numbers.
+                // Explicit number when supplied, else 1-based by emit order.
+                // The on-chain validator then enforces positivity and the
+                // number / recording uniqueness invariants.
                 tracks.push(Track {
-                    number: (tracks.len() + 1) as u16,
+                    number: number.unwrap_or((tracks.len() + 1) as u16),
                     recording,
                 });
             }
@@ -1867,6 +1909,60 @@ mod release_tests {
         assert_eq!(v.tracks[0].number, 1);
         assert_eq!(v.tracks[1].number, 2);
         assert_eq!(v.producers.len(), 1);
+    }
+
+    #[test]
+    fn explicit_track_numbers_thread_through_and_allow_gaps() {
+        use midds_traits::Midds as _;
+        let release = ReleaseBuilder::new()
+            .upc("036000291452")
+            .title("Gapped")
+            .artist_ipi("123456789")
+            .add_numbered_track_midds(1, 10)
+            .add_numbered_track_isrc(3, "US-RC1-72-00312")
+            .status(ReleaseStatus::Official)
+            .release_date(2024, 1, 1)
+            .country(Country::Us)
+            .distributor_name("D")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Cd)
+            .packaging(ReleasePackaging::None)
+            .build()
+            .expect("builds");
+        release
+            .validate_format()
+            .expect("gapped explicit numbering validates");
+        let Release::V1(v) = release;
+        // User-entered numbers reach the on-chain Track verbatim — including
+        // the gap (no track 2).
+        assert_eq!(v.tracks[0].number, 1);
+        assert_eq!(v.tracks[1].number, 3);
+    }
+
+    #[test]
+    fn duplicate_explicit_number_is_caught_by_validation() {
+        use midds_traits::Midds as _;
+        // Number invariants are deferred to `validate_format` (like duplicate
+        // recordings already are): `build` succeeds, validation rejects.
+        let release = ReleaseBuilder::new()
+            .upc("036000291452")
+            .title("Dup")
+            .artist_ipi("123456789")
+            .add_numbered_track_midds(1, 10)
+            .add_numbered_track_midds(1, 11)
+            .status(ReleaseStatus::Official)
+            .release_date(2024, 1, 1)
+            .country(Country::Us)
+            .distributor_name("D")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Cd)
+            .packaging(ReleasePackaging::None)
+            .build()
+            .expect("builds despite duplicate number");
+        assert!(
+            release.validate_format().is_err(),
+            "duplicate track number must be rejected on-chain"
+        );
     }
 
     #[test]

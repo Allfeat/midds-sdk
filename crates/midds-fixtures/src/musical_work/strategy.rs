@@ -118,13 +118,16 @@ pub fn arb_pitch_class() -> impl Strategy<Value = PitchClass> {
     proptest::sample::select(
         [
             PitchClass::C,
+            PitchClass::BSharp,
             PitchClass::CSharp,
             PitchClass::DFlat,
             PitchClass::D,
             PitchClass::DSharp,
             PitchClass::EFlat,
             PitchClass::E,
+            PitchClass::FFlat,
             PitchClass::F,
+            PitchClass::ESharp,
             PitchClass::FSharp,
             PitchClass::GFlat,
             PitchClass::G,
@@ -134,6 +137,7 @@ pub fn arb_pitch_class() -> impl Strategy<Value = PitchClass> {
             PitchClass::ASharp,
             PitchClass::BFlat,
             PitchClass::B,
+            PitchClass::CFlat,
         ]
         .as_slice(),
     )

@@ -38,20 +38,24 @@ pub const BPM_MAX: u16 = 300;
 
 /// Pitch class with explicit accidental spelling.
 ///
-/// The 12 chromatic positions are represented with both their sharp and the
-/// most common flat spellings (17 variants total). `CSharp` and `DFlat` share
-/// the same sounding pitch but are *not* equivalent for notation or
-/// publishing: a piece registered as `E♭ major` must round-trip as `E♭`, not
-/// as `D♯`. CWR and DDEX both carry the spelling, and the on-chain payload
+/// The 12 chromatic positions are represented with their sharp, flat, and —
+/// for the four diatonic semitones around B/C and E/F — the rarer
+/// cross-natural enharmonic spellings, 21 variants total. `CSharp` and
+/// `DFlat` share the same sounding pitch but are *not* equivalent for notation
+/// or publishing: a piece registered as `E♭ major` must round-trip as `E♭`,
+/// not as `D♯`. CWR and DDEX both carry the spelling, and the on-chain payload
 /// preserves it.
 ///
-/// Theoretical enharmonics (`B♯`, `E♯`, `C♭`, `F♭`) are deliberately not
-/// modelled — they are vanishingly rare in commercial catalogues and can be
-/// added in a future payload version if a real use case appears.
+/// The four cross-natural enharmonics (`B♯`, `E♯`, `C♭`, `F♭`) are rarer but
+/// do occur in real catalogues: the C♯-major scale spells its third and
+/// seventh degrees as `E♯` and `B♯`, and the C♭-/G♭-major side spells `C♭`
+/// and `F♭`. They are modelled rather than folded onto the neighbouring
+/// natural, so a key notated with them round-trips faithfully.
 ///
 /// SCALE layout: the original 12 sharp / natural variants keep their V1 tag
-/// bytes (0..=11). The five flat variants are appended at tags 12..=16, so
-/// records encoded before the extension decode unchanged.
+/// bytes (0..=11); the five common flats are at tags 12..=16; the four
+/// cross-natural enharmonics are appended at tags 17..=20. Every earlier tag
+/// is preserved, so records encoded before each extension decode unchanged.
 #[derive(
     Encode,
     Decode,
@@ -83,6 +87,10 @@ pub enum PitchClass {
     GFlat,
     AFlat,
     BFlat,
+    BSharp,
+    ESharp,
+    CFlat,
+    FFlat,
 }
 
 /// Diatonic mode. Kept minimal; modal music (Dorian, Phrygian, …) can be

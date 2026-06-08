@@ -73,7 +73,7 @@ The check digit (ISWC/IPI mod-10 CISAC, ISNI ISO 7064, GTIN mod-10) is
 |---|---|---|
 | `Title` | `MiddsString<256>` (`TITLE_MAX_LEN = 256`) | non-empty when mandatory; length **S** |
 | `PartyId` | `enum { Ipi(Ipi) \| Isni(Isni) \| Both { ipi: Ipi, isni: Isni } }` — at least one of the two identifiers | structure of each present identifier (both for `Both`). The `Both` variant was **reintroduced** (cf. §7 — the same party can carry IPI and ISNI simultaneously; a native representation more faithful than two duplicated entries) |
-| `MusicalKey` | `{ pitch: PitchClass(17), mode: Mode(2) }` = 34 combinations | membership **S**. `PitchClass` covers the 12 chromatic positions with the most common sharp and flat spellings (`D♭`/`E♭`/`G♭`/`A♭`/`B♭` in addition to `C♯`/`D♯`/`F♯`/`G♯`/`A♯`); the rare theoretical enharmonics (`B♯`,`E♯`,`C♭`,`F♭`) stay out of V1 |
+| `MusicalKey` | `{ pitch: PitchClass(21), mode: Mode(2) }` = 42 combinations | membership **S**. `PitchClass` covers the 12 chromatic positions with their sharp and flat spellings (`D♭`/`E♭`/`G♭`/`A♭`/`B♭` alongside `C♯`/`D♯`/`F♯`/`G♯`/`A♯`) plus the four cross-natural enharmonics (`B♯`,`E♯`,`C♭`,`F♭`) appended at tags 17..=20 |
 | `WorkRef` | `enum { Midds(u64) \| Iswc(Iswc) }` | if `Iswc` ⇒ ISWC structure |
 | `RecordingRef` | `enum { Midds(u64) \| Isrc(Isrc) }` | if `Isrc` ⇒ ISRC structure |
 | `Country` | closed ISO 3166-1 alpha-2 enum (complete, uppercase JSON) | membership **S** — superset of the legacy frontend's 249 codes |
@@ -266,13 +266,14 @@ Explicit, frozen decisions, not to be "fixed" without a version bump:
    `Creator`s sharing the same `PartyId`. Stabilized V1 = a single
    `Creator { roles: Set, party }` per party — more compact encoding, no
    duplicates to validate, stable canonical order on the SCALE side.
-5. **Structured `MusicalKey`** (`PitchClass × Mode`, 34) instead of the
+5. **Structured `MusicalKey`** (`PitchClass × Mode`, 42) instead of the
    legacy frontend's 42 flat keys. `PitchClass` carries the 12 chromatic
-   positions with their usual sharp and flat spellings (17 variants total):
-   `D♭` and `C♯` are distinct on the wire — a decision driven by fidelity to
-   registries (CWR/DDEX carry the spelling). Only the marginal theoretical
-   enharmonics (`B♯`, `E♯`, `C♭`, `F♭`) remain unmodeled and may be added via
-   a future payload version if a concrete use case appears.
+   positions with their usual sharp and flat spellings plus the four
+   cross-natural enharmonics (21 variants total): `D♭` and `C♯` are distinct
+   on the wire — a decision driven by fidelity to registries (CWR/DDEX carry
+   the spelling). The rarer `B♯`/`E♯`/`C♭`/`F♭` were appended (tags 17..=20)
+   so keys notated with them — `C♯ major` spelling `E♯`/`B♯`, the `C♭`/`G♭`
+   side spelling `C♭`/`F♭` — round-trip faithfully.
 6. **Slimmed enums**: `Genre` 25 (vs ≈160), `RecordingVersion` 13 (vs 21),
    `ReleaseFormat` 11 (vs 63), `ReleasePackaging` 9 (vs 17), `ReleaseStatus`
    7 (vs 10), `ReleaseType` 11 (vs 6, redefined). Fine granularity = a

@@ -104,9 +104,14 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
         WorkRef::Midds(rng.r#gen::<u64>())
     };
 
-    let genre_count = rng.gen_range(0..=3usize);
-    let genres: Vec<Genre> = (0..genre_count).map(|_| pick_genre(rng)).collect();
-    let sub_genre = if rng.r#gen::<bool>() {
+    let genre = if rng.r#gen::<bool>() {
+        Some(pick_genre(rng))
+    } else {
+        None
+    };
+    // A sub-genre may only accompany a primary genre (`validate_format`
+    // rejects a lone sub-genre).
+    let sub_genre = if genre.is_some() && rng.r#gen::<bool>() {
         Some(pick_genre(rng))
     } else {
         None
@@ -138,7 +143,7 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
         .artist(artist)
         .featuring_unchecked(featuring)
         .work(work)
-        .genres_unchecked(genres)
+        .genre(genre)
         .sub_genre(sub_genre)
         .record_year(rng.gen_range(1900..=2025))
         .version_type(pick_version(rng))

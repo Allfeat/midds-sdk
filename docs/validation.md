@@ -149,8 +149,8 @@ merging, more SCALE-economical and more faithful to the business model.
 | `artist` | `PartyId` | yes | — | id structure | = |
 | `featuring` | `BoundedVec<PartyId, 16>` (`FEATURING_MAX = 16`) | no | ≤ 16 | each id: structure (featured artists = same `PartyId` as the main artist, not `PerformerId`) | **N** |
 | `work` | `WorkRef` | yes | — | if `Iswc` ⇒ structure | = |
-| `genres` | `BoundedVec<Genre, 8>` (`GENRES_MAX = 8`) | no | ≤ 8 | membership | S |
-| `sub_genre` | `Option<Genre>` | no | — | membership (same flat taxonomy as `genres`) | **N** |
+| `genre` | `Option<Genre>` | no | — | membership | S |
+| `sub_genre` | `Option<Genre>` | no | — | membership (same taxonomy as `genre`); **`Some` ⇒ `genre` is `Some`** (cross-field) | **N** |
 | `record_year` | `Option<u16>` | no | — | if `Some` ⇒ **`1..=2999`** | **N** |
 | `version_type` | `Option<RecordingVersion>` | no | — | membership | S |
 | `performers` | `BoundedVec<Performer, 64>` (`PERFORMERS_MAX = 64`) | no | ≤ 64 | each `Performer`: `id` (`PerformerId`) structure; `instruments` = `BoundedVec<Instrument, 8>` (`INSTRUMENTS_PER_PERFORMER_MAX = 8`), membership **S**, empty list allowed ("unknown instrument") | **N** |
@@ -282,7 +282,7 @@ Explicit, frozen decisions, not to be "fixed" without a version bump:
    keeps bounds optimized for on-chain cost (`CREATORS_MAX = 32`,
    `CREATOR_ROLES_MAX = 5`, `PERFORMERS_MAX = 64`, `PRODUCERS_MAX = 8/16`,
    `CONTRIBUTORS_MAX = 32`, `OPUS/CATALOG = 32`, `PLACE = 128`,
-   `DISTRIBUTOR/COVER_NAME = 128`, `TITLE_ALIASES = 8`, `GENRES = 8`,
+   `DISTRIBUTOR/COVER_NAME = 128`, `TITLE_ALIASES = 8`,
    `TRACKS = 256`, `COVER_CONTRIBUTORS = 16`). These values are the
    reference; the legacy frontend's figures (UI-only) are obsolete.
 8. **Convention `instrumental ⇒ language = None` / `explicit_lyrics = false`**:
@@ -295,14 +295,15 @@ Explicit, frozen decisions, not to be "fixed" without a version bump:
    stay ISWC-only. Assumed consequence: a sample's non-self-reference is only
    checkable for the `Iswc` variant (the `Midds` variant points to an id
    assigned at deposit, unknown at validation time). Bound `SAMPLES_MAX = 64`.
-10. **`Recording.featuring` as `PartyId`, single `sub_genre`, broad
+10. **`Recording.featuring` as `PartyId`, single `genre`/`sub_genre`, broad
     `Instrument`**: a featured artist is credited on the same footing as the
     main artist (`artist: PartyId`), not as a session performer — hence the
     same identity type (IPI / ISNI / both), distinct from the `Performer`
     which carries a `PerformerId` (IPN-capable) **and** the list of its
-    instruments. `sub_genre` is a *single* `Option<Genre>` (a secondary
-    refinement drawn from the same flat taxonomy as `genres`, not a
-    hierarchical tree). `Instrument` is deliberately *broad* (≈77 variants) —
+    instruments. Both `genre` and `sub_genre` are a *single* `Option<Genre>`
+    drawn from the same flat taxonomy (a secondary refinement, not a
+    hierarchical tree); a `sub_genre` may only accompany a primary `genre`.
+    `Instrument` is deliberately *broad* (≈77 variants) —
     the inverse choice of the slimmed enums in point 6 — because the
     instrument played is a frequent and precise credit field; the cost stays
     one tag-byte per instrument, capped at `INSTRUMENTS_PER_PERFORMER_MAX = 8`

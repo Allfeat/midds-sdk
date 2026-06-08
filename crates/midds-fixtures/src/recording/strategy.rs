@@ -15,11 +15,10 @@ use frame_support::BoundedVec;
 use midds_traits::{Isni, MiddsFormatError};
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
-    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, GENRES_MAX, Genre, Genres,
-    INSTRUMENTS_PER_PERFORMER_MAX, Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX,
-    PartyId, Performer, PerformerId, PerformerInstruments, Performers, Place, Producers,
-    ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN,
-    TitleAliases, WorkRef,
+    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, Genre, INSTRUMENTS_PER_PERFORMER_MAX,
+    Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, PartyId, Performer, PerformerId,
+    PerformerInstruments, Performers, Place, Producers, ProductionPlaces, Recording, RecordingV1,
+    RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN, TitleAliases, WorkRef,
 };
 use proptest::prelude::*;
 
@@ -167,9 +166,16 @@ fn arb_title_aliases() -> impl Strategy<Value = TitleAliases> {
         .prop_map(|v| BoundedVec::try_from(v).expect("title aliases within bound"))
 }
 
-fn arb_genres() -> impl Strategy<Value = Genres> {
-    proptest::collection::vec(arb_genre(), 0..=(GENRES_MAX as usize))
-        .prop_map(|v| BoundedVec::try_from(v).expect("genres within bound"))
+/// Valid `(genre, sub_genre)` pair: a sub-genre may only appear alongside a
+/// primary genre (`validate_format` rejects a lone sub-genre).
+fn arb_genre_pair() -> impl Strategy<Value = (Option<Genre>, Option<Genre>)> {
+    proptest::option::of(arb_genre()).prop_flat_map(|genre| {
+        let sub = match genre {
+            Some(_) => proptest::option::of(arb_genre()).boxed(),
+            None => Just(None).boxed(),
+        };
+        sub.prop_map(move |sub_genre| (genre, sub_genre))
+    })
 }
 
 /// 0..=`INSTRUMENTS_PER_PERFORMER_MAX` instruments for one performer; empty is
@@ -211,8 +217,9 @@ fn arb_featuring() -> impl Strategy<Value = Featuring> {
 /// Strategy producing valid `RecordingV1` payloads.
 ///
 /// `RecordingV1` has 18 fields; proptest only implements `Strategy` for
-/// tuples up to arity 12, so the fields are split into two 9-tuples and
-/// flattened in the `prop_map`.
+/// tuples up to arity 12, so the fields are split into a head and a tail tuple
+/// and flattened in the `prop_map`. `genre` and `sub_genre` share one head
+/// slot ([`arb_genre_pair`]) so the strategy can enforce their dependency.
 pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
     let head = (
         arb_isrc_valid(),
@@ -221,8 +228,7 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
         arb_party_id(),
         arb_featuring(),
         arb_work_ref(),
-        arb_genres(),
-        proptest::option::of(arb_genre()),
+        arb_genre_pair(),
         proptest::option::of(1900u16..=2025u16),
     );
     let tail = (
@@ -238,7 +244,7 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
     );
     (head, tail).prop_map(
         |(
-            (isrc, title, title_aliases, artist, featuring, work, genres, sub_genre, record_year),
+            (isrc, title, title_aliases, artist, featuring, work, (genre, sub_genre), record_year),
             (
                 version_type,
                 performers,
@@ -257,7 +263,7 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
             artist,
             featuring,
             work,
-            genres,
+            genre,
             sub_genre,
             record_year,
             version_type,
@@ -365,8 +371,7 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                     },
                     featuring: BoundedVec::try_from(featuring).expect("featuring at bound"),
                     work: WorkRef::Iswc(iswc_from_work_code(work_code)),
-                    genres: BoundedVec::try_from(vec![Genre::Other; GENRES_MAX as usize])
-                        .expect("genres at bound"),
+                    genre: Some(Genre::Other),
                     sub_genre: Some(Genre::Other),
                     record_year: Some(YEAR_MAX),
                     version_type: Some(RecordingVersion::Original),

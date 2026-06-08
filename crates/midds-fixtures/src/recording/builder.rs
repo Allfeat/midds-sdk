@@ -23,7 +23,7 @@ pub struct RecordingBuilder {
     artist: PartyId,
     featuring: Vec<PartyId>,
     work: WorkRef,
-    genres: Vec<Genre>,
+    genre: Option<Genre>,
     sub_genre: Option<Genre>,
     record_year: Option<u16>,
     version_type: Option<RecordingVersion>,
@@ -55,7 +55,7 @@ impl RecordingBuilder {
             artist: default_artist,
             featuring: Vec::new(),
             work: default_work,
-            genres: Vec::new(),
+            genre: None,
             sub_genre: None,
             record_year: None,
             version_type: None,
@@ -106,9 +106,9 @@ impl RecordingBuilder {
         self
     }
 
-    /// Replace the genres list. Panics if `genres.len() > GENRES_MAX`.
-    pub fn genres_unchecked(mut self, genres: Vec<Genre>) -> Self {
-        self.genres = genres;
+    /// Set (or clear) the primary genre.
+    pub fn genre(mut self, genre: Option<Genre>) -> Self {
+        self.genre = genre;
         self
     }
 
@@ -205,7 +205,7 @@ impl RecordingBuilder {
             artist: self.artist,
             featuring: BoundedVec::try_from(self.featuring).expect("featuring within bound"),
             work: self.work,
-            genres: BoundedVec::try_from(self.genres).expect("genres within bound"),
+            genre: self.genre,
             sub_genre: self.sub_genre,
             record_year: self.record_year,
             version_type: self.version_type,
@@ -255,7 +255,7 @@ mod tests {
                 BoundedVec::try_from(b"00000000171".to_vec()).expect("11 bytes"),
             )])
             .work(WorkRef::Midds(42))
-            .genres_unchecked(vec![Genre::Pop, Genre::Jazz])
+            .genre(Some(Genre::Pop))
             .sub_genre(Some(Genre::Soul))
             .record_year(1999)
             .version_type(RecordingVersion::Live)
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(v.title.as_slice(), b"My Recording");
         assert_eq!(v.title_aliases.len(), 1);
         assert_eq!(v.work, WorkRef::Midds(42));
-        assert_eq!(v.genres.len(), 2);
+        assert_eq!(v.genre, Some(Genre::Pop));
         assert_eq!(v.featuring.len(), 1);
         assert_eq!(v.sub_genre, Some(Genre::Soul));
         assert_eq!(v.performers.len(), 1);

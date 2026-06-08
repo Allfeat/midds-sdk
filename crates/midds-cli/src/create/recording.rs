@@ -4,10 +4,10 @@ use anyhow::Result;
 use midds_traits::{Isni, Isrc};
 use midds_types::shared::{BPM_MAX, BPM_MIN, YEAR_MAX, YEAR_MIN};
 use midds_types::{
-    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, GENRES_MAX, Genre, Genres,
-    INSTRUMENTS_PER_PERFORMER_MAX, Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX,
-    Performer, PerformerInstruments, Performers, Producers, ProductionPlaces, Recording,
-    RecordingV1, RecordingVersion, TITLE_ALIASES_MAX, TITLE_MAX_LEN, TitleAliases,
+    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, Genre, INSTRUMENTS_PER_PERFORMER_MAX,
+    Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Performer, PerformerInstruments,
+    Performers, Producers, ProductionPlaces, Recording, RecordingV1, RecordingVersion,
+    TITLE_ALIASES_MAX, TITLE_MAX_LEN, TitleAliases,
 };
 
 use crate::create::{prompts, shared};
@@ -28,11 +28,17 @@ pub fn build() -> Result<Recording> {
     let featuring = build_featuring()?;
     let work = shared::work_ref("Recorded work")?;
 
-    ui::step(3, STEPS, "Genres");
-    let genres = build_genres()?;
-    let sub_genre = prompts::optional("a sub-genre", || {
-        prompts::fuzzy_select("Sub-genre", GENRE_CHOICES)
-    })?;
+    ui::step(3, STEPS, "Genre");
+    let genre = prompts::optional("a genre", || prompts::fuzzy_select("Genre", GENRE_CHOICES))?;
+    // A sub-genre refines a primary genre, so it is only offered once one is
+    // set (`validate_format` rejects a lone sub-genre).
+    let sub_genre = if genre.is_some() {
+        prompts::optional("a sub-genre", || {
+            prompts::fuzzy_select("Sub-genre", GENRE_CHOICES)
+        })?
+    } else {
+        None
+    };
 
     ui::step(4, STEPS, "Edition");
     let record_year = prompts::optional_int_in_range::<u16>("Record year", YEAR_MIN, YEAR_MAX)?;
@@ -73,7 +79,7 @@ pub fn build() -> Result<Recording> {
         artist,
         featuring,
         work,
-        genres,
+        genre,
         sub_genre,
         record_year,
         version_type,
@@ -230,13 +236,6 @@ fn build_title_aliases() -> Result<TitleAliases> {
     })?;
     TitleAliases::try_from(aliases)
         .map_err(|_| anyhow::anyhow!("more than {TITLE_ALIASES_MAX} title aliases"))
-}
-
-fn build_genres() -> Result<Genres> {
-    let genres = prompts::collect_bounded("genre", 0, GENRES_MAX as usize, |_| {
-        prompts::fuzzy_select("Genre", GENRE_CHOICES)
-    })?;
-    Genres::try_from(genres).map_err(|_| anyhow::anyhow!("more than {GENRES_MAX} genres"))
 }
 
 /// `Vec<PartyId>` collector for `contributors`. The performer collector is

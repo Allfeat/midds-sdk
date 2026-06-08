@@ -12,8 +12,6 @@ use crate::shared::{
 
 /// Maximum number of alternative titles attached to a recording.
 pub const TITLE_ALIASES_MAX: u32 = 8;
-/// Maximum number of genres tagging a recording.
-pub const GENRES_MAX: u32 = 8;
 /// Maximum number of featured artists ("feat.") credited on the recording.
 pub const FEATURING_MAX: u32 = 16;
 /// Maximum number of performers (band members, orchestra…) credited.
@@ -32,8 +30,6 @@ pub const PLACE_MAX_LEN: u32 = 128;
 
 /// Alternative / localized titles for the recording.
 pub type TitleAliases = BoundedVec<Title, ConstU32<TITLE_ALIASES_MAX>>;
-/// Genres tagging the recording.
-pub type Genres = BoundedVec<Genre, ConstU32<GENRES_MAX>>;
 /// Featured artists ("feat.") credited on the recording. Each is a
 /// [`PartyId`] (IPI / ISNI / both) exactly like the main `artist`: a featured
 /// artist is credited in the same sense as the lead, not as a session
@@ -55,8 +51,8 @@ pub type Place = MiddsString<PLACE_MAX_LEN>;
 
 /// Top-level musical genre. Closed enum: stored as a single SCALE tag byte
 /// on-chain (cheaper and indexable, vs an unbounded free-text string).
-/// Flat industry-aligned taxonomy: the same enum backs both the `genres`
-/// list and the optional `sub_genre` refinement. Finer *hierarchical*
+/// Flat industry-aligned taxonomy: the same enum backs both the primary
+/// `genre` and the optional `sub_genre` refinement. Finer *hierarchical*
 /// granularity (a genre→sub-genre tree) is deliberately left to a future
 /// payload version rather than baked into the variant set.
 #[derive(
@@ -365,9 +361,13 @@ pub struct RecordingV1 {
     pub artist: PartyId,
     pub featuring: Featuring,
     pub work: WorkRef,
-    pub genres: Genres,
+    /// Primary genre of the recording. Optional — an unknown genre is `None`
+    /// (use [`Genre::Other`] for "known but outside the taxonomy").
+    pub genre: Option<Genre>,
     /// Optional secondary genre, drawn from the same [`Genre`] taxonomy as
-    /// `genres` — a refinement of the primary tagging, not a separate scale.
+    /// `genre` — a refinement of the primary tagging, not a separate scale.
+    /// A sub-genre may only be present alongside a primary `genre`
+    /// (enforced by [`RecordingV1::validate_format`]).
     pub sub_genre: Option<Genre>,
     pub record_year: Option<u16>,
     pub version_type: Option<RecordingVersion>,
@@ -412,6 +412,10 @@ impl RecordingV1 {
         {
             return Err(MiddsFormatError::OutOfBounds);
         }
+        // A sub-genre refines a primary genre; it cannot stand alone.
+        if self.sub_genre.is_some() && self.genre.is_none() {
+            return Err(MiddsFormatError::CrossFieldInconsistency);
+        }
         self.artist.validate_format()?;
         for f in &self.featuring {
             f.validate_format()?;
@@ -453,7 +457,7 @@ mod tests {
             artist: PartyId::Ipi(BoundedVec::try_from(b"123456789".to_vec()).expect("9-byte IPI")),
             featuring: BoundedVec::default(),
             work: WorkRef::Midds(0),
-            genres: BoundedVec::default(),
+            genre: None,
             sub_genre: None,
             record_year: None,
             version_type: None,
@@ -506,6 +510,33 @@ mod tests {
         let mut r = base();
         r.bpm = None;
         r.validate_format().expect("None bpm validates");
+    }
+
+    #[test]
+    fn genre_and_sub_genre_consistency() {
+        // genre absent + sub_genre absent → ok (the base case).
+        base().validate_format().expect("no genre, no sub-genre");
+
+        // genre present alone → ok.
+        let mut r = base();
+        r.genre = Some(Genre::Jazz);
+        r.validate_format().expect("primary genre alone validates");
+
+        // genre + sub_genre both present → ok.
+        let mut r = base();
+        r.genre = Some(Genre::Jazz);
+        r.sub_genre = Some(Genre::Blues);
+        r.validate_format().expect("genre + sub-genre validates");
+
+        // sub_genre without a primary genre → rejected.
+        let mut r = base();
+        r.genre = None;
+        r.sub_genre = Some(Genre::Blues);
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency),
+            "a lone sub-genre is rejected"
+        );
     }
 
     #[test]

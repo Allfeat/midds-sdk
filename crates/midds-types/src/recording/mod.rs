@@ -1,10 +1,10 @@
 pub mod v1;
 
 pub use v1::{
-    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, GENRES_MAX, Genre, Genres,
-    INSTRUMENTS_PER_PERFORMER_MAX, Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX,
-    Performer, PerformerInstruments, Performers, Place, Producers, ProductionPlaces, RecordingV1,
-    RecordingVersion, TITLE_ALIASES_MAX, TitleAliases,
+    CONTRIBUTORS_MAX, Contributors, FEATURING_MAX, Featuring, Genre, INSTRUMENTS_PER_PERFORMER_MAX,
+    Instrument, PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Performer, PerformerInstruments,
+    Performers, Place, Producers, ProductionPlaces, RecordingV1, RecordingVersion,
+    TITLE_ALIASES_MAX, TitleAliases,
 };
 
 use midds_traits::{Isrc, Midds, MiddsFormatError};
@@ -63,7 +63,7 @@ mod tests {
             artist: PartyId::Ipi(bv::<11>(b"123456789")),
             featuring: BoundedVec::default(),
             work: WorkRef::Iswc(bv::<11>(b"T1234567890")),
-            genres: BoundedVec::default(),
+            genre: None,
             sub_genre: None,
             record_year: Some(2024),
             version_type: Some(RecordingVersion::Original),
@@ -112,7 +112,7 @@ mod tests {
         v.artist = PartyId::Isni(bv::<16>(b"0000000121032683"));
         v.featuring = BoundedVec::try_from(vec![PartyId::Ipi(bv::<11>(b"00000000171"))]).unwrap();
         v.work = WorkRef::Midds(42);
-        v.genres = BoundedVec::try_from(vec![Genre::Pop, Genre::Electronic]).unwrap();
+        v.genre = Some(Genre::Pop);
         v.sub_genre = Some(Genre::Soul);
         v.version_type = Some(RecordingVersion::Clean);
         v.performers = BoundedVec::try_from(vec![Performer {
@@ -276,7 +276,7 @@ mod json_tests {
             artist: PartyId::Ipi(bv::<11>(b"123456789")),
             featuring: BoundedVec::default(),
             work: WorkRef::Iswc(bv::<11>(b"T1234567890")),
-            genres: BoundedVec::default(),
+            genre: None,
             sub_genre: None,
             record_year: Some(2024),
             version_type: Some(RecordingVersion::Original),
@@ -305,7 +305,7 @@ mod json_tests {
         assert_eq!(json["artist"]["Ipi"], "123456789");
         assert_eq!(json["featuring"], serde_json::json!([]));
         assert_eq!(json["work"]["Iswc"], "T1234567890");
-        assert_eq!(json["genres"], serde_json::json!([]));
+        assert!(json["genre"].is_null());
         assert!(json["sub_genre"].is_null());
         assert_eq!(json["record_year"], 2024);
         assert_eq!(json["version_type"], "Original");
@@ -335,7 +335,7 @@ mod json_tests {
         v.featuring =
             BoundedVec::try_from(vec![PartyId::Isni(bv::<16>(b"0000000121032683"))]).unwrap();
         v.work = WorkRef::Midds(42);
-        v.genres = BoundedVec::try_from(vec![Genre::HipHop, Genre::RnB]).unwrap();
+        v.genre = Some(Genre::HipHop);
         v.sub_genre = Some(Genre::Funk);
         v.version_type = Some(RecordingVersion::Clean);
         v.performers = BoundedVec::try_from(vec![Performer {
@@ -356,7 +356,7 @@ mod json_tests {
         assert_eq!(json["title_aliases"], serde_json::json!(["Alt", "Titre"]));
         assert_eq!(json["featuring"][0]["Isni"], "0000000121032683");
         assert_eq!(json["work"]["Midds"], 42);
-        assert_eq!(json["genres"], serde_json::json!(["HipHop", "RnB"]));
+        assert_eq!(json["genre"], "HipHop");
         assert_eq!(json["sub_genre"], "Funk");
         assert_eq!(json["version_type"], "Clean");
         assert_eq!(json["performers"][0]["id"]["Isni"], "0000000121032683");
@@ -376,7 +376,7 @@ mod json_tests {
     fn roundtrip_full() {
         let mut v = minimal_v1();
         v.work = WorkRef::Midds(99);
-        v.genres = BoundedVec::try_from(vec![Genre::Jazz]).unwrap();
+        v.genre = Some(Genre::Jazz);
         v.places = Some(ProductionPlaces {
             recording: Some(bv(b"Studio One")),
             mixing: Some(bv(b"Studio Two")),
@@ -400,7 +400,7 @@ mod json_tests {
             "artist":{"Ipi":"123456789"},
             "featuring":[],
             "work":{"Iswc":"T1234567890"},
-            "genres":[],
+            "genre":null,
             "sub_genre":null,
             "record_year":null,
             "version_type":null,
@@ -427,7 +427,7 @@ mod json_tests {
             "artist":{"Ipi":"123456789"},
             "featuring":[],
             "work":{"Iswc":"T1234567890"},
-            "genres":[],
+            "genre":null,
             "sub_genre":null,
             "record_year":null,
             "version_type":null,

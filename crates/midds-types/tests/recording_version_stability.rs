@@ -38,8 +38,8 @@ const FIXTURE_RELATIVE: &str = "tests/fixtures/recording_v1.scale";
 /// - The string-bearing `WorkRef::Iswc` variant.
 /// - `Some(...)` on every `Option` field except `bpm` (kept `None`) — covers
 ///   both presence and absence in the SCALE Option discriminator; `sub_genre`
-///   is `Some` alongside the `genres` list.
-/// - Non-empty `title_aliases`, `genres`, `featuring`, `producers`.
+///   is `Some` alongside a `Some` primary `genre`.
+/// - Non-empty `title_aliases`, `featuring`, `producers`.
 /// - `ProductionPlaces` with two of three places populated.
 /// - A non-empty offchain extension hash.
 fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
@@ -56,8 +56,7 @@ fn reference_v1() -> RecordingV1 {
         featuring: BoundedVec::try_from(vec![PartyId::Isni(bv(b"0000000121032683"))])
             .expect("featuring within bound"),
         work: WorkRef::Iswc(bv(b"T0345246802")),
-        genres: BoundedVec::try_from(vec![Genre::Rock, Genre::Experimental])
-            .expect("genres within bound"),
+        genre: Some(Genre::Rock),
         sub_genre: Some(Genre::Blues),
         record_year: Some(1972),
         version_type: Some(RecordingVersion::Live),

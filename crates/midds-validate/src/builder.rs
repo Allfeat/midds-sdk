@@ -556,7 +556,7 @@ mod tests {
 
 use midds_traits::Isni;
 use midds_types::{
-    CONTRIBUTORS_MAX, FEATURING_MAX, GENRES_MAX, Genre, INSTRUMENTS_PER_PERFORMER_MAX, Instrument,
+    CONTRIBUTORS_MAX, FEATURING_MAX, Genre, INSTRUMENTS_PER_PERFORMER_MAX, Instrument,
     PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Performer, PerformerId, PerformerInstruments,
     Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX,
 };
@@ -617,7 +617,7 @@ pub struct RecordingBuilder {
     artist: Option<PartyInput>,
     featuring_raw: Vec<PartyInput>,
     work: Option<WorkInput>,
-    genres: Vec<Genre>,
+    genre: Option<Genre>,
     sub_genre: Option<Genre>,
     record_year: Option<u16>,
     version_type: Option<RecordingVersion>,
@@ -687,9 +687,9 @@ impl RecordingBuilder {
         self
     }
 
-    /// Replace the genres list (typed enum — no parsing).
-    pub fn genres(mut self, genres: Vec<Genre>) -> Self {
-        self.genres = genres;
+    /// Set (or clear) the primary genre (typed enum — no parsing).
+    pub fn genre(mut self, genre: Option<Genre>) -> Self {
+        self.genre = genre;
         self
     }
 
@@ -906,18 +906,6 @@ impl RecordingBuilder {
         );
         let featuring =
             parse_party_list(&self.featuring_raw, "featuring", FEATURING_MAX, &mut errors);
-        let genres = if self.genres.len() > GENRES_MAX as usize {
-            errors.push(FieldError {
-                field: "genres",
-                message: format!(
-                    "{} genres provided, exceeds {GENRES_MAX} max",
-                    self.genres.len()
-                ),
-            });
-            None
-        } else {
-            BoundedVec::try_from(self.genres.clone()).ok()
-        };
         let places = self.build_places(&mut errors);
 
         let offchain_extension = match &self.offchain_extension_raw {
@@ -945,7 +933,7 @@ impl RecordingBuilder {
             artist: artist.expect("no errors → artist parsed"),
             featuring: featuring.expect("no errors → featuring parsed"),
             work: work.expect("no errors → work resolved"),
-            genres: genres.expect("no errors → genres bounded"),
+            genre: self.genre,
             sub_genre: self.sub_genre,
             record_year: self.record_year,
             version_type: self.version_type,
@@ -1204,7 +1192,7 @@ mod recording_tests {
             .add_title_alias(" Alt Title ")
             .artist_isni("0000 0001 2103 2683")
             .work_iswc("T-034.524.680-2")
-            .genres(vec![Genre::Pop, Genre::Jazz])
+            .genre(Some(Genre::Pop))
             .record_year(1999)
             .version_type(RecordingVersion::Live)
             .add_performer_ipi("I-123456789")
@@ -1326,11 +1314,13 @@ mod recording_tests {
             .add_featured_artist_ipi("00000000171")
             .add_performer_ipn("00012345678")
             .performer_instruments(vec![Instrument::ElectricGuitar, Instrument::LeadVocals])
+            .genre(Some(Genre::RnB))
             .sub_genre(Some(Genre::Soul))
             .build()
             .expect("builds");
         let Recording::V1(v) = &recording;
         assert_eq!(v.featuring.len(), 1);
+        assert_eq!(v.genre, Some(Genre::RnB));
         assert_eq!(v.sub_genre, Some(Genre::Soul));
         assert_eq!(v.performers.len(), 1);
         assert_eq!(v.performers[0].instruments.len(), 2);

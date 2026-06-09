@@ -12,13 +12,12 @@
 use crate as pallet_midds;
 use crate::mock::{test_helpers::*, *};
 use alloc::collections::BTreeMap;
-use frame_support::BoundedVec;
-use frame_support::assert_noop;
-use frame_support::traits::Get;
-use frame_support::traits::fungible::InspectHold;
+// `frame::testing_prelude` covers `BoundedVec`, `assert_noop`, `Get`,
+// `FixedU128`; `InspectHold` is a fungible trait imported from `frame::token`.
+use frame::testing_prelude::*;
+use frame::token::fungible::InspectHold;
 use midds_traits::{Midds as _, MiddsId};
 use proptest::prelude::*;
-use sp_runtime::FixedU128;
 
 extern crate alloc;
 

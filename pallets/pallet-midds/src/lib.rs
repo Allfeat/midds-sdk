@@ -15,7 +15,7 @@
 //!
 //! ## Module layout
 //!
-//! - `lib.rs` — `#[frame_support::pallet]` module: `Config`, storage, events,
+//! - `lib.rs` — `#[frame::pallet]` module: `Config`, storage, events,
 //!   errors, hooks, extrinsics. Each extrinsic delegates its body to a
 //!   helper in `impls.rs`.
 //! - `impls.rs` — bond accounting + lifecycle bodies + on-behalf signature
@@ -54,7 +54,8 @@ mod property_tests;
 #[cfg(test)]
 mod tests;
 
-use frame_support::traits::fungible::Inspect;
+use frame::deps::frame_system;
+use frame::token::fungible::Inspect;
 
 /// Balance type carried by the configured fungible currency.
 pub type BalanceOf<T, I = ()> =
@@ -68,7 +69,7 @@ pub type DepositOf<T, I = ()> = Deposit<
     <T as frame_system::Config>::Hash,
 >;
 
-#[frame_support::pallet]
+#[frame::pallet]
 pub mod pallet {
     use super::{BalanceOf, WeightInfo};
     use crate::multipliers::{DefaultSlowBuckets, DefaultUnitMultiplier, SLOW_WINDOW_DAYS};
@@ -77,21 +78,17 @@ pub mod pallet {
         UpdateOnBehalfPayload,
     };
     use alloc::vec::Vec;
-    use frame_support::{
-        BoundedVec,
-        pallet_prelude::*,
-        traits::{
-            EnsureOrigin,
-            fungible::{Mutate, MutateHold},
-        },
-    };
-    use frame_system::pallet_prelude::*;
+    // `frame::deps::frame_support` keeps the `#[frame_support::transactional]`
+    // call attributes and `frame_support::storage::with_storage_layer` resolving
+    // under the umbrella. `frame::prelude` covers `BoundedVec`, `EnsureOrigin`,
+    // the storage/`frame_system` pallet preludes, `FixedU128`, `IdentifyAccount`,
+    // `One`, `Saturating`, `Zero`, …
+    use frame::deps::frame_support;
+    use frame::prelude::*;
+    use frame::token::fungible::{Mutate, MutateHold};
+    use frame::traits::Verify;
     use midds_traits::{Midds, MiddsId};
     use parity_scale_codec::Encode;
-    use sp_runtime::{
-        FixedU128,
-        traits::{IdentifyAccount, One, Saturating, Verify, Zero},
-    };
 
     #[pallet::pallet]
     pub struct Pallet<T, I = ()>(_);

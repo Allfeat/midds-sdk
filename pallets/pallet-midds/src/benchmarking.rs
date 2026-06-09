@@ -20,14 +20,12 @@ use crate::types::{
 use parity_scale_codec::Encode as _;
 
 use alloc::vec;
-use frame_benchmarking::v2::*;
-use frame_support::{
-    BoundedVec,
-    traits::{Get, fungible::Mutate},
-};
-use frame_system::{RawOrigin, pallet_prelude::BlockNumberFor};
+// `frame::benchmarking::prelude` re-exports the v2 benchmarking macros, the
+// main `frame::prelude` (`BoundedVec`, `Get`, `BlockNumberFor`, `Bounded`, …)
+// and `RawOrigin`; only the fungible `Mutate` trait is imported separately.
+use frame::benchmarking::prelude::*;
+use frame::token::fungible::Mutate;
 use midds_traits::Midds as MiddsTrait;
-use sp_runtime::traits::Bounded;
 
 /// Per-instance hook supplying worst-case [`Config::Midds`] payloads and
 /// owner signatures used by the on-behalf benchmarks. Mirrors the pattern
@@ -221,9 +219,7 @@ mod benchmarks {
         // layers transfer their full hold to the Treasury. The stored payload
         // is the owner-extended one (`bench_instance(64)`).
         let _owner = setup_two_layer_record::<T, I>();
-        let payload_hash = <T::Hashing as sp_runtime::traits::Hash>::hash_of(
-            &T::BenchmarkHelper::bench_instance(64),
-        );
+        let payload_hash = <T::Hashing as Hash>::hash_of(&T::BenchmarkHelper::bench_instance(64));
 
         #[extrinsic_call]
         _(RawOrigin::Root, 0);

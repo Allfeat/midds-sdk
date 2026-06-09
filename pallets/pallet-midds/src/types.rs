@@ -1,7 +1,7 @@
 //! Shared types used by `pallet-midds`.
 
 use alloc::vec::Vec;
-use frame_support::pallet_prelude::*;
+use frame::prelude::*;
 use midds_traits::MiddsId;
 
 /// A single bond contribution attached to a stored MIDDS record.

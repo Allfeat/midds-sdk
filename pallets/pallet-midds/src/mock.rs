@@ -7,18 +7,16 @@
 //! `impl_benchmark_test_suite!`, which wires `Pallet::<Test>` (i.e. `I = ()`).
 
 use crate as pallet_midds;
-use frame_support::{
-    BoundedVec, derive_impl,
-    traits::{ConstU32, ConstU64},
-};
-use frame_system::EnsureRoot;
+// `frame::testing_prelude` brings `construct_runtime!`, `derive_impl`,
+// `ConstU32`/`ConstU64`, `EnsureRoot`, `BuildStorage`, `FixedU128`, `Get`,
+// `IdentifyAccount`, the mocking helpers, … `Lazy`/`Verify` (signature traits)
+// and `sp_io` (for `TestExternalities`) are reached separately.
+use frame::deps::sp_io;
+use frame::testing_prelude::*;
+use frame::traits::{Lazy, Verify};
 use midds_traits::MiddsFormatError;
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
-use sp_runtime::{
-    BuildStorage, FixedU128,
-    traits::{Get, IdentifyAccount, Verify},
-};
 
 pub type AccountId = u64;
 pub type Balance = u64;
@@ -43,7 +41,7 @@ pub struct TestSignature {
 
 impl Verify for TestSignature {
     type Signer = TestSigner;
-    fn verify<L: sp_runtime::traits::Lazy<[u8]>>(&self, mut msg: L, signer: &u64) -> bool {
+    fn verify<L: Lazy<[u8]>>(&self, mut msg: L, signer: &u64) -> bool {
         self.signer == *signer && self.payload == msg.get()
     }
 }
@@ -56,7 +54,7 @@ pub fn sign(signer: u64, payload: &impl Encode) -> TestSignature {
     }
 }
 
-frame_support::construct_runtime!(
+construct_runtime!(
     pub enum Test {
         System: frame_system,
         Balances: pallet_balances,
@@ -69,7 +67,7 @@ impl frame_system::Config for Test {
     type Block = Block;
     type AccountData = pallet_balances::AccountData<Balance>;
     type AccountId = AccountId;
-    type Lookup = sp_runtime::traits::IdentityLookup<AccountId>;
+    type Lookup = IdentityLookup<AccountId>;
 }
 
 #[derive_impl(pallet_balances::config_preludes::TestDefaultConfig)]
@@ -275,7 +273,7 @@ pub fn mock_midds(id: &[u8], payload_len: usize) -> MockMidds {
 #[cfg(test)]
 pub mod test_helpers {
     use super::*;
-    use frame_support::traits::fungible::{Inspect, InspectHold};
+    use frame::token::fungible::{Inspect, InspectHold};
     use parity_scale_codec::Encode;
 
     pub const ALICE: AccountId = 1;
@@ -306,8 +304,8 @@ pub mod test_helpers {
     pub fn free(account: AccountId) -> Balance {
         <Balances as Inspect<AccountId>>::reducible_balance(
             &account,
-            frame_support::traits::tokens::Preservation::Expendable,
-            frame_support::traits::tokens::Fortitude::Polite,
+            frame::token::Preservation::Expendable,
+            frame::token::Fortitude::Polite,
         )
     }
 
@@ -319,7 +317,7 @@ pub mod test_helpers {
     /// `Executive` flow. Useful in tests that need to observe finalization
     /// and multiplier rotation effects.
     pub fn advance_to_block(target: BlockNumber) {
-        use frame_support::traits::Hooks;
+        use frame::traits::Hooks;
         let mut now = System::block_number();
         while now < target {
             now += 1;

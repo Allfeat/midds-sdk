@@ -11,17 +11,15 @@
 
 use crate::{BalanceOf, DepositOf, pallet::*, types::*};
 use alloc::vec::Vec;
-use frame_support::{
-    pallet_prelude::*,
-    traits::{
-        fungible::MutateHold,
-        tokens::{Fortitude, Precision, Restriction},
-    },
-};
-use frame_system::pallet_prelude::BlockNumberFor;
+// `frame::prelude` brings the storage/`frame_system` pallet preludes plus
+// `BlockNumberFor`, `Hash`, `Saturating`, `Zero`; `Verify` and the fungible /
+// token traits are not in the prelude and are imported explicitly.
+use frame::prelude::*;
+use frame::token::fungible::MutateHold;
+use frame::token::tokens::{Fortitude, Precision, Restriction};
+use frame::traits::Verify;
 use midds_traits::{Midds, MiddsId};
 use parity_scale_codec::Encode;
-use sp_runtime::traits::{Hash, Saturating, Verify, Zero};
 
 impl<T: Config<I>, I: 'static> Pallet<T, I> {
     fn deposit_reason() -> T::RuntimeHoldReason {

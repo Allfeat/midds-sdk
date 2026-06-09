@@ -24,27 +24,28 @@
 
 use std::{fmt::Write as _, fs, path::PathBuf, time::Instant};
 
-use frame_support::{
-    derive_impl,
-    traits::{ConstU32, ConstU64, fungible::InspectHold},
-};
-use frame_system::EnsureRoot;
+// This integration test builds its own mock runtime, so it goes through the
+// same `polkadot-sdk-frame` umbrella seams as the in-crate mock/tests:
+// `frame::testing_prelude` for `construct_runtime!`/`derive_impl`/`ConstU*`/
+// `EnsureRoot`/`BuildStorage`/`FixedU128`/`Get`/`IdentifyAccount`, `frame::deps`
+// for `sp_io`, and `frame::traits` / `frame::token` for the signature and
+// fungible traits. `frame` is a normal dependency of the pallet, which Cargo
+// makes available to its integration-test targets.
+use frame::deps::sp_io::{self, hashing::blake2_256};
+use frame::testing_prelude::*;
+use frame::token::fungible::InspectHold;
+use frame::traits::{Lazy, Verify};
 use midds_fixtures::{gen_n, identifiers::iswc_for_index, pathological::max_size_musical_work};
 use midds_types::MusicalWork;
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode};
 use scale_info::TypeInfo;
-use sp_io::hashing::blake2_256;
-use sp_runtime::{
-    BuildStorage, FixedU128,
-    traits::{Get, IdentifyAccount, Verify},
-};
 
 type AccountId = u64;
 type Balance = u128;
 type BlockNumber = u64;
 type Block = frame_system::mocking::MockBlock<Test>;
 
-frame_support::construct_runtime!(
+construct_runtime!(
     pub enum Test {
         System: frame_system,
         Balances: pallet_balances,
@@ -57,7 +58,7 @@ impl frame_system::Config for Test {
     type Block = Block;
     type AccountData = pallet_balances::AccountData<Balance>;
     type AccountId = AccountId;
-    type Lookup = sp_runtime::traits::IdentityLookup<AccountId>;
+    type Lookup = IdentityLookup<AccountId>;
 }
 
 #[derive_impl(pallet_balances::config_preludes::TestDefaultConfig)]
@@ -142,7 +143,7 @@ pub struct StubSignature;
 
 impl Verify for StubSignature {
     type Signer = StubSigner;
-    fn verify<L: sp_runtime::traits::Lazy<[u8]>>(&self, _msg: L, _signer: &u64) -> bool {
+    fn verify<L: Lazy<[u8]>>(&self, _msg: L, _signer: &u64) -> bool {
         false
     }
 }
@@ -423,7 +424,7 @@ fn mass_injection_max_size() {
 /// the projected storage hash diverges from the unit-multiplier corpus.
 #[test]
 fn mass_injection_10k_with_multipliers() {
-    use frame_support::traits::fungible::InspectHold;
+    use frame::token::fungible::InspectHold;
 
     let items = gen_n(0x004D_414B_4544_4D55, 10_000);
     let depositors: Vec<AccountId> = (1..=10).collect();

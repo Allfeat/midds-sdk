@@ -40,12 +40,19 @@ midds-fixtures = { path = "crates/midds-fixtures", version = "0.2.0", default-fe
 pallet-midds = { path = "pallets/pallet-midds", version = "0.2.0", default-features = false }
 
 # Polkadot SDK (no_std-capable) — aligned with stable2503
+#
+# `pallet-midds` consumes FRAME through the `polkadot-sdk-frame` umbrella crate
+# (imported as `frame`): a single versioned dependency that re-exports
+# `frame-support`, `frame-system`, `frame-benchmarking` and the `sp-*`
+# primitives behind its preludes (`frame::prelude`, `frame::testing_prelude`,
+# `frame::benchmarking::prelude`, …) and `frame::deps`. `polkadot-sdk-frame
+# 0.15.0` pins the exact stable2503 versions used elsewhere here (frame-support
+# 46, frame-system 46, sp-io 45, sp-core 40).
+frame = { package = "polkadot-sdk-frame", version = "0.15.0", default-features = false }
+# Individual primitives kept for the other workspace crates (runtime-api, RPC,
+# fixtures) that pull them directly rather than through the umbrella.
 frame-support = { version = "46.0.0", default-features = false }
-frame-system = { version = "46.0.0", default-features = false }
-frame-benchmarking = { version = "46.0.0", default-features = false }
 sp-api = { version = "41.0.0", default-features = false }
-sp-core = { version = "40.0.0", default-features = false }
-sp-io = { version = "45.0.0", default-features = false }
 sp-runtime = { version = "46.0.0", default-features = false }
 sp-blockchain = { version = "44.0.0", default-features = false }
 

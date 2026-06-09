@@ -12,13 +12,13 @@ use crate::types::{
     DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, RemoveOnBehalfPayload,
     UpdateOnBehalfPayload,
 };
-use frame_support::{BoundedVec, assert_noop, assert_ok, traits::Get};
+// `frame::testing_prelude` provides `BoundedVec`, `assert_ok`/`assert_noop`,
+// `Get`, `FixedU128`, `One`, `Saturating`, …; `frame::deps` exposes the crates
+// still referenced by fully-qualified path in the assertions below.
+use frame::deps::{frame_support, sp_core, sp_runtime};
+use frame::testing_prelude::*;
 use midds_traits::Midds as _;
 use parity_scale_codec::Encode;
-use sp_runtime::{
-    FixedU128,
-    traits::{One, Saturating},
-};
 
 type Instance = ();
 

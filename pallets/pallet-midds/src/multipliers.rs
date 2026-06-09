@@ -7,11 +7,9 @@
 
 use crate::{BalanceOf, pallet::*};
 use alloc::vec;
-use frame_support::{BoundedVec, pallet_prelude::*};
-use sp_runtime::{
-    FixedPointNumber, FixedU128,
-    traits::{One, Saturating},
-};
+// `frame::prelude` covers `BoundedVec`, the storage pallet prelude, and the
+// arithmetic traits/types (`FixedPointNumber`, `FixedU128`, `One`, `Saturating`).
+use frame::prelude::*;
 
 /// Number of daily buckets composing the slow rolling window. The window is
 /// **7 days exactly** by spec — change this and the `M_slow` semantics change.

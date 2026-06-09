@@ -9,13 +9,16 @@ homepage.workspace = true
 description = "Generic multi-instance FRAME pallet managing the lifecycle of MIDDS records."
 
 [dependencies]
-frame-benchmarking = { workspace = true, optional = true }
-frame-support = { workspace = true }
-frame-system = { workspace = true }
+# FRAME via the umbrella crate: `frame::prelude` / `frame::testing_prelude` /
+# `frame::benchmarking::prelude` / `frame::deps` replace the individual
+# frame-support / frame-system / frame-benchmarking / sp-runtime dependencies.
+frame = { workspace = true }
 midds-traits = { workspace = true }
+# `parity-scale-codec` and `scale-info` stay direct: the `#[derive(Encode,
+# Decode, TypeInfo, …)]` macros resolve their crate by name, and the code uses
+# explicit `parity_scale_codec::` paths (e.g. `DecodeWithMemTracking`).
 parity-scale-codec = { workspace = true }
 scale-info = { workspace = true }
-sp-runtime = { workspace = true }
 
 [dev-dependencies]
 midds-fixtures = { workspace = true, features = ["proptest", "corpus"] }
@@ -23,29 +26,24 @@ midds-types = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
 proptest = { workspace = true }
 serde_json = { workspace = true }
-sp-core = { workspace = true, features = ["std"] }
-sp-io = { workspace = true, features = ["std"] }
+# `sp-core` / `sp-io` are reached through `frame::deps` in the mock and tests.
 
 [features]
 default = ["std"]
 std = [
-    "frame-benchmarking?/std",
-    "frame-support/std",
-    "frame-system/std",
+    "frame/std",
+    # `frame`'s `std` compiles its `runtime` module (executive + runtime APIs),
+    # whose api re-exports only link under the `runtime` feature — required by
+    # `frame::testing_prelude`, which the mock and tests pull in.
+    "frame/runtime",
     "midds-traits/std",
     "parity-scale-codec/std",
     "scale-info/std",
-    "sp-runtime/std",
 ]
 runtime-benchmarks = [
-    "frame-benchmarking/runtime-benchmarks",
-    "frame-support/runtime-benchmarks",
-    "frame-system/runtime-benchmarks",
+    "frame/runtime-benchmarks",
     "pallet-balances/runtime-benchmarks",
-    "sp-runtime/runtime-benchmarks",
 ]
 try-runtime = [
-    "frame-support/try-runtime",
-    "frame-system/try-runtime",
-    "sp-runtime/try-runtime",
+    "frame/try-runtime",
 ]

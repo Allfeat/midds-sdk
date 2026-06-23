@@ -168,9 +168,8 @@ fn arb_featuring() -> impl Strategy<Value = Featuring> {
 
 fn arb_tracks() -> impl Strategy<Value = Tracks> {
     proptest::collection::vec(arb_recording_ref(), 1..=(TRACKS_MAX as usize)).prop_map(|v| {
-        // Dedup recordings, then number the survivors 1..=N — a contiguous
-        // sequence is trivially "unique & >= 1", the rule stabilised in
-        // `docs/validation.md` §6.
+        // Dedup recordings, then number the survivors 1..=N — the strict
+        // contiguous 1-based sequence required by `docs/validation.md` §6.
         let mut unique: Vec<RecordingRef> = Vec::with_capacity(v.len());
         for r in v {
             if !unique.contains(&r) {
@@ -446,14 +445,15 @@ pub fn arb_release_invalid() -> impl Strategy<Value = (Release, MiddsFormatError
                 MiddsFormatError::CrossFieldInconsistency
             }
             7 => {
-                // Same number on two distinct recordings → number-uniqueness.
+                // Non-contiguous numbering (gap: 1 then 3, no track 2) on two
+                // distinct recordings → CrossFieldInconsistency.
                 v1.tracks = BoundedVec::try_from(vec![
                     Track {
-                        number: 7,
+                        number: 1,
                         recording: RecordingRef::Midds(1),
                     },
                     Track {
-                        number: 7,
+                        number: 3,
                         recording: RecordingRef::Midds(2),
                     },
                 ])

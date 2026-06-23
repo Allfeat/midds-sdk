@@ -460,8 +460,9 @@ pub fn invalid_release_zero_track_number() -> (Release, MiddsFormatError) {
     (Release::V1(v1), MiddsFormatError::OutOfBounds)
 }
 
-/// `Release` reusing the same track number on two distinct recordings.
-/// Triggers `CrossFieldInconsistency` (track numbers must be unique).
+/// `Release` reusing the same track number on two distinct recordings (1, 1),
+/// breaking the strict contiguous `1..=N` numbering. Triggers
+/// `CrossFieldInconsistency`.
 pub fn invalid_release_duplicate_track_number() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.tracks = BoundedVec::try_from(vec![
@@ -471,6 +472,25 @@ pub fn invalid_release_duplicate_track_number() -> (Release, MiddsFormatError) {
         },
         Track {
             number: 1,
+            recording: RecordingRef::Midds(1),
+        },
+    ])
+    .expect("two tracks");
+    (Release::V1(v1), MiddsFormatError::CrossFieldInconsistency)
+}
+
+/// `Release` whose track numbers skip a value (1 then 3, no track 2), breaking
+/// the strict contiguous `1..=N` numbering even though each number is positive
+/// and unique. Triggers `CrossFieldInconsistency`.
+pub fn invalid_release_noncontiguous_track_numbers() -> (Release, MiddsFormatError) {
+    let Release::V1(mut v1) = min_size_release();
+    v1.tracks = BoundedVec::try_from(vec![
+        Track {
+            number: 1,
+            recording: RecordingRef::Midds(0),
+        },
+        Track {
+            number: 3,
             recording: RecordingRef::Midds(1),
         },
     ])
@@ -600,6 +620,7 @@ mod tests {
             invalid_release_bad_date,
             invalid_release_zero_track_number,
             invalid_release_duplicate_track_number,
+            invalid_release_noncontiguous_track_numbers,
         ] {
             let (release, expected) = ctor();
             let err = release.validate_format().expect_err("payload must fail");

@@ -51,17 +51,20 @@ pub type CoverContributors = BoundedVec<CoverContributorName, ConstU32<COVER_CON
 /// recording it references.
 ///
 /// `number` is the human-facing 1-based track number (not the vector index).
-/// It must be `>= 1` and unique across the tracklist; gaps are allowed (a
-/// release may legitimately skip a number). The recording is referenced
-/// on-chain (MIDDS id) or externally (ISRC) via [`RecordingRef`] and must also
-/// be unique across the tracklist. Both invariants are enforced by
-/// [`ReleaseV1::validate_format`].
+/// Across the whole tracklist the numbers must form a **contiguous 1-based
+/// sequence** — sorted, they are exactly `1, 2, …, N` for an `N`-track release:
+/// they start at 1, increment by 1 and leave no gaps (which also makes them
+/// unique and `>= 1`). The recording is referenced on-chain (MIDDS id) or
+/// externally (ISRC) via [`RecordingRef`] and must be unique across the
+/// tracklist (no recording — hence no ISRC — listed twice). Both invariants
+/// are enforced by [`ReleaseV1::validate_format`].
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Track {
-    /// 1-based track number; `>= 1` and unique within the tracklist.
+    /// 1-based track number; the numbers across a tracklist must run
+    /// `1, 2, …, N` (contiguous, starting at 1).
     pub number: u16,
     /// The recording this track points to.
     pub recording: RecordingRef,
@@ -320,20 +323,27 @@ impl ReleaseV1 {
         if self.tracks.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }
-        // Per-track format (number `>= 1`, recording-ref structure) plus two
-        // tracklist-wide uniqueness invariants: no `RecordingRef` and no track
-        // `number` may appear twice (gaps between numbers are allowed). Both
-        // use a `BTreeSet` (O(n log n) over the ≤ TRACKS_MAX = 256 entries)
-        // instead of an O(n²) pairwise scan, so the worst-case cost of this
-        // on-chain check stays bounded.
+        // Per-track format (number `>= 1`, recording-ref structure) plus the
+        // tracklist-wide recording-uniqueness invariant: no `RecordingRef` —
+        // hence no ISRC — may appear twice. The `BTreeSet` keeps this O(n log n)
+        // over the ≤ TRACKS_MAX = 256 entries rather than an O(n²) pairwise scan.
         let mut seen_recordings = alloc::collections::BTreeSet::new();
-        let mut seen_numbers = alloc::collections::BTreeSet::new();
         for t in &self.tracks {
             t.validate_format()?;
             if !seen_recordings.insert(&t.recording) {
                 return Err(MiddsFormatError::CrossFieldInconsistency);
             }
-            if !seen_numbers.insert(t.number) {
+        }
+        // Track numbers must form a strict 1-based contiguous sequence: sorted,
+        // they are exactly `1, 2, …, N` (N = tracklist length). This single
+        // check subsumes positivity, uniqueness, the start at 1 and the step of
+        // 1. Numbering is validated as a *set* — the stored vector order is
+        // free — so an explicitly numbered tracklist supplied out of order
+        // still validates as long as its numbers cover `1..=N`.
+        let mut numbers: alloc::vec::Vec<u16> = self.tracks.iter().map(|t| t.number).collect();
+        numbers.sort_unstable();
+        for (i, &number) in numbers.iter().enumerate() {
+            if number as usize != i + 1 {
                 return Err(MiddsFormatError::CrossFieldInconsistency);
             }
         }
@@ -358,9 +368,11 @@ impl ReleaseV1 {
 
 #[cfg(test)]
 mod tests {
-    //! Boundary tests for the tracklist-uniqueness rule stabilised per
-    //! `docs/validation.md` §6/§8. Identifier-structure and empty-mandatory
-    //! paths are covered by `midds-fixtures` (`pathological`, proptest).
+    //! Boundary tests for the tracklist invariants stabilised per
+    //! `docs/validation.md` §6/§8: recording-reference uniqueness and the
+    //! strict contiguous 1-based numbering (`1, 2, …, N`). Identifier-structure
+    //! and empty-mandatory paths are covered by `midds-fixtures`
+    //! (`pathological`, proptest).
     use super::*;
 
     /// Minimal payload that passes `validate_format` — each test mutates
@@ -417,9 +429,26 @@ mod tests {
     }
 
     #[test]
-    fn gapped_track_numbers_validate() {
-        // "Unique & >= 1": gaps between numbers are allowed, only positivity
-        // and uniqueness are enforced.
+    fn out_of_order_but_contiguous_numbers_validate() {
+        // Numbering is validated as a set: the stored vector need not be in
+        // number order, only the numbers must cover 1..=N. Here recordings are
+        // listed with their numbers descending (3, 2, 1) — still a valid
+        // tracklist because the set is {1, 2, 3}.
+        let mut r = base();
+        r.tracks = BoundedVec::try_from(vec![
+            track(3, isrc(b"USRC17607839")),
+            track(2, RecordingRef::Midds(2)),
+            track(1, RecordingRef::Midds(1)),
+        ])
+        .expect("3 tracks");
+        r.validate_format()
+            .expect("out-of-order but contiguous numbering validates");
+    }
+
+    #[test]
+    fn gapped_track_numbers_rejected() {
+        // Strict 1..=N: a gap (no track 2/3/4) breaks contiguity even though
+        // every number is positive and unique.
         let mut r = base();
         r.tracks = BoundedVec::try_from(vec![
             track(1, RecordingRef::Midds(1)),
@@ -427,7 +456,23 @@ mod tests {
             track(42, isrc(b"USRC17607839")),
         ])
         .expect("3 tracks");
-        r.validate_format().expect("gapped numbering validates");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency),
+        );
+    }
+
+    #[test]
+    fn numbering_not_starting_at_one_rejected() {
+        // A single track numbered 2 has no gap internally but does not start at
+        // 1, so the 1..=N sequence is incomplete.
+        let mut r = base();
+        r.tracks =
+            BoundedVec::try_from(vec![track(2, RecordingRef::Midds(1))]).expect("1 track");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::CrossFieldInconsistency),
+        );
     }
 
     #[test]

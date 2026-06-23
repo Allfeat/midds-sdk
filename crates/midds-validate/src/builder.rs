@@ -1475,11 +1475,11 @@ impl ReleaseBuilder {
     }
 
     /// Append a track referenced by its on-chain MIDDS id with an explicit
-    /// 1-based track number, carried verbatim to the on-chain [`Track`]. Gaps
-    /// are allowed (e.g. `1` then `3`), but every number must be `>= 1` and
-    /// unique across the tracklist — both invariants are enforced by
-    /// `validate_format`, not at build time (mixing auto- and
-    /// explicitly-numbered tracks can collide and is rejected there).
+    /// 1-based track number, carried verbatim to the on-chain [`Track`]. The
+    /// numbers across the tracklist must form a contiguous `1..=N` set (start
+    /// at 1, no gaps) — enforced by `validate_format`, not at build time, so a
+    /// gap (e.g. `1` then `3`) or a collision (e.g. mixing auto- and
+    /// explicitly-numbered tracks) builds but is rejected there.
     pub fn add_numbered_track_midds(mut self, number: u16, id: u64) -> Self {
         self.tracks.push(TrackInput::Midds {
             number: Some(number),
@@ -1753,9 +1753,10 @@ impl ReleaseBuilder {
                 ),
             };
             if let Some(recording) = recording {
-                // Explicit number when supplied, else 1-based by emit order.
-                // The on-chain validator then enforces positivity and the
-                // number / recording uniqueness invariants.
+                // Explicit number when supplied, else 1-based by emit order
+                // (the trivially contiguous default). The on-chain validator
+                // then enforces the contiguous 1..=N numbering and recording
+                // uniqueness.
                 tracks.push(Track {
                     number: number.unwrap_or((tracks.len() + 1) as u16),
                     recording,
@@ -1912,8 +1913,39 @@ mod release_tests {
     }
 
     #[test]
-    fn explicit_track_numbers_thread_through_and_allow_gaps() {
+    fn explicit_track_numbers_thread_through() {
         use midds_traits::Midds as _;
+        // Explicit numbers reach the on-chain Track verbatim and need not be in
+        // vector order: the first listed recording is track 2, the second is
+        // track 1. The set {1, 2} is contiguous, so it validates.
+        let release = ReleaseBuilder::new()
+            .upc("036000291452")
+            .title("Out Of Order")
+            .artist_ipi("123456789")
+            .add_numbered_track_midds(2, 10)
+            .add_numbered_track_isrc(1, "US-RC1-72-00312")
+            .status(ReleaseStatus::Official)
+            .release_date(2024, 1, 1)
+            .country(Country::Us)
+            .distributor_name("D")
+            .release_type(ReleaseType::Album)
+            .format(ReleaseFormat::Cd)
+            .packaging(ReleasePackaging::None)
+            .build()
+            .expect("builds");
+        release
+            .validate_format()
+            .expect("out-of-order but contiguous explicit numbering validates");
+        let Release::V1(v) = release;
+        assert_eq!(v.tracks[0].number, 2);
+        assert_eq!(v.tracks[1].number, 1);
+    }
+
+    #[test]
+    fn gapped_explicit_numbering_is_caught_by_validation() {
+        use midds_traits::Midds as _;
+        // Number invariants are deferred to `validate_format`: a gap (1 then 3,
+        // no track 2) builds but is rejected on-chain.
         let release = ReleaseBuilder::new()
             .upc("036000291452")
             .title("Gapped")
@@ -1928,15 +1960,11 @@ mod release_tests {
             .format(ReleaseFormat::Cd)
             .packaging(ReleasePackaging::None)
             .build()
-            .expect("builds");
-        release
-            .validate_format()
-            .expect("gapped explicit numbering validates");
-        let Release::V1(v) = release;
-        // User-entered numbers reach the on-chain Track verbatim — including
-        // the gap (no track 2).
-        assert_eq!(v.tracks[0].number, 1);
-        assert_eq!(v.tracks[1].number, 3);
+            .expect("builds despite the gap");
+        assert!(
+            release.validate_format().is_err(),
+            "non-contiguous (gapped) track numbering must be rejected on-chain"
+        );
     }
 
     #[test]

@@ -39,7 +39,8 @@
 5. **Errors without `String`.** Diagnostics via `MiddsFormatError`
    (`InvalidIdentifierStructure`, `InvalidCharset`, `OutOfBounds`,
    `EmptyMandatoryField`, `CrossFieldInconsistency` — used for `Release`
-   tracklist uniqueness — plus the reserved `DateInconsistency`). **No new
+   tracklist integrity (recording uniqueness + contiguous numbering) — plus
+   the reserved `DateInconsistency`). **No new
    variant** is introduced (adding a variant is a SCALE *breaking* change):
    any numeric-bound or minimum-cardinality violation reuses `OutOfBounds`
    ("length below the minimum or above the maximum").
@@ -198,7 +199,7 @@ Closed enums:
 | `title_aliases` | `BoundedVec<Title, 8>` (`TITLE_ALIASES_MAX = 8`) | no | ≤ 8 × 256 | each alias non-empty | = |
 | `artist` | `PartyId` | yes | — | id structure | = |
 | `featuring` | `BoundedVec<PartyId, 16>` (`FEATURING_MAX = 16`) | no | ≤ 16 | each id: structure (featured artists = same `PartyId` as the main artist, like `Recording.featuring`) | **N** |
-| `tracks` | `BoundedVec<Track, 256>` (`TRACKS_MAX = 256`) | yes | ≤ 256 | **non-empty (≥ 1)**; each `Track`: see below; **`RecordingRef` uniqueness** AND **`number` uniqueness** (`CrossFieldInconsistency`) | **N** |
+| `tracks` | `BoundedVec<Track, 256>` (`TRACKS_MAX = 256`) | yes | ≤ 256 | **non-empty (≥ 1)**; each `Track`: see below; **`RecordingRef` uniqueness** AND **strict contiguous 1-based `number`s** (`1, 2, …, N`) (`CrossFieldInconsistency`) | **N** |
 | `producers` | `BoundedVec<Producer, 16>` (`PRODUCERS_MAX = 16`) | no | ≤ 16 | see below | |
 | `status` | `ReleaseStatus` | yes | — | membership | S |
 | `release_date` | `ReleaseDate` | yes | — | `month 1..=12`, `day 1..=31`; **`year` unconstrained** (cf. §7) | = |
@@ -214,13 +215,17 @@ Closed enums:
 > in V1 — decision kept).
 
 **`Track`**: `{ number: u16, recording: RecordingRef }`. `number` is the
-1-based track number (≠ the vector index): **`>= 1`** (`OutOfBounds` if 0)
-and **unique** within the tracklist (`CrossFieldInconsistency` on a
-duplicate). **Gaps are allowed** — the sequence need not be contiguous: an
-"unique & ≥ 1" rule, not a strict "1..=N" one (cf. §7). `recording`:
-`RecordingRef` structure (if `Isrc` ⇒ ISRC structure) and **unique** within
-the tracklist. Both uniqueness checks (ref + number) use a `BTreeSet`,
-O(n log n) over the ≤ 256 entries.
+1-based track number (≠ the vector index). Across the tracklist the numbers
+must form a **strict contiguous 1-based sequence**: sorted, they are exactly
+`1, 2, …, N` for an `N`-track release (`CrossFieldInconsistency` otherwise).
+That single rule subsumes positivity (a `number` of 0 is rejected per-track
+first, as `OutOfBounds`), uniqueness, the start at 1 and the step of 1 —
+**gaps are rejected** (cf. §7). Numbering is checked as a *set*, so the stored
+vector order is free: an out-of-order but complete `1..=N` numbering still
+validates. `recording`: `RecordingRef` structure (if `Isrc` ⇒ ISRC structure)
+and **unique** within the tracklist (no recording — hence no ISRC — listed
+twice). The recording-uniqueness check uses a `BTreeSet` and the numbering
+check a single sort, both O(n log n) over the ≤ 256 entries.
 
 **`Producer`**: `{ isni: Isni, catalog_number: MiddsString<32> }`
 (`CATALOG_NUMBER_MAX_LEN = 32`). `isni`: ISNI structure; `catalog_number`:
@@ -314,15 +319,22 @@ Explicit, frozen decisions, not to be "fixed" without a version bump:
     `BoundedVec<PartyId, 16>` (`FEATURING_MAX = 16`), same identities (IPI /
     ISNI / both) as the main artist. The tracklist moves from a raw
     `RecordingRef` to `Track { number: u16, recording: RecordingRef }`: each
-    track carries a **mandatory** number, **`>= 1`** and **unique** within
-    the list. Frozen V1 choice: "**unique & ≥ 1**" semantics (positivity +
-    no duplicates), **not** a strict "1..=N" — **gaps are tolerated** (a
-    release may skip a number, or carry per-disc numbering in a box set,
-    without global contiguity being imposed). `RecordingRef` uniqueness
-    (already in V1) is kept and coexists with `number` uniqueness. Builder
-    operator decision (`midds-validate`, `midds-fixtures`): 1-based numbering
-    in input order; the interactive CLI offers this default while letting the
-    operator override it.
+    track carries a **mandatory** number. Frozen V1 choice: the numbers must
+    form a **strict contiguous 1-based sequence** — sorted, exactly
+    `1, 2, …, N` for an `N`-track release (they start at 1, increment by 1 and
+    leave no gaps; positivity and uniqueness both fall out of that). An earlier
+    V1 draft tolerated gaps ("unique & ≥ 1", no contiguity imposed); this
+    stabilization **tightened** it to `1..=N`, because V1 `Release` models a
+    single flat tracklist (no disc / medium concept) for which a complete,
+    gapless global numbering is the only meaningful one. Numbering is validated
+    as a *set*: the stored vector order is unconstrained (an explicitly
+    numbered tracklist supplied out of input order still validates as long as
+    its numbers cover `1..=N`), which keeps explicit track numbers meaningful.
+    `RecordingRef` uniqueness (already in V1) is kept and coexists with the
+    numbering rule. Builder operator decision (`midds-validate`,
+    `midds-fixtures`): 1-based numbering in input order (the trivially
+    contiguous default); the interactive CLI offers this default while letting
+    the operator set numbers explicitly.
 
 ---
 
@@ -331,12 +343,13 @@ Explicit, frozen decisions, not to be "fixed" without a version bump:
 | Layer | Role |
 |---|---|
 | Type (`BoundedVec` / `MiddsString` / enum) | Max lengths, max cardinalities, enum membership — **impossible to violate** by construction/decoding. |
-| `Midds::validate_format` (on-chain, blocking) | Identifier structure, non-emptiness of mandatory fields, **numeric bounds (`creation_year`, `record_year`, `bpm`, `number_of_voices`, `Track.number ≥ 1`)**, **minimum cardinality (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, **uniqueness + non-self-reference of `Medley`/`Mashup`/`Adaptation`/`Rearrangement` refs and of `samples`** + **uniqueness of a `Release`'s `Track`s (`RecordingRef` and `number`)**, `release_date` month/day. Format only, never checksums. |
+| `Midds::validate_format` (on-chain, blocking) | Identifier structure, non-emptiness of mandatory fields, **numeric bounds (`creation_year`, `record_year`, `bpm`, `number_of_voices`, `Track.number ≥ 1`)**, **minimum cardinality (`Medley/Mashup ≥ 2`, `tracks ≥ 1`, `creators ≥ 1`)**, **uniqueness + non-self-reference of `Medley`/`Mashup`/`Adaptation`/`Rearrangement` refs and of `samples`** + a `Release`'s `Track`s: **`RecordingRef` uniqueness and strict contiguous 1-based `number`s (`1, 2, …, N`)**, `release_date` month/day. Format only, never checksums. |
 | `midds-validate` (std, warning-only, never on-chain) | Tolerant parsing, checksum verification (warnings), non-blocking conventions (`instrumental⇒language`, strict calendar checking, business `duration` cap). |
 
 Cross-field invariants **enforced** on-chain (`CrossFieldInconsistency`):
-`Release` tracklist uniqueness (no `RecordingRef` **nor** `Track` `number`
-duplicated — `number` must additionally be `>= 1`); a `MusicalWork`
+`Release` tracklist integrity (no `RecordingRef` duplicated, and the `Track`
+`number`s forming a strict contiguous `1..=N` sequence — a `number` of 0 is a
+per-track `OutOfBounds` caught first); a `MusicalWork`
 `Medley` / `Mashup` / `Adaptation` / `Rearrangement` source refs distinct and
 different from the work's own `iswc`; a `MusicalWork`'s `samples` distinct
 (no duplicate `WorkRef`) and, for the ISWC variant, different from the work's

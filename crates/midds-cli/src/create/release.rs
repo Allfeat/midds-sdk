@@ -150,7 +150,8 @@ fn build_featuring() -> Result<Featuring> {
 
 fn build_tracks() -> Result<Tracks> {
     ui::info(
-        "a release needs at least one track; track numbers and recordings must each be unique",
+        "a release needs at least one track; track numbers must run 1..N \
+         (start at 1, no gaps) and every recording must be unique",
     );
     let tracks =
         prompts::collect_bounded("track", 1, TRACKS_MAX as usize, |idx| -> Result<Track> {

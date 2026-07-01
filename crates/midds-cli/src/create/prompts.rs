@@ -79,10 +79,26 @@ pub fn identifier<T>(
     parse: impl Fn(&str) -> Result<T, String> + Clone + 'static,
     example: &str,
 ) -> Result<T> {
+    identifier_capped(label, parse, example, usize::MAX)
+}
+
+/// Like [`identifier`] but rejects raw input longer than `max_chars` before the
+/// parser runs. For fixed-width identifiers (e.g. ISRC = 12) so an over-long
+/// paste is refused up front with a clear message rather than slipping through
+/// the tolerant parser (which strips separators) or being silently truncated.
+pub fn identifier_capped<T>(
+    label: &str,
+    parse: impl Fn(&str) -> Result<T, String> + Clone + 'static,
+    example: &str,
+    max_chars: usize,
+) -> Result<T> {
     let parse_for_validate = parse.clone();
     let raw = Input::<String>::with_theme(&ui::theme())
         .with_prompt(format!("{label} (e.g. {example})"))
         .validate_with(move |s: &String| -> Result<(), String> {
+            if s.trim().chars().count() > max_chars {
+                return Err(format!("at most {max_chars} characters"));
+            }
             parse_for_validate(s.as_str()).map(|_| ())
         })
         .interact_text()
@@ -135,8 +151,32 @@ where
 }
 
 /// A `u64` on-chain MIDDS id (`WorkRef::Midds` / `RecordingRef::Midds`).
+///
+/// The raw input is capped at 12 digits: MIDDS ids are allocated sequentially
+/// and stay far below that for the foreseeable future, and the cap keeps a long
+/// paste from overflowing `u64` — which would otherwise surface as dialoguer's
+/// raw "number too large to fit in target type" instead of a clear rule.
 pub fn midds_id(label: &str) -> Result<u64> {
-    number::<u64>(label, None)
+    let raw = Input::<String>::with_theme(&ui::theme())
+        .with_prompt(label)
+        .validate_with(|s: &String| -> Result<(), String> {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Err("required — enter a MIDDS id".into());
+            }
+            if !trimmed.bytes().all(|b| b.is_ascii_digit()) {
+                return Err("digits only".into());
+            }
+            if trimmed.len() > 12 {
+                return Err("at most 12 digits".into());
+            }
+            Ok(())
+        })
+        .interact_text()
+        .with_context(|| format!("read `{label}`"))?;
+    raw.trim()
+        .parse::<u64>()
+        .map_err(|e| anyhow::anyhow!("`{label}`: {e}"))
 }
 
 /// Optional ranged number: a `set this?` gate, then [`int_in_range`].

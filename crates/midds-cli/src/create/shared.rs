@@ -52,12 +52,12 @@ pub fn parse_ipn_msg(s: &str) -> Result<Ipn, String> {
         .map_err(|_| "IPN must be 1–8 digits (auto-padded with leading zeros to 8)".into())
 }
 
-/// Human-readable rule shown when [`parse_isrc`] rejects a typed ISRC.
+/// Human-readable rule shown when [`parse_isrc`] rejects a typed ISRC. Kept
+/// identical across the standalone `Recording.isrc` field and the tracklist
+/// `RecordingRef::Isrc` prompt so a malformed ISRC reads the same everywhere.
 pub fn parse_isrc_msg(s: &str) -> Result<Isrc, String> {
     parse_isrc(s).map_err(|_| {
-        "ISRC must be 12 chars: 2 alpha country + 3 alphanumeric registrant + 2-digit year + \
-         5 digits (dashes accepted)"
-            .into()
+        "ISRC must be 12 characters: 2 letters, then 3 alphanumerics, then 7 digits".into()
     })
 }
 
@@ -166,10 +166,11 @@ pub fn recording_ref(label: &str) -> Result<RecordingRef> {
         &[("External ISRC", 0u8), ("On-chain Recording id", 1u8)],
         0,
     )? {
-        0 => Ok(RecordingRef::Isrc(prompts::identifier(
+        0 => Ok(RecordingRef::Isrc(prompts::identifier_capped(
             "ISRC",
             parse_isrc_msg,
             "USRC17607839",
+            12,
         )?)),
         _ => Ok(RecordingRef::Midds(prompts::midds_id(
             "Recording MIDDS id",

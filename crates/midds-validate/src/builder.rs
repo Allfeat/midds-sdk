@@ -1312,7 +1312,7 @@ mod recording_tests {
             .artist_isni("0000000121032683")
             .work_iswc("T0345246802")
             .add_featured_artist_ipi("00000000171")
-            .add_performer_ipn("00012345678")
+            .add_performer_ipn("12345678")
             .performer_instruments(vec![Instrument::ElectricGuitar, Instrument::LeadVocals])
             .genre(Some(Genre::RnB))
             .sub_genre(Some(Genre::Soul))

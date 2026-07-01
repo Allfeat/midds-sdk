@@ -80,23 +80,23 @@ pub fn ipi_random<R: Rng + ?Sized>(rng: &mut R) -> Ipi {
     ipi_from_stem(rng.r#gen::<u64>(), len)
 }
 
-/// Build an IPN (exactly 11 decimal digits) from a numeric stem. IPN has no
+/// Build an IPN (exactly 8 decimal digits) from a numeric stem. IPN has no
 /// public check digit specification on the IPD side, so the body is taken
 /// modulo `10^11` and emitted verbatim — that's the strongest structural
 /// guarantee `validate_ipn_format` needs.
 pub fn ipn_from_stem(stem: u64) -> Ipn {
-    let body = stem % 100_000_000_000;
-    let mut digits = [0u8; 11];
+    let body = stem % 100_000_000;
+    let mut digits = [0u8; 8];
     let mut n = body;
     for slot in digits.iter_mut().rev() {
         *slot = (n % 10) as u8;
         n /= 10;
     }
     let bytes: Vec<u8> = digits.iter().map(|d| b'0' + d).collect();
-    Ipn::try_from(bytes).expect("11-byte IPN fits the bound")
+    Ipn::try_from(bytes).expect("8-byte IPN fits the bound")
 }
 
-/// Random 11-digit IPN.
+/// Random 8-digit IPN.
 pub fn ipn_random<R: Rng + ?Sized>(rng: &mut R) -> Ipn {
     ipn_from_stem(rng.r#gen::<u64>())
 }
@@ -298,7 +298,7 @@ mod tests {
     fn ipn_from_stem_is_structurally_valid() {
         for stem in [0u64, 1, 12_345, 99_999_999_999, u64::MAX] {
             let ipn = ipn_from_stem(stem);
-            assert_eq!(ipn.len(), 11);
+            assert_eq!(ipn.len(), 8);
             assert!(validate_ipn_format(ipn.as_slice()).is_ok());
         }
     }

@@ -35,7 +35,7 @@ pub fn arb_ipi() -> impl Strategy<Value = midds_traits::Ipi> {
     (any::<u64>(), 9usize..=11).prop_map(|(stem, len)| ipi_from_stem(stem, len))
 }
 
-/// Strategy producing structurally valid 11-digit IPNs. IPN has no public
+/// Strategy producing structurally valid 8-digit IPNs. IPN has no public
 /// check-digit specification on the IPD side, so "valid" here is the
 /// structural guarantee `validate_ipn_format` checks (length + charset).
 pub fn arb_ipn() -> impl Strategy<Value = midds_traits::Ipn> {

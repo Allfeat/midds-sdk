@@ -61,7 +61,7 @@ fn reference_v1() -> RecordingV1 {
         record_year: Some(1972),
         version_type: Some(RecordingVersion::Live),
         performers: BoundedVec::try_from(vec![Performer {
-            id: PerformerId::Ipn(bv(b"12345678901")),
+            id: PerformerId::Ipn(bv(b"12345678")),
             instruments: BoundedVec::try_from(vec![Instrument::ElectricGuitar, Instrument::Vocals])
                 .expect("instruments within bound"),
         }])

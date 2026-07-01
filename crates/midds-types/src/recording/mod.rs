@@ -116,7 +116,7 @@ mod tests {
         v.sub_genre = Some(Genre::Soul);
         v.version_type = Some(RecordingVersion::Clean);
         v.performers = BoundedVec::try_from(vec![Performer {
-            id: PerformerId::Ipn(bv::<11>(b"12345678901")),
+            id: PerformerId::Ipn(bv::<8>(b"12345678")),
             instruments: BoundedVec::try_from(vec![Instrument::DrumKit, Instrument::Vocals])
                 .unwrap(),
         }])

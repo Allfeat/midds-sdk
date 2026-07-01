@@ -569,7 +569,7 @@ mod tests {
         let mut r = base();
         r.performers = BoundedVec::try_from(vec![Performer {
             id: PerformerId::Ipn(
-                BoundedVec::try_from(b"12345678901".to_vec()).expect("11-byte IPN"),
+                BoundedVec::try_from(b"12345678".to_vec()).expect("8-byte IPN"),
             ),
             instruments: BoundedVec::try_from(vec![
                 Instrument::ElectricGuitar,

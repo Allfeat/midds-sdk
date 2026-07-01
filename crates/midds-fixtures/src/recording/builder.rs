@@ -261,7 +261,7 @@ mod tests {
             .version_type(RecordingVersion::Live)
             .performers_unchecked(vec![Performer {
                 id: PerformerId::Ipn(
-                    BoundedVec::try_from(b"12345678901".to_vec()).expect("11 bytes"),
+                    BoundedVec::try_from(b"12345678".to_vec()).expect("8 bytes"),
                 ),
                 instruments: BoundedVec::try_from(vec![
                     Instrument::ElectricGuitar,

@@ -45,11 +45,11 @@ pub fn parse_ipi_msg(s: &str) -> Result<Ipi, String> {
 }
 
 /// Human-readable rule shown when [`parse_ipn`] rejects a typed IPN. A short
-/// input is left-padded with zeros to the canonical 11 digits — same UX as
+/// input is left-padded with zeros to the canonical 8 digits — same UX as
 /// IPI; the `I-` prefix is **not** accepted (IPN is a separate registry).
 pub fn parse_ipn_msg(s: &str) -> Result<Ipn, String> {
     parse_ipn(s)
-        .map_err(|_| "IPN must be 1–11 digits (auto-padded with leading zeros to 11)".into())
+        .map_err(|_| "IPN must be 1–8 digits (auto-padded with leading zeros to 8)".into())
 }
 
 /// Human-readable rule shown when [`parse_isrc`] rejects a typed ISRC.
@@ -118,7 +118,7 @@ pub fn performer_id(label: &str) -> Result<PerformerId> {
     match prompts::select(
         label,
         &[
-            ("IPN — 1–11 digits (auto-padded)", 0u8),
+            ("IPN — 1–8 digits (auto-padded)", 0u8),
             ("IPI — 1–11 digits (auto-padded)", 1u8),
             ("ISNI — 16 chars", 2u8),
         ],
@@ -127,7 +127,7 @@ pub fn performer_id(label: &str) -> Result<PerformerId> {
         0 => Ok(PerformerId::Ipn(prompts::identifier(
             "IPN",
             parse_ipn_msg,
-            "00012345678",
+            "12345678",
         )?)),
         1 => Ok(PerformerId::Ipi(prompts::identifier(
             "IPI",

@@ -175,10 +175,11 @@ fn random_performer_id<R: Rng + ?Sized>(rng: &mut R) -> PerformerId {
     }
 }
 
-/// 0..=3 instruments for one performer, drawn from a representative spread of
-/// the [`Instrument`] taxonomy. Empty is a valid "instrument unknown".
+/// 1..=3 instruments for one performer, drawn from a representative spread of
+/// the [`Instrument`] taxonomy. At least one is mandatory (`validate_format`
+/// rejects a performer credit with no instrument).
 fn random_instruments<R: Rng + ?Sized>(rng: &mut R) -> PerformerInstruments {
-    let count = rng.gen_range(0..=3usize);
+    let count = rng.gen_range(1..=3usize);
     let instruments: Vec<Instrument> = (0..count).map(|_| pick_instrument(rng)).collect();
     BoundedVec::try_from(instruments).expect("instrument count within bound")
 }

@@ -263,12 +263,13 @@ fn build_performer() -> Result<Performer> {
     Ok(Performer { id, instruments })
 }
 
-/// The instrument(s) one performer played (0..=`INSTRUMENTS_PER_PERFORMER_MAX`,
-/// type-to-filter over the full taxonomy).
+/// The instrument(s) one performer played (1..=`INSTRUMENTS_PER_PERFORMER_MAX`,
+/// type-to-filter over the full taxonomy). At least one is mandatory: once a
+/// performer id has been entered, its instrument must be filled in.
 fn build_instruments() -> Result<PerformerInstruments> {
     let instruments = prompts::collect_bounded(
         "instrument",
-        0,
+        1,
         INSTRUMENTS_PER_PERFORMER_MAX as usize,
         |_| prompts::fuzzy_select("Instrument", INSTRUMENT_CHOICES),
     )?;

@@ -18,8 +18,10 @@ pub const FEATURING_MAX: u32 = 16;
 pub const PERFORMERS_MAX: u32 = 64;
 /// Maximum number of instruments credited to a single performer. A
 /// multi-instrumentalist ("guitar, vocals") lists each; a single-instrument
-/// credit is a one-element list, and an unknown instrument is the empty list
-/// (no minimum cardinality).
+/// credit is a one-element list. At least one instrument is **mandatory** per
+/// performer — entering a performer id with an empty instrument list is
+/// rejected by `validate_format` (an empty list is an incomplete credit, not
+/// an "unknown instrument").
 pub const INSTRUMENTS_PER_PERFORMER_MAX: u32 = 8;
 /// Maximum number of producers credited.
 pub const PRODUCERS_MAX: u32 = 8;
@@ -269,8 +271,9 @@ pub enum Instrument {
 ///
 /// `id` is a [`PerformerId`] (IPN preferred — the performer-CMO registry —
 /// with IPI / ISNI as the fallback for performers not declared at such a CMO).
-/// `instruments` may be empty (instrument unknown), carry one entry, or list
-/// several for a multi-instrumentalist, up to [`INSTRUMENTS_PER_PERFORMER_MAX`].
+/// `instruments` must name **at least one** [`Instrument`] — a performer credit
+/// is only meaningful once the instrument played is known — carrying one entry
+/// or several for a multi-instrumentalist, up to [`INSTRUMENTS_PER_PERFORMER_MAX`].
 #[derive(
     Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Clone, PartialEq, Eq, Debug,
 )]
@@ -282,10 +285,17 @@ pub struct Performer {
 
 impl Performer {
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
-        // The identifier is the only format-checkable part; instrument
-        // membership is guaranteed structurally by the closed enum and the
-        // empty list is a valid "instrument unknown".
-        self.id.validate_format()
+        // The identifier is format-checked; instrument *membership* is
+        // structural (closed enum). Beyond that, a performer credit must name
+        // at least one instrument: once a performer id is entered, an empty
+        // instrument list is an incomplete credit — not "unknown" — and is
+        // rejected. The id is validated first so a malformed id surfaces its
+        // own error regardless of the instrument list.
+        self.id.validate_format()?;
+        if self.instruments.is_empty() {
+            return Err(MiddsFormatError::EmptyMandatoryField);
+        }
+        Ok(())
     }
 }
 
@@ -581,6 +591,34 @@ mod tests {
         r.validate_format()
             .expect("performer with instruments validates");
 
+        // A single instrument is enough — the minimum is one, not two.
+        let mut r = base();
+        r.performers = BoundedVec::try_from(vec![Performer {
+            id: PerformerId::Ipn(BoundedVec::try_from(b"12345678".to_vec()).expect("8-byte IPN")),
+            instruments: BoundedVec::try_from(vec![Instrument::Piano]).expect("one instrument"),
+        }])
+        .expect("one performer");
+        r.validate_format()
+            .expect("performer with a single instrument validates");
+
+        // A well-formed performer id with an *empty* instrument list is
+        // rejected: entering a performer code makes at least one instrument
+        // mandatory.
+        let mut r = base();
+        r.performers = BoundedVec::try_from(vec![Performer {
+            id: PerformerId::Ipn(BoundedVec::try_from(b"12345678".to_vec()).expect("8-byte IPN")),
+            instruments: BoundedVec::default(),
+        }])
+        .expect("one performer");
+        assert_eq!(
+            r.validate_format(),
+            Err(MiddsFormatError::EmptyMandatoryField),
+            "a performer credit without an instrument is rejected"
+        );
+
+        // The id is format-checked before the instrument rule: a malformed
+        // ISNI fails on charset even though its instrument list is also empty.
+        let mut r = base();
         r.performers = BoundedVec::try_from(vec![Performer {
             id: PerformerId::Isni(
                 BoundedVec::try_from(b"00000001A1032683".to_vec()).expect("16 bytes"),
@@ -591,7 +629,7 @@ mod tests {
         assert_eq!(
             r.validate_format(),
             Err(MiddsFormatError::InvalidCharset),
-            "malformed performer ISNI is rejected even with no instruments"
+            "malformed performer ISNI is rejected before the instrument rule"
         );
     }
 }

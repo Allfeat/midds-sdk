@@ -1167,6 +1167,16 @@ fn parse_performer_list<C: bounded_collections::Get<u32>>(
                 continue;
             }
         };
+        // A performer credit requires at least one instrument (mirrors the
+        // on-chain `validate_format` rule): flag it here so the builder's
+        // diagnostics match what the chain would reject.
+        if instruments.is_empty() {
+            errors.push(FieldError {
+                field,
+                message: format!("#{i} `{}`: at least one instrument is required", input.raw),
+            });
+            continue;
+        }
         parsed.push(Performer { id, instruments });
     }
     if parsed.len() > max as usize {
@@ -1196,6 +1206,7 @@ mod recording_tests {
             .record_year(1999)
             .version_type(RecordingVersion::Live)
             .add_performer_ipi("I-123456789")
+            .performer_instruments(vec![Instrument::ElectricGuitar])
             .add_producer("0000 0001 2103 2683")
             .duration(241)
             .build()

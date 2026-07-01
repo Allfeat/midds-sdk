@@ -178,12 +178,13 @@ fn arb_genre_pair() -> impl Strategy<Value = (Option<Genre>, Option<Genre>)> {
     })
 }
 
-/// 0..=`INSTRUMENTS_PER_PERFORMER_MAX` instruments for one performer; empty is
-/// a valid "instrument unknown".
+/// 1..=`INSTRUMENTS_PER_PERFORMER_MAX` instruments for one performer. A
+/// performer credit requires at least one instrument, so the list is never
+/// empty (an empty list is rejected by `validate_format`).
 fn arb_performer_instruments() -> impl Strategy<Value = PerformerInstruments> {
     proptest::collection::vec(
         arb_instrument(),
-        0..=(INSTRUMENTS_PER_PERFORMER_MAX as usize),
+        1..=(INSTRUMENTS_PER_PERFORMER_MAX as usize),
     )
     .prop_map(|v| BoundedVec::try_from(v).expect("instruments within bound"))
 }

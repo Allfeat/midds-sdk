@@ -154,7 +154,7 @@ merging, more SCALE-economical and more faithful to the business model.
 | `sub_genre` | `Option<Genre>` | no | — | membership (same taxonomy as `genre`); **`Some` ⇒ `genre` is `Some`** (cross-field) | **N** |
 | `record_year` | `Option<u16>` | no | — | if `Some` ⇒ **`1..=2999`** | **N** |
 | `version_type` | `Option<RecordingVersion>` | no | — | membership | S |
-| `performers` | `BoundedVec<Performer, 64>` (`PERFORMERS_MAX = 64`) | no | ≤ 64 | each `Performer`: `id` (`PerformerId`) structure; `instruments` = `BoundedVec<Instrument, 8>` (`INSTRUMENTS_PER_PERFORMER_MAX = 8`), membership **S**, empty list allowed ("unknown instrument") | **N** |
+| `performers` | `BoundedVec<Performer, 64>` (`PERFORMERS_MAX = 64`) | no | ≤ 64 | each `Performer`: `id` (`PerformerId`) structure; `instruments` = `BoundedVec<Instrument, 8>` (`INSTRUMENTS_PER_PERFORMER_MAX = 8`), membership **S**, **≥ 1 required** (a performer credit with no instrument is rejected — id checked first) | **N** |
 | `producers` | `BoundedVec<Isni, 8>` (`PRODUCERS_MAX = 8`) | no | ≤ 8 | each: ISNI structure (ISNI-only by design) | = |
 | `duration` | `Option<u32>` | no | — | **no cap** (seconds; `u32` ≈ 136 years, deliberate V1 choice) | (cf. §7) |
 | `bpm` | `Option<u16>` | no | — | if `Some` ⇒ **`20..=300`** | **N** |
@@ -313,7 +313,10 @@ Explicit, frozen decisions, not to be "fixed" without a version bump:
     the inverse choice of the slimmed enums in point 6 — because the
     instrument played is a frequent and precise credit field; the cost stays
     one tag-byte per instrument, capped at `INSTRUMENTS_PER_PERFORMER_MAX = 8`
-    per performer (empty list = unknown instrument, no minimum cardinality).
+    per performer. **At least one instrument is mandatory**: once a performer
+    id is entered, the instrument played must be named — an empty list is an
+    incomplete credit and is rejected by `validate_format` (the performer id
+    is format-checked first, so a malformed id surfaces its own error).
 11. **`Release.featuring` and the `Track { number, recording }` tracklist**:
     `Release` now carries featured artists exactly like `Recording` —
     `BoundedVec<PartyId, 16>` (`FEATURING_MAX = 16`), same identities (IPI /

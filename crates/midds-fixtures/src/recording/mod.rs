@@ -8,7 +8,7 @@ pub mod strategy;
 
 pub use builder::RecordingBuilder;
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_types::{
     Genre, Instrument, Mode, MusicalKey, PartyId, Performer, PerformerId, PerformerInstruments,
     PitchClass, Recording, RecordingVersion, WorkRef,
@@ -18,6 +18,7 @@ use rand::Rng;
 use rand::SeedableRng;
 
 use crate::MiddsFixtures;
+use crate::common::random_party_id;
 use crate::identifiers::{
     ipi_random, ipn_random, isni_random, isrc_for_index, iswc_from_work_code,
 };
@@ -157,14 +158,6 @@ pub fn random_with_isrc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Recor
         })
         .contributors_unchecked(contributors)
         .build()
-}
-
-fn random_party_id<R: Rng + ?Sized>(rng: &mut R) -> PartyId {
-    if rng.r#gen::<bool>() {
-        PartyId::Ipi(ipi_random(rng))
-    } else {
-        PartyId::Isni(isni_random(rng))
-    }
 }
 
 fn random_performer_id<R: Rng + ?Sized>(rng: &mut R) -> PerformerId {

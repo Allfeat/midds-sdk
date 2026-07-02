@@ -10,15 +10,21 @@ description = "Test fixtures, builders, proptest strategies and corpora for MIDD
 publish = false
 
 [dependencies]
-frame-support = { workspace = true, features = ["std"] }
+# `bounded-collections` instead of `frame-support` — only `BoundedVec` is
+# needed, and this keeps the fixtures build free of the `sp-io` chain (same
+# rationale as `midds-traits`).
+bounded-collections = { workspace = true, features = ["std"] }
 midds-traits = { workspace = true, features = ["std"] }
 midds-types = { workspace = true, features = ["std"] }
-parity-scale-codec = { workspace = true, features = ["std"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 proptest = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"], optional = true }
 serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Encoding assertions in the strategy / pathological self-tests only.
+parity-scale-codec = { workspace = true, features = ["std"] }
 
 [features]
 default = ["proptest", "corpus"]

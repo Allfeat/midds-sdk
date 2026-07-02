@@ -6,7 +6,7 @@
 //! panics on bound overflow because tests should be deterministic and loud
 //! when they construct invalid payloads by mistake.
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Iswc, OffchainHash};
 use midds_types::{
     CatalogNumber, ClassicalInfo, Creator, CreatorRoles, Creators, Language, MusicalKey,
@@ -38,6 +38,7 @@ impl MusicalWorkBuilder {
     ///
     /// `build()` on a default builder produces a payload that
     /// `Midds::validate_format` accepts.
+    #[must_use]
     pub fn new() -> Self {
         let default_iswc = crate::identifiers::iswc_for_index(0);
         let mut default_roles = CreatorRoles::new();
@@ -66,47 +67,56 @@ impl MusicalWorkBuilder {
     }
 
     /// Override the canonical identifier.
+    #[must_use]
     pub fn iswc(mut self, iswc: Iswc) -> Self {
         self.iswc = iswc;
         self
     }
 
     /// Override the title. Panics if `bytes.len() > TITLE_MAX_LEN`.
+    #[must_use]
     pub fn title(mut self, bytes: &[u8]) -> Self {
         self.title = BoundedVec::try_from(bytes.to_vec()).expect("title within bound");
         self
     }
 
+    #[must_use]
     pub fn creation_year(mut self, year: u16) -> Self {
         self.creation_year = Some(year);
         self
     }
 
+    #[must_use]
     pub fn instrumental(mut self, value: bool) -> Self {
         self.instrumental = value;
         self
     }
 
+    #[must_use]
     pub fn explicit_lyrics(mut self, value: bool) -> Self {
         self.explicit_lyrics = value;
         self
     }
 
+    #[must_use]
     pub fn language(mut self, language: Language) -> Self {
         self.language = Some(language);
         self
     }
 
+    #[must_use]
     pub fn bpm(mut self, bpm: u16) -> Self {
         self.bpm = Some(bpm);
         self
     }
 
+    #[must_use]
     pub fn key(mut self, key: MusicalKey) -> Self {
         self.key = Some(key);
         self
     }
 
+    #[must_use]
     pub fn work_type(mut self, work_type: WorkType) -> Self {
         self.work_type = work_type;
         self
@@ -114,6 +124,7 @@ impl MusicalWorkBuilder {
 
     /// Replace the sampled-work references with the supplied list. Panics if
     /// `samples.len() > SAMPLES_MAX`.
+    #[must_use]
     pub fn samples(mut self, samples: Vec<WorkRef>) -> Self {
         self.samples = BoundedVec::try_from(samples).expect("samples within bound");
         self
@@ -121,6 +132,7 @@ impl MusicalWorkBuilder {
 
     /// Append a sampled-work reference. Panics if the list is already at
     /// `SAMPLES_MAX`.
+    #[must_use]
     pub fn add_sample(mut self, sample: WorkRef) -> Self {
         self.samples.try_push(sample).expect("samples within bound");
         self
@@ -128,12 +140,14 @@ impl MusicalWorkBuilder {
 
     /// Replace the creators list with the supplied one. Panics if
     /// `creators.len() > CREATORS_MAX`.
+    #[must_use]
     pub fn creators_unchecked(mut self, creators: Vec<Creator>) -> Self {
         self.creators = BoundedVec::try_from(creators).expect("creators within bound");
         self
     }
 
     /// Append a creator. Panics if the list is already at `CREATORS_MAX`.
+    #[must_use]
     pub fn add_creator(mut self, creator: Creator) -> Self {
         self.creators
             .try_push(creator)
@@ -143,6 +157,7 @@ impl MusicalWorkBuilder {
 
     /// Attach optional classical-music metadata. `opus` and `catalog_number`
     /// must respect their on-chain bounds.
+    #[must_use]
     pub fn classical_info(
         mut self,
         opus: Option<&[u8]>,
@@ -160,6 +175,7 @@ impl MusicalWorkBuilder {
         self
     }
 
+    #[must_use]
     pub fn offchain_extension(mut self, bytes: &[u8]) -> Self {
         self.offchain_extension =
             Some(OffchainHash::try_from(bytes.to_vec()).expect("offchain hash within bound"));
@@ -169,6 +185,7 @@ impl MusicalWorkBuilder {
     /// Finalise into a versioned `MusicalWork::V1`. Does **not** call
     /// `Midds::validate_format` — callers wanting a guaranteed-valid payload
     /// should invoke it themselves on the returned value.
+    #[must_use]
     pub fn build(self) -> MusicalWork {
         MusicalWork::V1(MusicalWorkV1 {
             iswc: self.iswc,

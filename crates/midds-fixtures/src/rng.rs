@@ -12,6 +12,7 @@ use rand_chacha::ChaCha20Rng;
 ///
 /// Convenience wrapper around `ChaCha20Rng::seed_from_u64` so callers don't
 /// need to depend on `rand_chacha` directly.
+#[must_use]
 pub fn seeded_rng(seed: u64) -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(seed)
 }

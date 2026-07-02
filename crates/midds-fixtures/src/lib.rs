@@ -1,3 +1,22 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
 //! Shared test fixtures for the MIDDS SDK.
 //!
 //! Single source of truth for "what a plausible MIDDS looks like": all five
@@ -31,6 +50,7 @@
 //! 3. The pallet/property/mass-injection harnesses pick it up generically;
 //!    no scaffolding duplication.
 
+mod common;
 pub mod identifiers;
 pub mod musical_work;
 pub mod pathological;
@@ -104,6 +124,7 @@ pub trait MiddsFixtures {
 /// the canonical identifiers are guaranteed unique within the batch.
 ///
 /// Used by mass-injection tests and the planned `midds-cli seed` command.
+#[must_use]
 pub fn gen_n(seed: u64, count: u32) -> Vec<MusicalWork> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     (0..count)
@@ -117,6 +138,7 @@ pub fn gen_n(seed: u64, count: u32) -> Vec<MusicalWork> {
 /// always yields the same `Vec<Recording>` byte-for-byte, including across
 /// processes (`ChaCha20Rng`). Each record's ISRC is derived from its sequence
 /// number so the canonical identifiers are guaranteed unique within the batch.
+#[must_use]
 pub fn gen_n_recording(seed: u64, count: u32) -> Vec<Recording> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     (0..count)
@@ -130,6 +152,7 @@ pub fn gen_n_recording(seed: u64, count: u32) -> Vec<Recording> {
 /// always yields the same `Vec<Release>` byte-for-byte, including across
 /// processes (`ChaCha20Rng`). Each record's UPC is derived from its sequence
 /// number so the canonical identifiers are guaranteed unique within the batch.
+#[must_use]
 pub fn gen_n_release(seed: u64, count: u32) -> Vec<Release> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     (0..count)

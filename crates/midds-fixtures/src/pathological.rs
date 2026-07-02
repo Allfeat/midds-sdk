@@ -5,7 +5,7 @@
 //! constructors return values whose `validate_format` is expected to fail;
 //! tests should assert the matching `MiddsFormatError`.
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Isni, Iswc, MiddsFormatError};
 use midds_types::release as rel;
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
@@ -25,7 +25,7 @@ use crate::identifiers::{
 };
 
 /// Helper: a single-role `CreatorRoles` for the *min-size* path. One role +
-/// the compact length prefix gives the smallest non-empty BoundedBTreeSet
+/// the compact length prefix gives the smallest non-empty `BoundedBTreeSet`
 /// encoding.
 fn single_role(role: CreatorRole) -> CreatorRoles {
     let mut set = CreatorRoles::new();
@@ -34,7 +34,7 @@ fn single_role(role: CreatorRole) -> CreatorRoles {
 }
 
 /// Helper: a `CreatorRoles` containing every variant — the worst case for
-/// SCALE encoding (CREATOR_ROLES_MAX entries + length prefix). Used by the
+/// SCALE encoding (`CREATOR_ROLES_MAX` entries + length prefix). Used by the
 /// max-size payload constructors below.
 fn all_roles() -> CreatorRoles {
     let mut set = CreatorRoles::new();
@@ -53,6 +53,7 @@ fn all_roles() -> CreatorRoles {
 /// Minimum-size valid `MusicalWork`: smallest non-empty title, single
 /// 9-digit-IPI creator with a single role, no optional fields, `Original`
 /// work type.
+#[must_use]
 pub fn min_size_musical_work() -> MusicalWork {
     let v1 = MusicalWorkV1 {
         iswc: iswc_for_index(0),
@@ -82,6 +83,7 @@ pub fn min_size_musical_work() -> MusicalWork {
 /// IPI + 16-byte ISNI), and a `Medley` work type with the maximum number of
 /// source refs. Stable worst-case baseline for fee benchmarks and
 /// SCALE-encoding tests.
+#[must_use]
 pub fn max_size_musical_work() -> MusicalWork {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let creators: Vec<Creator> = (0..CREATORS_MAX)
@@ -139,6 +141,7 @@ pub fn max_size_musical_work() -> MusicalWork {
 }
 
 /// ISWC with `T` replaced by `X`. Triggers `InvalidIdentifierStructure`.
+#[must_use]
 pub fn invalid_iswc_wrong_prefix() -> (MusicalWork, MiddsFormatError) {
     let mut bytes = iswc_for_index(0).to_vec();
     bytes[0] = b'X';
@@ -151,6 +154,7 @@ pub fn invalid_iswc_wrong_prefix() -> (MusicalWork, MiddsFormatError) {
 }
 
 /// ISWC with one digit replaced by `A`. Triggers `InvalidCharset`.
+#[must_use]
 pub fn invalid_iswc_bad_charset() -> (MusicalWork, MiddsFormatError) {
     let mut bytes = iswc_for_index(0).to_vec();
     bytes[5] = b'A';
@@ -160,6 +164,7 @@ pub fn invalid_iswc_bad_charset() -> (MusicalWork, MiddsFormatError) {
 }
 
 /// `MusicalWork` with empty title. Triggers `EmptyMandatoryField`.
+#[must_use]
 pub fn invalid_empty_title() -> (MusicalWork, MiddsFormatError) {
     let MusicalWork::V1(mut v1) = min_size_musical_work();
     v1.title = BoundedVec::default();
@@ -167,6 +172,7 @@ pub fn invalid_empty_title() -> (MusicalWork, MiddsFormatError) {
 }
 
 /// `MusicalWork` with empty creators list. Triggers `EmptyMandatoryField`.
+#[must_use]
 pub fn invalid_empty_creators() -> (MusicalWork, MiddsFormatError) {
     let MusicalWork::V1(mut v1) = min_size_musical_work();
     v1.creators = BoundedVec::default();
@@ -175,6 +181,7 @@ pub fn invalid_empty_creators() -> (MusicalWork, MiddsFormatError) {
 
 /// `MusicalWork` with `WorkType::Medley` carrying fewer than 2 source refs
 /// (here: empty). Triggers `OutOfBounds` (Medley / Mashup require >= 2 refs).
+#[must_use]
 pub fn invalid_empty_medley_refs() -> (MusicalWork, MiddsFormatError) {
     let MusicalWork::V1(mut v1) = min_size_musical_work();
     v1.work_type = WorkType::Medley(BoundedVec::default());
@@ -184,6 +191,7 @@ pub fn invalid_empty_medley_refs() -> (MusicalWork, MiddsFormatError) {
 /// Minimum-size valid `Recording`: smallest non-empty title, an IPI artist,
 /// the work referenced by the cheapest `WorkRef::Midds` variant, every
 /// collection empty and every optional field absent.
+#[must_use]
 pub fn min_size_recording() -> Recording {
     let v1 = RecordingV1 {
         isrc: isrc_for_index(0),
@@ -216,6 +224,7 @@ pub fn min_size_recording() -> Recording {
 /// `INSTRUMENTS_PER_PERFORMER_MAX` instrument list, `WorkRef::Iswc` (larger
 /// than the MIDDS id), and both `genre` and `sub_genre` present. Stable
 /// worst-case baseline for fee benchmarks and SCALE-encoding tests.
+#[must_use]
 pub fn max_size_recording() -> Recording {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let aliases: Vec<_> = (0..TITLE_ALIASES_MAX)
@@ -274,6 +283,7 @@ pub fn max_size_recording() -> Recording {
 }
 
 /// ISRC with a lowercase country code. Triggers `InvalidCharset`.
+#[must_use]
 pub fn invalid_recording_isrc_bad_charset() -> (Recording, MiddsFormatError) {
     let Recording::V1(mut v1) = min_size_recording();
     let mut bytes = isrc_for_index(0).to_vec();
@@ -283,6 +293,7 @@ pub fn invalid_recording_isrc_bad_charset() -> (Recording, MiddsFormatError) {
 }
 
 /// ISRC shorter than 12 bytes. Triggers `OutOfBounds`.
+#[must_use]
 pub fn invalid_recording_isrc_wrong_length() -> (Recording, MiddsFormatError) {
     let Recording::V1(mut v1) = min_size_recording();
     v1.isrc = BoundedVec::try_from(b"USRC1760783".to_vec()).expect("11 bytes ≤ 12");
@@ -290,6 +301,7 @@ pub fn invalid_recording_isrc_wrong_length() -> (Recording, MiddsFormatError) {
 }
 
 /// `Recording` with an empty title. Triggers `EmptyMandatoryField`.
+#[must_use]
 pub fn invalid_recording_empty_title() -> (Recording, MiddsFormatError) {
     let Recording::V1(mut v1) = min_size_recording();
     v1.title = BoundedVec::default();
@@ -298,6 +310,7 @@ pub fn invalid_recording_empty_title() -> (Recording, MiddsFormatError) {
 
 /// `Recording` whose `WorkRef::Iswc` is missing the `T` prefix. Triggers
 /// `InvalidIdentifierStructure`.
+#[must_use]
 pub fn invalid_recording_work_iswc_prefix() -> (Recording, MiddsFormatError) {
     let Recording::V1(mut v1) = min_size_recording();
     v1.work = WorkRef::Iswc(BoundedVec::try_from(b"X1234567890".to_vec()).expect("11 bytes"));
@@ -310,6 +323,7 @@ pub fn invalid_recording_work_iswc_prefix() -> (Recording, MiddsFormatError) {
 /// Minimum-size valid `Release`: a 12-digit UPC-A, smallest non-empty title,
 /// an IPI artist, a single cheapest `RecordingRef::Midds` track, every
 /// collection empty and every optional field absent.
+#[must_use]
 pub fn min_size_release() -> Release {
     let v1 = ReleaseV1 {
         upc: BoundedVec::try_from(b"000000000000".to_vec()).expect("12-byte UPC-A"),
@@ -345,6 +359,7 @@ pub fn min_size_release() -> Release {
 /// identity variant now that IPI+ISNI can be carried together) and
 /// `RecordingRef::Isrc` everywhere for tracks (the larger variant). Stable
 /// worst-case baseline for fee benchmarks and SCALE-encoding tests.
+#[must_use]
 pub fn max_size_release() -> Release {
     let title = BoundedVec::try_from(vec![b'x'; TITLE_MAX_LEN as usize]).expect("title at bound");
     let aliases: Vec<_> = (0..rel::TITLE_ALIASES_MAX)
@@ -355,7 +370,7 @@ pub fn max_size_release() -> Release {
         isni_from_body(body)
     };
     let party_both_at = |i: u32| PartyId::Both {
-        ipi: ipi_from_stem(i as u64 * 1_000_000_007 + 1, 11),
+        ipi: ipi_from_stem(u64::from(i) * 1_000_000_007 + 1, 11),
         isni: isni_at(i),
     };
     let featuring: Vec<PartyId> = (0..rel::FEATURING_MAX).map(party_both_at).collect();
@@ -410,6 +425,7 @@ pub fn max_size_release() -> Release {
 }
 
 /// UPC with a non-digit byte. Triggers `InvalidCharset`.
+#[must_use]
 pub fn invalid_release_upc_bad_charset() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.upc = BoundedVec::try_from(b"00000000000X".to_vec()).expect("12 bytes");
@@ -417,6 +433,7 @@ pub fn invalid_release_upc_bad_charset() -> (Release, MiddsFormatError) {
 }
 
 /// UPC of an unsupported length. Triggers `OutOfBounds`.
+#[must_use]
 pub fn invalid_release_upc_wrong_length() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.upc = BoundedVec::try_from(b"0000000".to_vec()).expect("7 bytes ≤ 13");
@@ -424,6 +441,7 @@ pub fn invalid_release_upc_wrong_length() -> (Release, MiddsFormatError) {
 }
 
 /// `Release` with an empty title. Triggers `EmptyMandatoryField`.
+#[must_use]
 pub fn invalid_release_empty_title() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.title = BoundedVec::default();
@@ -431,6 +449,7 @@ pub fn invalid_release_empty_title() -> (Release, MiddsFormatError) {
 }
 
 /// `Release` with an empty mandatory tracklist. Triggers `EmptyMandatoryField`.
+#[must_use]
 pub fn invalid_release_empty_tracklist() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.tracks = BoundedVec::default();
@@ -438,6 +457,7 @@ pub fn invalid_release_empty_tracklist() -> (Release, MiddsFormatError) {
 }
 
 /// `Release` with an out-of-range release-date month. Triggers `OutOfBounds`.
+#[must_use]
 pub fn invalid_release_bad_date() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.release_date = ReleaseDate {
@@ -450,6 +470,7 @@ pub fn invalid_release_bad_date() -> (Release, MiddsFormatError) {
 
 /// `Release` whose only track carries the reserved track number 0. Triggers
 /// `OutOfBounds` (track numbers must be `>= 1`).
+#[must_use]
 pub fn invalid_release_zero_track_number() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.tracks = BoundedVec::try_from(vec![Track {
@@ -463,6 +484,7 @@ pub fn invalid_release_zero_track_number() -> (Release, MiddsFormatError) {
 /// `Release` reusing the same track number on two distinct recordings (1, 1),
 /// breaking the strict contiguous `1..=N` numbering. Triggers
 /// `CrossFieldInconsistency`.
+#[must_use]
 pub fn invalid_release_duplicate_track_number() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.tracks = BoundedVec::try_from(vec![
@@ -482,6 +504,7 @@ pub fn invalid_release_duplicate_track_number() -> (Release, MiddsFormatError) {
 /// `Release` whose track numbers skip a value (1 then 3, no track 2), breaking
 /// the strict contiguous `1..=N` numbering even though each number is positive
 /// and unique. Triggers `CrossFieldInconsistency`.
+#[must_use]
 pub fn invalid_release_noncontiguous_track_numbers() -> (Release, MiddsFormatError) {
     let Release::V1(mut v1) = min_size_release();
     v1.tracks = BoundedVec::try_from(vec![

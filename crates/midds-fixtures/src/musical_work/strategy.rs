@@ -9,7 +9,7 @@
 //! expected_error)` tuple so callers can assert that the on-chain validator
 //! reports the same diagnostic.
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Isrc, Iswc, MiddsFormatError, OffchainHash};
 use midds_types::shared::{BPM_MAX, YEAR_MAX, YEAR_MIN};
 use midds_types::{
@@ -20,6 +20,7 @@ use midds_types::{
 };
 use proptest::prelude::*;
 
+use crate::common::printable_ascii;
 use crate::identifiers::{
     ipi_from_stem, ipn_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code,
 };
@@ -53,35 +54,6 @@ pub fn arb_isrc_valid() -> impl Strategy<Value = Isrc> {
     any::<u32>().prop_map(isrc_for_index)
 }
 
-/// Strategy producing payloads that fail [`midds_traits::validate_isrc_format`].
-/// Targets each branch of the validator: wrong length, bad country code,
-/// bad registrant, bad year, bad designation. Useful for negative-path
-/// `MusicalWork`-extension tests once Recording lands.
-pub fn arb_isrc_invalid() -> impl Strategy<Value = (Isrc, MiddsFormatError)> {
-    prop_oneof![
-        Just((
-            BoundedVec::try_from(b"12RC17607839".to_vec()).expect("12 bytes"),
-            MiddsFormatError::InvalidCharset,
-        )),
-        Just((
-            BoundedVec::try_from(b"USrc17607839".to_vec()).expect("12 bytes"),
-            MiddsFormatError::InvalidCharset,
-        )),
-        Just((
-            BoundedVec::try_from(b"USRC1A607839".to_vec()).expect("12 bytes"),
-            MiddsFormatError::InvalidCharset,
-        )),
-        Just((
-            BoundedVec::try_from(b"USRC1760783A".to_vec()).expect("12 bytes"),
-            MiddsFormatError::InvalidCharset,
-        )),
-        Just((
-            BoundedVec::try_from(b"USRC".to_vec()).expect("≤ 12 bytes"),
-            MiddsFormatError::OutOfBounds,
-        )),
-    ]
-}
-
 /// Strategy producing non-empty bounded titles.
 pub fn arb_title() -> impl Strategy<Value = Title> {
     proptest::collection::vec(printable_ascii(), 1..=(TITLE_MAX_LEN as usize))
@@ -92,10 +64,6 @@ pub fn arb_title() -> impl Strategy<Value = Title> {
 pub fn arb_offchain_hash() -> impl Strategy<Value = OffchainHash> {
     proptest::collection::vec(printable_ascii(), 1..=64usize)
         .prop_map(|bytes| BoundedVec::try_from(bytes).expect("offchain hash within bound"))
-}
-
-fn printable_ascii() -> impl Strategy<Value = u8> {
-    32u8..=126u8
 }
 
 /// Strategy over the full ISO 639-1 enum.
@@ -162,7 +130,7 @@ pub fn arb_creator_role() -> impl Strategy<Value = CreatorRole> {
 }
 
 /// Strategy producing a non-empty [`CreatorRoles`] set (1..=`CREATOR_ROLES_MAX`
-/// distinct roles). The bounded BTreeSet rejects duplicates by construction,
+/// distinct roles). The bounded `BTreeSet` rejects duplicates by construction,
 /// so the input vector is deduplicated via the set rather than via a
 /// `prop_filter` (which would slow shrinking).
 pub fn arb_creator_roles() -> impl Strategy<Value = CreatorRoles> {

@@ -10,7 +10,7 @@
 //! configure runtime data paths — the corpus is queryable from any process
 //! that links this crate.
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Ipi, Isni, Iswc};
 use midds_types::Language;
 

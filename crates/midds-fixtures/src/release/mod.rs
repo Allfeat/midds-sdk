@@ -17,7 +17,8 @@ use rand::Rng;
 use rand::SeedableRng;
 
 use crate::MiddsFixtures;
-use crate::identifiers::{ipi_random, isni_random, isrc_for_index, upc_for_index};
+use crate::common::random_party_id;
+use crate::identifiers::{isni_random, isrc_for_index, upc_for_index};
 
 /// `Release` corner of the `MiddsFixtures` trait. Generic test harnesses
 /// (mass injection, property tests, CLI bench) drive this struct so adding a
@@ -116,7 +117,7 @@ pub fn random_with_upc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Releas
             let catalog: Vec<u8> = (0..cat_len).map(|_| b'0' + rng.gen_range(0..10)).collect();
             Producer {
                 isni: isni_random(rng),
-                catalog_number: frame_support::BoundedVec::try_from(catalog)
+                catalog_number: bounded_collections::BoundedVec::try_from(catalog)
                     .expect("catalog within bound"),
             }
         })
@@ -157,14 +158,6 @@ pub fn random_with_upc_index<R: Rng + ?Sized>(rng: &mut R, index: u32) -> Releas
         b = b.add_cover_contributor(c);
     }
     b.build()
-}
-
-fn random_party_id<R: Rng + ?Sized>(rng: &mut R) -> PartyId {
-    if rng.r#gen::<bool>() {
-        PartyId::Ipi(ipi_random(rng))
-    } else {
-        PartyId::Isni(isni_random(rng))
-    }
 }
 
 fn pick_status<R: Rng + ?Sized>(rng: &mut R) -> ReleaseStatus {

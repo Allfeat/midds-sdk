@@ -18,8 +18,9 @@ use rand::Rng;
 /// Build an ISWC from a 9-digit work code with the correct CISAC mod-10
 /// check digit appended.
 ///
-/// `work_code` is taken modulo 1_000_000_000 — the ISWC work-code field
+/// `work_code` is taken modulo `1_000_000_000` — the ISWC work-code field
 /// holds nine decimals.
+#[must_use]
 pub fn iswc_from_work_code(work_code: u32) -> Iswc {
     let body = work_code % 1_000_000_000;
     let mut digits = [0u8; 9];
@@ -31,7 +32,7 @@ pub fn iswc_from_work_code(work_code: u32) -> Iswc {
     let sum: u32 = digits
         .iter()
         .enumerate()
-        .map(|(i, d)| (*d as u32) * (i as u32 + 1))
+        .map(|(i, d)| u32::from(*d) * (i as u32 + 1))
         .sum();
     let check = (10 - sum % 10) % 10;
 
@@ -43,6 +44,7 @@ pub fn iswc_from_work_code(work_code: u32) -> Iswc {
 }
 
 /// Map an index to a unique ISWC. Pure function over `index % 1_000_000_000`.
+#[must_use]
 pub fn iswc_for_index(index: u32) -> Iswc {
     iswc_from_work_code(index)
 }
@@ -51,6 +53,7 @@ pub fn iswc_for_index(index: u32) -> Iswc {
 ///
 /// The last digit is overwritten with the CISAC mod-10 check digit so the
 /// returned identifier verifies via `midds_validate::verify_ipi_checksum`.
+#[must_use]
 pub fn ipi_from_stem(stem: u64, len: usize) -> Ipi {
     assert!((9..=11).contains(&len), "IPI length must be 9..=11");
     let modulus: u64 = 10u64.pow(len as u32);
@@ -64,7 +67,7 @@ pub fn ipi_from_stem(stem: u64, len: usize) -> Ipi {
     let sum: u32 = digits[..len - 1]
         .iter()
         .enumerate()
-        .map(|(i, d)| (*d as u32) * (i as u32 + 1))
+        .map(|(i, d)| u32::from(*d) * (i as u32 + 1))
         .sum();
     let check = (10 - sum % 10) % 10;
     digits[len - 1] = check as u8;
@@ -84,6 +87,7 @@ pub fn ipi_random<R: Rng + ?Sized>(rng: &mut R) -> Ipi {
 /// public check digit specification on the IPD side, so the body is taken
 /// modulo `10^11` and emitted verbatim — that's the strongest structural
 /// guarantee `validate_ipn_format` needs.
+#[must_use]
 pub fn ipn_from_stem(stem: u64) -> Ipn {
     let body = stem % 100_000_000;
     let mut digits = [0u8; 8];
@@ -105,11 +109,12 @@ pub fn ipn_random<R: Rng + ?Sized>(rng: &mut R) -> Ipn {
 /// is computed via ISO 7064 MOD 11,2 and appended.
 ///
 /// `digits` is taken modulo 10 element-wise — pass arbitrary `u8` values.
+#[must_use]
 pub fn isni_from_body(digits: [u8; 15]) -> Isni {
     let normalised: [u8; 15] = core::array::from_fn(|i| digits[i] % 10);
     let mut r: u32 = 0;
     for &d in &normalised {
-        r = ((r + d as u32) * 2) % 11;
+        r = ((r + u32::from(d)) * 2) % 11;
     }
     let check = (12 - r) % 11;
 
@@ -137,6 +142,7 @@ pub fn isni_random<R: Rng + ?Sized>(rng: &mut R) -> Isni {
 ///
 /// ISRC has no check digit (ISO 3901), so "structurally valid" is the
 /// strongest guarantee we can offer here.
+#[must_use]
 pub fn isrc_for_index(index: u32) -> Isrc {
     let registrant = (index / 100_000) % 10;
     let year = (index / 1_000_000) % 100;
@@ -185,7 +191,7 @@ fn gtin_check_digit(data: &[u8]) -> u8 {
     let sum: u32 = data
         .iter()
         .enumerate()
-        .map(|(i, d)| (*d as u32) * if i % 2 == 0 { 1 } else { 3 })
+        .map(|(i, d)| u32::from(*d) * if i % 2 == 0 { 1 } else { 3 })
         .sum();
     ((10 - sum % 10) % 10) as u8
 }
@@ -195,8 +201,9 @@ fn gtin_check_digit(data: &[u8]) -> u8 {
 /// from indices `0..N` always has unique canonical identifiers — the
 /// `Release` analogue of [`isrc_for_index`]. EAN-13 (the longer of the two
 /// accepted lengths) is generated so corpora exercise the wider bound.
+#[must_use]
 pub fn upc_for_index(index: u32) -> Upc {
-    let body = (index as u64) % 1_000_000_000_000;
+    let body = u64::from(index) % 1_000_000_000_000;
     let mut digits = [0u8; 12];
     let mut n = body;
     for slot in digits.iter_mut().rev() {

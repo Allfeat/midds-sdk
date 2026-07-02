@@ -3163,7 +3163,7 @@ dependencies = [
 name = "midds-fixtures"
 version = "0.2.0"
 dependencies = [
- "frame-support",
+ "bounded-collections",
  "midds-traits",
  "midds-types",
  "parity-scale-codec",

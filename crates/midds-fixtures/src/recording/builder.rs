@@ -7,7 +7,7 @@
 //! when they construct invalid payloads by mistake. Mirrors
 //! [`crate::musical_work::MusicalWorkBuilder`].
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Isni, Isrc, OffchainHash};
 use midds_types::{
     Genre, MusicalKey, PartyId, Performer, Place, Recording, RecordingV1, RecordingVersion, Title,
@@ -44,6 +44,7 @@ impl RecordingBuilder {
     ///
     /// `build()` on a default builder produces a payload that
     /// `Midds::validate_format` accepts.
+    #[must_use]
     pub fn new() -> Self {
         let default_isrc = crate::identifiers::isrc_for_index(0);
         let default_artist = PartyId::Ipi(crate::identifiers::ipi_from_stem(123_456_789, 9));
@@ -71,24 +72,28 @@ impl RecordingBuilder {
     }
 
     /// Override the canonical identifier.
+    #[must_use]
     pub fn isrc(mut self, isrc: Isrc) -> Self {
         self.isrc = isrc;
         self
     }
 
     /// Override the title. Panics if `bytes.len() > TITLE_MAX_LEN`.
+    #[must_use]
     pub fn title(mut self, bytes: &[u8]) -> Self {
         self.title = BoundedVec::try_from(bytes.to_vec()).expect("title within bound");
         self
     }
 
     /// Append an alternative title. Panics on per-alias or list-length overflow.
+    #[must_use]
     pub fn add_title_alias(mut self, bytes: &[u8]) -> Self {
         self.title_aliases
             .push(BoundedVec::try_from(bytes.to_vec()).expect("alias within bound"));
         self
     }
 
+    #[must_use]
     pub fn artist(mut self, artist: PartyId) -> Self {
         self.artist = artist;
         self
@@ -96,33 +101,39 @@ impl RecordingBuilder {
 
     /// Replace the featured-artists list. Panics at build if it exceeds
     /// `FEATURING_MAX`.
+    #[must_use]
     pub fn featuring_unchecked(mut self, featuring: Vec<PartyId>) -> Self {
         self.featuring = featuring;
         self
     }
 
+    #[must_use]
     pub fn work(mut self, work: WorkRef) -> Self {
         self.work = work;
         self
     }
 
     /// Set (or clear) the primary genre.
+    #[must_use]
     pub fn genre(mut self, genre: Option<Genre>) -> Self {
         self.genre = genre;
         self
     }
 
     /// Set (or clear) the optional secondary genre.
+    #[must_use]
     pub fn sub_genre(mut self, sub_genre: Option<Genre>) -> Self {
         self.sub_genre = sub_genre;
         self
     }
 
+    #[must_use]
     pub fn record_year(mut self, year: u16) -> Self {
         self.record_year = Some(year);
         self
     }
 
+    #[must_use]
     pub fn version_type(mut self, version: RecordingVersion) -> Self {
         self.version_type = Some(version);
         self
@@ -130,27 +141,32 @@ impl RecordingBuilder {
 
     /// Replace the performers list. Panics if `performers.len() > PERFORMERS_MAX`.
     /// Each [`Performer`] carries its own (already-bounded) instrument list.
+    #[must_use]
     pub fn performers_unchecked(mut self, performers: Vec<Performer>) -> Self {
         self.performers = performers;
         self
     }
 
     /// Replace the producers list. Panics if `producers.len() > PRODUCERS_MAX`.
+    #[must_use]
     pub fn producers_unchecked(mut self, producers: Vec<Isni>) -> Self {
         self.producers = producers;
         self
     }
 
+    #[must_use]
     pub fn duration(mut self, seconds: u32) -> Self {
         self.duration = Some(seconds);
         self
     }
 
+    #[must_use]
     pub fn bpm(mut self, bpm: u16) -> Self {
         self.bpm = Some(bpm);
         self
     }
 
+    #[must_use]
     pub fn key(mut self, key: MusicalKey) -> Self {
         self.key = Some(key);
         self
@@ -158,6 +174,7 @@ impl RecordingBuilder {
 
     /// Attach production places. Each present field must respect the
     /// `PLACE_MAX_LEN` bound.
+    #[must_use]
     pub fn places(
         mut self,
         recording: Option<&[u8]>,
@@ -174,11 +191,13 @@ impl RecordingBuilder {
     }
 
     /// Replace the contributors list. Panics if `contributors.len() > CONTRIBUTORS_MAX`.
+    #[must_use]
     pub fn contributors_unchecked(mut self, contributors: Vec<PartyId>) -> Self {
         self.contributors = contributors;
         self
     }
 
+    #[must_use]
     pub fn offchain_extension(mut self, bytes: &[u8]) -> Self {
         self.offchain_extension =
             Some(OffchainHash::try_from(bytes.to_vec()).expect("offchain hash within bound"));
@@ -188,6 +207,7 @@ impl RecordingBuilder {
     /// Finalise into a versioned `Recording::V1`. Does **not** call
     /// `Midds::validate_format` — callers wanting a guaranteed-valid payload
     /// should invoke it themselves on the returned value.
+    #[must_use]
     pub fn build(self) -> Recording {
         let places =
             self.places.map(
@@ -260,9 +280,7 @@ mod tests {
             .record_year(1999)
             .version_type(RecordingVersion::Live)
             .performers_unchecked(vec![Performer {
-                id: PerformerId::Ipn(
-                    BoundedVec::try_from(b"12345678".to_vec()).expect("8 bytes"),
-                ),
+                id: PerformerId::Ipn(BoundedVec::try_from(b"12345678".to_vec()).expect("8 bytes")),
                 instruments: BoundedVec::try_from(vec![
                     Instrument::ElectricGuitar,
                     Instrument::LeadVocals,

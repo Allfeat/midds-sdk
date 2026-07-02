@@ -11,7 +11,7 @@
 //! expected_error)` tuple so callers can assert that the on-chain validator
 //! reports the same diagnostic.
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{Isni, MiddsFormatError};
 use midds_types::shared::{BPM_MAX, YEAR_MAX};
 use midds_types::{
@@ -22,15 +22,12 @@ use midds_types::{
 };
 use proptest::prelude::*;
 
+use crate::common::printable_ascii;
 use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code};
 use crate::musical_work::strategy::{
     arb_ipi, arb_ipn, arb_isni, arb_isrc_valid, arb_iswc, arb_musical_key, arb_offchain_hash,
     arb_title,
 };
-
-fn printable_ascii() -> impl Strategy<Value = u8> {
-    32u8..=126u8
-}
 
 /// Strategy over the full genre taxonomy.
 pub fn arb_genre() -> impl Strategy<Value = Genre> {
@@ -220,7 +217,8 @@ fn arb_featuring() -> impl Strategy<Value = Featuring> {
 /// `RecordingV1` has 18 fields; proptest only implements `Strategy` for
 /// tuples up to arity 12, so the fields are split into a head and a tail tuple
 /// and flattened in the `prop_map`. `genre` and `sub_genre` share one head
-/// slot ([`arb_genre_pair`]) so the strategy can enforce their dependency.
+/// slot (the private `arb_genre_pair`) so the strategy can enforce their
+/// dependency.
 pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
     let head = (
         arb_isrc_valid(),

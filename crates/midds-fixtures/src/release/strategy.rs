@@ -11,7 +11,7 @@
 //! expected_error)` tuple so callers can assert that the on-chain validator
 //! reports the same diagnostic.
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{MiddsFormatError, Upc};
 use midds_types::release::{
     CATALOG_NUMBER_MAX_LEN, CatalogNumber, DISTRIBUTOR_NAME_MAX_LEN, FEATURING_MAX, Featuring,
@@ -24,16 +24,13 @@ use midds_types::{
 };
 use proptest::prelude::*;
 
+use crate::common::printable_ascii;
 use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index};
 use crate::musical_work::strategy::{arb_isni, arb_offchain_hash, arb_title};
 use crate::recording::strategy::arb_party_id;
 
 const TITLE_MAX_LEN: u32 = 256;
 const COVER_CONTRIBUTOR_NAME_MAX_LEN: u32 = 128;
-
-fn printable_ascii() -> impl Strategy<Value = u8> {
-    32u8..=126u8
-}
 
 fn ascii_digit() -> impl Strategy<Value = u8> {
     b'0'..=b'9'

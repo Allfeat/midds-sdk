@@ -7,7 +7,7 @@
 //! when they construct invalid payloads by mistake. Mirrors
 //! [`crate::recording::RecordingBuilder`].
 
-use frame_support::BoundedVec;
+use bounded_collections::BoundedVec;
 use midds_traits::{OffchainHash, Upc};
 use midds_types::release::{Featuring, Producers, TitleAliases, Tracks};
 use midds_types::{
@@ -45,6 +45,7 @@ impl ReleaseBuilder {
     ///
     /// `build()` on a default builder produces a payload that
     /// `Midds::validate_format` accepts.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             upc: crate::identifiers::upc_for_index(0),
@@ -72,24 +73,28 @@ impl ReleaseBuilder {
     }
 
     /// Override the canonical identifier.
+    #[must_use]
     pub fn upc(mut self, upc: Upc) -> Self {
         self.upc = upc;
         self
     }
 
     /// Override the title. Panics if `bytes.len() > TITLE_MAX_LEN`.
+    #[must_use]
     pub fn title(mut self, bytes: &[u8]) -> Self {
         self.title = BoundedVec::try_from(bytes.to_vec()).expect("title within bound");
         self
     }
 
     /// Append an alternative title. Panics on per-alias or list-length overflow.
+    #[must_use]
     pub fn add_title_alias(mut self, bytes: &[u8]) -> Self {
         self.title_aliases
             .push(BoundedVec::try_from(bytes.to_vec()).expect("alias within bound"));
         self
     }
 
+    #[must_use]
     pub fn artist(mut self, artist: PartyId) -> Self {
         self.artist = artist;
         self
@@ -97,61 +102,72 @@ impl ReleaseBuilder {
 
     /// Replace the featured-artist list. Panics at `build()` if
     /// `featuring.len() > FEATURING_MAX`.
+    #[must_use]
     pub fn featuring_unchecked(mut self, featuring: Vec<PartyId>) -> Self {
         self.featuring = featuring;
         self
     }
 
     /// Replace the tracklist. Panics if `tracks.len() > TRACKS_MAX`.
+    #[must_use]
     pub fn tracks_unchecked(mut self, tracks: Vec<RecordingRef>) -> Self {
         self.tracks = tracks;
         self
     }
 
     /// Append one track reference.
+    #[must_use]
     pub fn add_track(mut self, track: RecordingRef) -> Self {
         self.tracks.push(track);
         self
     }
 
     /// Replace the producers list. Panics if `producers.len() > PRODUCERS_MAX`.
+    #[must_use]
     pub fn producers_unchecked(mut self, producers: Vec<Producer>) -> Self {
         self.producers = producers;
         self
     }
 
+    #[must_use]
     pub fn status(mut self, status: ReleaseStatus) -> Self {
         self.status = status;
         self
     }
 
+    #[must_use]
     pub fn release_date(mut self, year: u16, month: u8, day: u8) -> Self {
         self.release_date = ReleaseDate { year, month, day };
         self
     }
 
+    #[must_use]
     pub fn country(mut self, country: Country) -> Self {
         self.country = country;
         self
     }
 
     /// Override the distributor name. Panics if it exceeds the bound.
+    #[must_use]
     pub fn distributor_name(mut self, bytes: &[u8]) -> Self {
         self.distributor_name =
             BoundedVec::try_from(bytes.to_vec()).expect("distributor name within bound");
         self
     }
 
+    #[must_use]
     pub fn release_type(mut self, release_type: ReleaseType) -> Self {
         self.release_type = release_type;
         self
     }
 
+    #[must_use]
     pub fn format(mut self, format: ReleaseFormat) -> Self {
         self.format = format;
         self
     }
 
+    #[must_use]
     pub fn packaging(mut self, packaging: ReleasePackaging) -> Self {
         self.packaging = packaging;
         self
@@ -159,12 +175,14 @@ impl ReleaseBuilder {
 
     /// Append a cover-artwork contributor name. Panics on per-name or
     /// list-length overflow.
+    #[must_use]
     pub fn add_cover_contributor(mut self, bytes: &[u8]) -> Self {
         self.cover_contributors
             .push(BoundedVec::try_from(bytes.to_vec()).expect("cover contributor within bound"));
         self
     }
 
+    #[must_use]
     pub fn offchain_extension(mut self, bytes: &[u8]) -> Self {
         self.offchain_extension =
             Some(OffchainHash::try_from(bytes.to_vec()).expect("offchain hash within bound"));
@@ -174,6 +192,7 @@ impl ReleaseBuilder {
     /// Finalise into a versioned `Release::V1`. Does **not** call
     /// `Midds::validate_format` — callers wanting a guaranteed-valid payload
     /// should invoke it themselves on the returned value.
+    #[must_use]
     pub fn build(self) -> Release {
         Release::V1(ReleaseV1 {
             upc: self.upc,

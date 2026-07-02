@@ -12,7 +12,7 @@ use dialoguer::Input;
 use midds_traits::{Ipi, Ipn, Isni, Isrc, Iswc, OffchainHash, Upc};
 use midds_types::{
     Country, Language, Mode, MusicalKey, PartyId, PerformerId, PitchClass, RecordingRef,
-    ReleaseDate, WorkRef,
+    ReleaseDate, TITLE_MAX_LEN, Title, WorkRef,
 };
 use midds_validate::{parse_ipi, parse_ipn, parse_isni, parse_isrc, parse_iswc, parse_upc};
 
@@ -48,8 +48,7 @@ pub fn parse_ipi_msg(s: &str) -> Result<Ipi, String> {
 /// input is left-padded with zeros to the canonical 8 digits — same UX as
 /// IPI; the `I-` prefix is **not** accepted (IPN is a separate registry).
 pub fn parse_ipn_msg(s: &str) -> Result<Ipn, String> {
-    parse_ipn(s)
-        .map_err(|_| "IPN must be 1–8 digits (auto-padded with leading zeros to 8)".into())
+    parse_ipn(s).map_err(|_| "IPN must be 1–8 digits (auto-padded with leading zeros to 8)".into())
 }
 
 /// Human-readable rule shown when [`parse_isrc`] rejects a typed ISRC. Kept
@@ -268,4 +267,20 @@ pub fn release_date(label: &str) -> Result<ReleaseDate> {
     let month = prompts::int_in_range::<u8>("Month", 1, 12, None)?;
     let day = prompts::int_in_range::<u8>("Day", 1, 31, None)?;
     Ok(ReleaseDate { year, month, day })
+}
+
+/// Alternative / localized titles collector, shared by the Recording and
+/// Release forms (same prompts; each caller passes its own type-level cap).
+pub fn title_aliases<B: TryFrom<Vec<Title>>>(max: usize) -> Result<B> {
+    prompts::collect_bounded_into("title alias", 0, max, |_| {
+        prompts::bounded_string::<TITLE_MAX_LEN>("Alias", true)
+    })
+}
+
+/// Featured-artist ("feat.") collector, shared by the Recording and Release
+/// forms. Featured artists carry the same [`PartyId`] as the main artist.
+pub fn featuring<B: TryFrom<Vec<PartyId>>>(max: usize) -> Result<B> {
+    prompts::collect_bounded_into("featured artist", 0, max, |_| {
+        party_id("Featured artist identifier")
+    })
 }

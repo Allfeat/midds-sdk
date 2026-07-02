@@ -1,3 +1,22 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
 //! `midds` debug CLI entry point.
 
 mod bench;

@@ -15,17 +15,18 @@ use crate::ui;
 
 const STEPS: usize = 10;
 
+/// Walk the interactive form and assemble a validated `Recording::V1`.
 pub fn build() -> Result<Recording> {
     ui::section("Recording · V1");
 
     ui::step(1, STEPS, "Identification");
     let isrc: Isrc = prompts::identifier("ISRC", shared::parse_isrc_msg, "USRC17607839")?;
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
-    let title_aliases = build_title_aliases()?;
+    let title_aliases: TitleAliases = shared::title_aliases(TITLE_ALIASES_MAX as usize)?;
 
     ui::step(2, STEPS, "Artist, featuring & work");
     let artist = shared::party_id("Main artist identifier")?;
-    let featuring = build_featuring()?;
+    let featuring: Featuring = shared::featuring(FEATURING_MAX as usize)?;
     let work = shared::work_ref("Recorded work")?;
 
     ui::step(3, STEPS, "Genre");
@@ -47,9 +48,10 @@ pub fn build() -> Result<Recording> {
     })?;
 
     ui::step(5, STEPS, "Performers");
-    let performers = build_performer_collection(PERFORMERS_MAX as usize)?;
-    let performers = Performers::try_from(performers)
-        .map_err(|_| anyhow::anyhow!("more than {PERFORMERS_MAX} performers"))?;
+    let performers: Performers =
+        prompts::collect_bounded_into("performer", 0, PERFORMERS_MAX as usize, |_| {
+            build_performer()
+        })?;
 
     ui::step(6, STEPS, "Producers");
     let producers = build_producers()?;
@@ -65,9 +67,10 @@ pub fn build() -> Result<Recording> {
     let places = build_places()?;
 
     ui::step(9, STEPS, "Contributors");
-    let contributors = build_party_collection("contributor", CONTRIBUTORS_MAX as usize)?;
-    let contributors = Contributors::try_from(contributors)
-        .map_err(|_| anyhow::anyhow!("more than {CONTRIBUTORS_MAX} contributors"))?;
+    let contributors: Contributors =
+        prompts::collect_bounded_into("contributor", 0, CONTRIBUTORS_MAX as usize, |_| {
+            shared::party_id("contributor identifier")
+        })?;
 
     ui::step(10, STEPS, "Off-chain extension");
     let offchain_extension = shared::offchain_extension()?;
@@ -230,31 +233,6 @@ const INSTRUMENT_CHOICES: &[(&str, Instrument)] = &[
     ("Other", Instrument::Other),
 ];
 
-fn build_title_aliases() -> Result<TitleAliases> {
-    let aliases = prompts::collect_bounded("title alias", 0, TITLE_ALIASES_MAX as usize, |_| {
-        prompts::bounded_string::<TITLE_MAX_LEN>("Alias", true)
-    })?;
-    TitleAliases::try_from(aliases)
-        .map_err(|_| anyhow::anyhow!("more than {TITLE_ALIASES_MAX} title aliases"))
-}
-
-/// `Vec<PartyId>` collector for `contributors`. The performer collector is
-/// separate ([`build_performer_collection`]) because performers use the wider
-/// [`midds_types::PerformerId`] enum (IPN / IPI / ISNI).
-fn build_party_collection(noun: &str, max: usize) -> Result<Vec<midds_types::PartyId>> {
-    prompts::collect_bounded(noun, 0, max, |_| {
-        shared::party_id(&format!("{noun} identifier"))
-    })
-}
-
-/// `Vec<Performer>` collector for the `performers` list. Distinct from
-/// [`build_party_collection`] because the performer identifier set carries
-/// IPN as its primary code, and each performer additionally lists the
-/// instrument(s) they played.
-fn build_performer_collection(max: usize) -> Result<Vec<Performer>> {
-    prompts::collect_bounded("performer", 0, max, |_| build_performer())
-}
-
 /// One performer: a performer identifier (IPN / IPI / ISNI) followed by the
 /// instrument(s) they played.
 fn build_performer() -> Result<Performer> {
@@ -267,32 +245,18 @@ fn build_performer() -> Result<Performer> {
 /// type-to-filter over the full taxonomy). At least one is mandatory: once a
 /// performer id has been entered, its instrument must be filled in.
 fn build_instruments() -> Result<PerformerInstruments> {
-    let instruments = prompts::collect_bounded(
+    prompts::collect_bounded_into(
         "instrument",
         1,
         INSTRUMENTS_PER_PERFORMER_MAX as usize,
         |_| prompts::fuzzy_select("Instrument", INSTRUMENT_CHOICES),
-    )?;
-    PerformerInstruments::try_from(instruments)
-        .map_err(|_| anyhow::anyhow!("more than {INSTRUMENTS_PER_PERFORMER_MAX} instruments"))
-}
-
-/// `Featuring` collector. Featured artists carry the same
-/// [`midds_types::PartyId`] as the main artist, so this reuses
-/// [`build_party_collection`].
-fn build_featuring() -> Result<Featuring> {
-    let featuring = build_party_collection("featured artist", FEATURING_MAX as usize)?;
-    Featuring::try_from(featuring)
-        .map_err(|_| anyhow::anyhow!("more than {FEATURING_MAX} featured artists"))
+    )
 }
 
 fn build_producers() -> Result<Producers> {
-    let producers =
-        prompts::collect_bounded("producer", 0, PRODUCERS_MAX as usize, |_| -> Result<Isni> {
-            prompts::identifier("Producer ISNI", shared::parse_isni_msg, "0000000121032683")
-        })?;
-    Producers::try_from(producers)
-        .map_err(|_| anyhow::anyhow!("more than {PRODUCERS_MAX} producers"))
+    prompts::collect_bounded_into("producer", 0, PRODUCERS_MAX as usize, |_| -> Result<Isni> {
+        prompts::identifier("Producer ISNI", shared::parse_isni_msg, "0000000121032683")
+    })
 }
 
 fn build_places() -> Result<Option<ProductionPlaces>> {

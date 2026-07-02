@@ -249,6 +249,21 @@ pub fn fuzzy_select<T: Clone>(label: &str, choices: &[(&str, T)]) -> Result<T> {
 /// enforced once, by the type, with the canonical error. `min` is enforced
 /// here (a non-empty mandatory collection refuses to finish empty); `max`
 /// stops offering "add another" at the cap so the wrap can never fail.
+/// [`collect_bounded`] wrapped into the concrete `BoundedVec` alias. The
+/// loop stops at `max`, so the final `try_from` is a defensive path only.
+pub fn collect_bounded_into<T, B>(
+    noun: &str,
+    min: usize,
+    max: usize,
+    build: impl FnMut(usize) -> Result<T>,
+) -> Result<B>
+where
+    B: TryFrom<Vec<T>>,
+{
+    let items = collect_bounded(noun, min, max, build)?;
+    B::try_from(items).map_err(|_| anyhow::anyhow!("more than {max} {noun}s"))
+}
+
 pub fn collect_bounded<T>(
     noun: &str,
     min: usize,

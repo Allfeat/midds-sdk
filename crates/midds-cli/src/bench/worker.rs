@@ -24,6 +24,7 @@ use midds_client::{
 use midds_traits::Midds;
 use tokio::{
     sync::mpsc,
+    task::{JoinHandle, JoinSet},
     time::{MissedTickBehavior, interval},
 };
 
@@ -171,6 +172,21 @@ pub(crate) async fn setup_runner<M: Midds>(
 /// clone, so callers must `drop(tx)` after the spawn loop. The function
 /// returns the terminal `state` so the caller can inspect samples,
 /// failure counts, abort signals, etc.
+/// Await every worker in `set`, then the consumer task, surfacing a panic
+/// in either as an error. The common teardown of every bench mode's
+/// spawn-loop + consumer pair; returns the consumer's terminal state.
+pub(crate) async fn join_workers_and_consumer<S>(
+    mut set: JoinSet<()>,
+    consumer: JoinHandle<S>,
+) -> Result<S> {
+    while let Some(joined) = set.join_next().await {
+        joined.map_err(|e| anyhow!("worker panicked: {e}"))?;
+    }
+    consumer
+        .await
+        .map_err(|e| anyhow!("consumer panicked: {e}"))
+}
+
 pub async fn run_progress_consumer<E, S>(
     mut rx: mpsc::UnboundedReceiver<E>,
     total: u32,

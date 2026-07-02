@@ -9,7 +9,7 @@ mod recording;
 mod release;
 mod shared;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use midds_traits::Midds;
@@ -44,9 +44,11 @@ pub fn run(kind: Option<MiddsKind>, out: Option<PathBuf>, fmt: CreateFormat) -> 
     };
 
     match kind {
-        MiddsKind::MusicalWork => finish(build_validated(musical_work::build)?, &out, fmt),
-        MiddsKind::Recording => finish(build_validated(recording::build)?, &out, fmt),
-        MiddsKind::Release => finish(build_validated(release::build)?, &out, fmt),
+        MiddsKind::MusicalWork => {
+            finish(build_validated(musical_work::build)?, out.as_deref(), fmt)
+        }
+        MiddsKind::Recording => finish(build_validated(recording::build)?, out.as_deref(), fmt),
+        MiddsKind::Release => finish(build_validated(release::build)?, out.as_deref(), fmt),
         // `create` is offline and emits a single payload; `all` only makes
         // sense on `seed`, which deposits many records across instances.
         MiddsKind::All => bail!(
@@ -99,7 +101,7 @@ fn explain(err: &str) -> &'static str {
 /// (`ui::payload_panel`) so redirects stay clean.
 fn finish<M: Midds + serde::Serialize>(
     payload: M,
-    out: &Option<PathBuf>,
+    out: Option<&Path>,
     fmt: CreateFormat,
 ) -> Result<()> {
     const HEX_LABEL: &str = "SCALE hex (no 0x prefix)";

@@ -45,10 +45,12 @@ use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{
     bench::{
-        util::{mean, percentile, sanitize_signer_concurrency, write_json_report},
+        util::{
+            mean, percentile, sanitize_signer_concurrency, split_into_batches, write_json_report,
+        },
         worker::{
-            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer,
-            setup_runner,
+            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, join_workers_and_consumer,
+            run_progress_consumer, setup_runner,
         },
     },
     interactive,
@@ -256,9 +258,8 @@ where
         let stop = stop.clone();
         let batch_size_usize = batch_size as usize;
         set.spawn(async move {
-            let _permit = match semaphore.acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => return,
+            let Ok(_permit) = semaphore.acquire_owned().await else {
+                return;
             };
             let api = api_of(&client);
             let mut nonce = match fetch_signer_nonce(&client, &signer).await {
@@ -272,22 +273,19 @@ where
                     u64::MAX
                 }
             };
-            let chunk_sizes: Vec<u32> = partition
-                .chunks(batch_size_usize)
-                .map(|c| c.len() as u32)
-                .collect();
-            let total_chunks = chunk_sizes.len();
-            for (chunk_idx, chunk) in partition.chunks(batch_size_usize).enumerate() {
+            let batches = split_into_batches(partition, batch_size_usize);
+            let chunk_sizes: Vec<u32> = batches.iter().map(|c| c.len() as u32).collect();
+            let total_chunks = batches.len();
+            for (chunk_idx, chunk) in batches.into_iter().enumerate() {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
                 let chunk_records = chunk.len() as u32;
                 let t_submit = Instant::now();
                 let result = if nonce == u64::MAX {
-                    api.deposit_batch(&signer, chunk.to_vec()).await
+                    api.deposit_batch(&signer, chunk).await
                 } else {
-                    api.deposit_batch_with_nonce(&signer, chunk.to_vec(), nonce)
-                        .await
+                    api.deposit_batch_with_nonce(&signer, chunk, nonce).await
                 };
                 let elapsed = t_submit.elapsed();
                 match result {
@@ -338,22 +336,17 @@ where
         |st| (st.successes + st.failures, st.successes, st.failures),
     ));
 
-    while let Some(joined) = set.join_next().await {
-        joined.map_err(|e| anyhow!("worker panicked: {e}"))?;
-    }
     let ThroughputConsumerState {
         successes: count_finalized,
         failures: count_failed,
         batch_count: batch_count_finalized,
         latencies_ns,
-    } = consumer
-        .await
-        .map_err(|e| anyhow!("consumer panicked: {e}"))?;
+    } = join_workers_and_consumer(set, consumer).await?;
     let wall_time = started.elapsed();
 
     let count_submitted = count_finalized + count_failed;
     let tps_finalized = if wall_time.as_secs_f64() > 0.0 {
-        count_finalized as f64 / wall_time.as_secs_f64()
+        f64::from(count_finalized) / wall_time.as_secs_f64()
     } else {
         0.0
     };
@@ -399,13 +392,12 @@ where
         report.wall_time_ms,
     );
 
-    match out.as_deref() {
-        Some(path) => write_json_report(path, &report)?,
-        None => {
-            let json = serde_json::to_string_pretty(&report)
-                .map_err(|e| anyhow!("serialize throughput report: {e}"))?;
-            println!("\n{json}");
-        }
+    if let Some(path) = out.as_deref() {
+        write_json_report(path, &report)?;
+    } else {
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|e| anyhow!("serialize throughput report: {e}"))?;
+        println!("\n{json}");
     }
 
     Ok(())

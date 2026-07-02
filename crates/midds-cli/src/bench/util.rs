@@ -9,10 +9,27 @@ use serde::Serialize;
 /// Round-robin a flat list of payloads into `partitions` buckets so each bucket
 /// gets either `floor(n/p)` or `ceil(n/p)` items. Generic over the MIDDS
 /// payload type — every bench mode partitions the same way regardless of kind.
+/// A zero `partitions` is treated as one, so the helper can never divide by
+/// zero even if a future caller skips `sanitize_signer_concurrency`.
 pub fn partition_round_robin<T>(payloads: Vec<T>, partitions: usize) -> Vec<Vec<T>> {
+    let partitions = partitions.max(1);
     let mut batches: Vec<Vec<T>> = (0..partitions).map(|_| Vec::new()).collect();
     for (i, p) in payloads.into_iter().enumerate() {
         batches[i % partitions].push(p);
+    }
+    batches
+}
+
+/// Split `items` into owned `batch_size`-sized batches by moving the
+/// elements — no per-payload deep clone. A zero `batch_size` acts as one.
+pub fn split_into_batches<T>(items: Vec<T>, batch_size: usize) -> Vec<Vec<T>> {
+    let batch_size = batch_size.max(1);
+    let mut batches = Vec::with_capacity(items.len().div_ceil(batch_size));
+    let mut remaining = items;
+    while !remaining.is_empty() {
+        let tail = remaining.split_off(remaining.len().min(batch_size));
+        batches.push(remaining);
+        remaining = tail;
     }
     batches
 }

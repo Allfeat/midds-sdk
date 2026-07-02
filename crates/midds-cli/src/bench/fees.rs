@@ -5,7 +5,7 @@
 //! `bench throughput`). Each inner deposit emits its own `Deposited` event
 //! so per-record `bond` / `base_bond` stay accurate, but the runtime only
 //! emits one `TransactionFeePaid` for the outer extrinsic — the report
-//! amortises that fee across the batch's records. With batch_size=1 the
+//! amortises that fee across the batch's records. With `batch_size=1` the
 //! outer extrinsic is still a `batch_all` of one inner call, so `tx_fee`
 //! is the outer-extrinsic fee and includes the small batch dispatch
 //! overhead (one or two plancks at most).
@@ -57,10 +57,12 @@ use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{
     bench::{
-        util::{mean, percentile, sanitize_signer_concurrency, write_report_to},
+        util::{
+            mean, percentile, sanitize_signer_concurrency, split_into_batches, write_report_to,
+        },
         worker::{
-            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer,
-            setup_runner,
+            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, join_workers_and_consumer,
+            run_progress_consumer, setup_runner,
         },
     },
     cli::SizeDistribution,
@@ -262,9 +264,8 @@ where
         let tx = tx.clone();
         let batch_size_usize = batch_size as usize;
         set.spawn(async move {
-            let _permit = match semaphore.acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => return,
+            let Ok(_permit) = semaphore.acquire_owned().await else {
+                return;
             };
             let api = api_of(&client);
             let mut nonce = match fetch_signer_nonce(&client, &signer).await {
@@ -277,16 +278,14 @@ where
                     return;
                 }
             };
-            let chunk_sizes: Vec<u32> = partition
-                .chunks(batch_size_usize)
-                .map(|c| c.len() as u32)
-                .collect();
-            let total_chunks = chunk_sizes.len();
-            for (chunk_idx, chunk) in partition.chunks(batch_size_usize).enumerate() {
+            let batches = split_into_batches(partition, batch_size_usize);
+            let chunk_sizes: Vec<u32> = batches.iter().map(|c| c.len() as u32).collect();
+            let total_chunks = batches.len();
+            for (chunk_idx, chunk) in batches.into_iter().enumerate() {
                 let encoded_sizes: Vec<u32> =
                     chunk.iter().map(|w| w.encoded_size() as u32).collect();
                 match api
-                    .deposit_batch_with_receipts_nonce(&signer, chunk.to_vec(), nonce)
+                    .deposit_batch_with_receipts_nonce(&signer, chunk, nonce)
                     .await
                 {
                     Ok(receipts) => {
@@ -331,7 +330,7 @@ where
         |event, st, progress| match event {
             WorkerEvent::Sample(s) => st.samples.push(s),
             WorkerEvent::Failed { signer_idx, error } => {
-                progress.log(&format!("signer #{signer_idx}: deposit failed: {error}"))
+                progress.log(&format!("signer #{signer_idx}: deposit failed: {error}"));
             }
             WorkerEvent::SkippedRecords { count } => {
                 st.failed += count;
@@ -343,12 +342,7 @@ where
         },
     ));
 
-    while let Some(joined) = set.join_next().await {
-        joined.map_err(|e| anyhow!("worker panicked: {e}"))?;
-    }
-    let FeesConsumerState { samples, failed } = consumer
-        .await
-        .map_err(|e| anyhow!("consumer panicked: {e}"))?;
+    let FeesConsumerState { samples, failed } = join_workers_and_consumer(set, consumer).await?;
     let duration_ms = started.elapsed().as_millis();
 
     let snapshot_end = match api_of(&client).pricing_snapshot().await {
@@ -484,7 +478,7 @@ fn aggregate_rows(samples: &[Sample]) -> Vec<Vec<String>> {
         stat_row(
             "encoded size (bytes)",
             samples,
-            |s| s.encoded_size as u128,
+            |s| u128::from(s.encoded_size),
             |v| v.to_string(),
         ),
         stat_row(
@@ -496,7 +490,7 @@ fn aggregate_rows(samples: &[Sample]) -> Vec<Vec<String>> {
         stat_row(
             "premium (to Treasury)",
             samples,
-            |s| s.premium(),
+            Sample::premium,
             format::plancks,
         ),
         stat_row("total bond (held)", samples, |s| s.bond, format::plancks),
@@ -504,7 +498,7 @@ fn aggregate_rows(samples: &[Sample]) -> Vec<Vec<String>> {
         stat_row(
             "total user cost",
             samples,
-            |s| s.total_user_cost(),
+            Sample::total_user_cost,
             format::plancks,
         ),
     ]
@@ -582,7 +576,7 @@ fn format_snapshot(snap: &PricingSnapshot) -> String {
     let load_pct = if target == 0 {
         0.0
     } else {
-        (actual as f64 / target as f64) * 100.0
+        (f64::from(actual) / f64::from(target)) * 100.0
     };
     format!(
         "M_fast={:.4}× M_slow={:.4}× weekly={}/{} ({:.1}%)",

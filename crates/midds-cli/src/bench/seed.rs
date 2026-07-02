@@ -38,10 +38,10 @@ use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{
     bench::{
-        util::{sanitize_signer_concurrency, write_json_report},
+        util::{sanitize_signer_concurrency, split_into_batches, write_json_report},
         worker::{
-            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, run_progress_consumer,
-            setup_runner,
+            ApiOf, RunnerHandles, RunnerInputs, fetch_signer_nonce, join_workers_and_consumer,
+            run_progress_consumer, setup_runner,
         },
     },
     interactive,
@@ -115,8 +115,9 @@ pub struct Args<'a> {
     pub assume_yes: bool,
 }
 
-/// Public single-type entrypoint. Runs [`run_inner`], writes the JSON report
-/// when requested, and surfaces a failure-summary error if any deposit failed.
+/// Public single-type entrypoint. Resolves the config (CLI args or wizard),
+/// runs [`run_inner`], writes the JSON report when requested, and surfaces a
+/// failure-summary error if any deposit failed.
 ///
 /// Generic over the MIDDS payload via `F: MiddsFixtures`; `api_of` selects
 /// the `pallet-midds` instance façade (`musical_works` / `recordings`),
@@ -126,8 +127,11 @@ where
     F: MiddsFixtures,
     F::Item: Send + Sync + 'static,
 {
-    let report_path = args.report_path.map(PathBuf::from);
-    let report = run_inner::<F>(args, api_of, None).await?;
+    let cfg = resolve_seed_config(&args)?;
+    // Resolved here (not from `args`) so a report path typed in the wizard
+    // is honoured exactly like `--report`.
+    let report_path = cfg.report_path.clone();
+    let report = run_inner::<F>(cfg, args.url, args.assume_yes, api_of, None).await?;
     if let Some(path) = report_path.as_deref() {
         write_json_report(path, &report)?;
     }
@@ -183,20 +187,20 @@ pub async fn run_all(args: Args<'_>) -> Result<()> {
         interactive::confirm_or_abort(&prompt, true)?;
     }
 
-    let sub_args = |kind_count: u32| Args {
-        url: args.url,
-        count: Some(kind_count),
-        rng_seed: Some(cfg.rng_seed),
-        base_signer: cfg.base_signer.as_str(),
+    // Sub-runs get `assume_yes = true` (one global prompt above) and no
+    // per-type report path (the aggregate below carries the sub-reports).
+    let sub_cfg = |kind_count: u32| interactive::SeedConfig {
+        count: kind_count,
+        rng_seed: cfg.rng_seed,
+        base_signer: cfg.base_signer.clone(),
         signer_count,
         concurrency,
         batch_size,
         auto_fund: cfg.auto_fund,
-        funder: cfg.funder.as_str(),
+        funder: cfg.funder.clone(),
         fund_margin,
         fund_batch_size,
         report_path: None,
-        assume_yes: true,
     };
 
     let started = Instant::now();
@@ -204,7 +208,9 @@ pub async fn run_all(args: Args<'_>) -> Result<()> {
 
     if c_mw > 0 {
         let r = run_inner::<MusicalWorkFixtures>(
-            sub_args(c_mw),
+            sub_cfg(c_mw),
+            args.url,
+            true,
             MiddsClient::musical_works,
             Some("musical-work"),
         )
@@ -213,7 +219,9 @@ pub async fn run_all(args: Args<'_>) -> Result<()> {
     }
     if c_rec > 0 {
         let r = run_inner::<RecordingFixtures>(
-            sub_args(c_rec),
+            sub_cfg(c_rec),
+            args.url,
+            true,
             MiddsClient::recordings,
             Some("recording"),
         )
@@ -221,9 +229,14 @@ pub async fn run_all(args: Args<'_>) -> Result<()> {
         sub_reports.push(r);
     }
     if c_rel > 0 {
-        let r =
-            run_inner::<ReleaseFixtures>(sub_args(c_rel), MiddsClient::releases, Some("release"))
-                .await?;
+        let r = run_inner::<ReleaseFixtures>(
+            sub_cfg(c_rel),
+            args.url,
+            true,
+            MiddsClient::releases,
+            Some("release"),
+        )
+        .await?;
         sub_reports.push(r);
     }
 
@@ -319,11 +332,14 @@ fn failure_error(report: &SeedReport) -> anyhow::Error {
 /// the `pallet-midds` instance façade (`musical_works` / `recordings` / …),
 /// dispatched per `--midds-type` in `main.rs`.
 ///
-/// Returns the assembled [`SeedReport`] instead of writing it directly so
-/// [`run_all`] can aggregate sub-reports into a [`SeedAllReport`]. Single-type
-/// callers go through [`run`], which wraps this and writes the JSON itself.
+/// Takes an already-resolved [`interactive::SeedConfig`] — the CLI-vs-wizard
+/// resolution happens once, in [`run`] / [`run_all`] — and returns the
+/// assembled [`SeedReport`] instead of writing it directly so [`run_all`]
+/// can aggregate sub-reports into a [`SeedAllReport`].
 async fn run_inner<F>(
-    args: Args<'_>,
+    cfg: interactive::SeedConfig,
+    url: &str,
+    assume_yes: bool,
     api_of: ApiOf<F::Item>,
     midds_kind: Option<&'static str>,
 ) -> Result<SeedReport>
@@ -331,41 +347,6 @@ where
     F: MiddsFixtures,
     F::Item: Send + Sync + 'static,
 {
-    let Args {
-        url,
-        count,
-        rng_seed,
-        base_signer,
-        signer_count,
-        concurrency,
-        batch_size,
-        auto_fund,
-        funder,
-        fund_margin,
-        fund_batch_size,
-        report_path: _,
-        assume_yes,
-    } = args;
-
-    let cfg = interactive::SeedConfig {
-        count: count.unwrap_or(0),
-        rng_seed: rng_seed.unwrap_or(DEFAULT_RNG_SEED),
-        base_signer: base_signer.to_string(),
-        signer_count,
-        concurrency,
-        batch_size,
-        auto_fund,
-        funder: funder.to_string(),
-        fund_margin,
-        fund_batch_size,
-        report_path: None,
-    };
-    let cfg = if count.is_some() {
-        cfg
-    } else {
-        interactive::seed_wizard(cfg)?
-    };
-
     let interactive::SeedConfig {
         count,
         rng_seed,
@@ -440,9 +421,8 @@ where
         let batch_size = batch_size as usize;
         let tx = tx.clone();
         set.spawn(async move {
-            let _permit = match semaphore.acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => return,
+            let Ok(_permit) = semaphore.acquire_owned().await else {
+                return;
             };
             let api = api_of(&client);
             let mut nonce = match fetch_signer_nonce(&client, &signer).await {
@@ -456,18 +436,15 @@ where
                     u64::MAX
                 }
             };
-            let chunk_sizes: Vec<u32> = payloads
-                .chunks(batch_size)
-                .map(|c| c.len() as u32)
-                .collect();
-            let total_chunks = chunk_sizes.len();
-            for (chunk_idx, chunk) in payloads.chunks(batch_size).enumerate() {
+            let batches = split_into_batches(payloads, batch_size);
+            let chunk_sizes: Vec<u32> = batches.iter().map(|c| c.len() as u32).collect();
+            let total_chunks = batches.len();
+            for (chunk_idx, chunk) in batches.into_iter().enumerate() {
                 let chunk_size = chunk.len() as u32;
                 let result = if nonce == u64::MAX {
-                    api.deposit_batch(&signer, chunk.to_vec()).await
+                    api.deposit_batch(&signer, chunk).await
                 } else {
-                    api.deposit_batch_with_nonce(&signer, chunk.to_vec(), nonce)
-                        .await
+                    api.deposit_batch_with_nonce(&signer, chunk, nonce).await
                 };
                 match result {
                     Ok(()) => {
@@ -506,8 +483,8 @@ where
         SignerOutcome::default(),
         |event, total, progress| match event {
             WorkerEvent::Chunk { ok, failed } => {
-                total.ok += ok as u64;
-                total.failed += failed as u64;
+                total.ok += u64::from(ok);
+                total.failed += u64::from(failed);
             }
             WorkerEvent::Notice(msg) => progress.log(&msg),
         },
@@ -517,12 +494,7 @@ where
         },
     ));
 
-    while let Some(joined) = set.join_next().await {
-        joined.map_err(|e| anyhow!("worker panicked: {e}"))?;
-    }
-    let total = consumer
-        .await
-        .map_err(|e| anyhow!("consumer panicked: {e}"))?;
+    let total = join_workers_and_consumer(set, consumer).await?;
     let duration_ms = started.elapsed().as_millis();
 
     let next_midds_id = api_of(&client).next_midds_id().await?;

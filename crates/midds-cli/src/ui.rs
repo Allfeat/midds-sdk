@@ -121,7 +121,7 @@ pub fn summary(title: &str, rows: &[(String, String)]) {
 /// `>` redirect untouched.
 pub fn payload_panel(title: &str, body: &str) {
     eprintln!();
-    eprintln!("  {} {}", style("▍").cyan(), style(title).cyan().bold(),);
+    eprintln!("  {} {}", style("▍").cyan(), style(title).cyan().bold());
     eprintln!("  {}", style("─".repeat(PANEL_WIDTH)).dim());
     println!("{body}");
 }

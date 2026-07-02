@@ -19,6 +19,7 @@ use crate::ui;
 
 const STEPS: usize = 9;
 
+/// Walk the interactive form and assemble a validated `MusicalWork::V1`.
 pub fn build() -> Result<MusicalWork> {
     ui::section("MusicalWork · V1");
 
@@ -103,12 +104,12 @@ fn build_work_type() -> Result<WorkType> {
     Ok(match kind {
         Kind::Original => WorkType::Original,
         Kind::Medley | Kind::Mashup => {
-            let refs =
-                prompts::collect_bounded("source ISWC", 2, WORK_REFERENCES_MAX as usize, |_| {
-                    prompts::identifier("Source ISWC", shared::parse_iswc_msg, "T0345246801")
-                })?;
-            let refs = WorkReferences::try_from(refs)
-                .map_err(|_| anyhow::anyhow!("more than {WORK_REFERENCES_MAX} source works"))?;
+            let refs: WorkReferences = prompts::collect_bounded_into(
+                "source ISWC",
+                2,
+                WORK_REFERENCES_MAX as usize,
+                |_| prompts::identifier("Source ISWC", shared::parse_iswc_msg, "T0345246801"),
+            )?;
             if matches!(kind, Kind::Medley) {
                 WorkType::Medley(refs)
             } else {
@@ -130,15 +131,13 @@ fn build_work_type() -> Result<WorkType> {
 /// Sampled-work references — works this work sampled. Each is a `WorkRef`:
 /// an external ISWC, or the cheaper on-chain MIDDS id. The list may be empty.
 fn build_samples() -> Result<SampleReferences> {
-    let samples = prompts::collect_bounded("sampled work", 0, SAMPLES_MAX as usize, |_| {
+    prompts::collect_bounded_into("sampled work", 0, SAMPLES_MAX as usize, |_| {
         shared::work_ref("Sampled work reference")
-    })?;
-    SampleReferences::try_from(samples)
-        .map_err(|_| anyhow::anyhow!("more than {SAMPLES_MAX} samples"))
+    })
 }
 
 fn build_creators() -> Result<Creators> {
-    let creators = prompts::collect_bounded(
+    prompts::collect_bounded_into(
         "creator",
         1,
         CREATORS_MAX as usize,
@@ -165,8 +164,7 @@ fn build_creators() -> Result<Creators> {
             let party = shared::party_id("Creator identifier")?;
             Ok(Creator { roles, party })
         },
-    )?;
-    Creators::try_from(creators).map_err(|_| anyhow::anyhow!("more than {CREATORS_MAX} creators"))
+    )
 }
 
 fn build_classical_info() -> Result<Option<ClassicalInfo>> {

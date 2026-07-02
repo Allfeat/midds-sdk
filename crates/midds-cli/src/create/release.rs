@@ -16,17 +16,19 @@ use crate::ui;
 
 const STEPS: usize = 9;
 
+/// Walk the interactive form and assemble a validated `Release::V1`.
 pub fn build() -> Result<Release> {
     ui::section("Release · V1");
 
     ui::step(1, STEPS, "Identification");
     let upc: Upc = prompts::identifier("UPC / EAN", shared::parse_upc_msg, "0123456789012")?;
     let title = prompts::bounded_string::<TITLE_MAX_LEN>("Title", true)?;
-    let title_aliases = build_title_aliases()?;
+    let title_aliases: release::TitleAliases =
+        shared::title_aliases(release::TITLE_ALIASES_MAX as usize)?;
 
     ui::step(2, STEPS, "Artist & featuring");
     let artist = shared::party_id("Main artist identifier")?;
-    let featuring = build_featuring()?;
+    let featuring: Featuring = shared::featuring(FEATURING_MAX as usize)?;
 
     ui::step(3, STEPS, "Tracklist");
     let tracks = build_tracks()?;
@@ -129,46 +131,25 @@ pub fn build() -> Result<Release> {
     }))
 }
 
-fn build_title_aliases() -> Result<release::TitleAliases> {
-    let aliases = prompts::collect_bounded(
-        "title alias",
-        0,
-        release::TITLE_ALIASES_MAX as usize,
-        |_| prompts::bounded_string::<TITLE_MAX_LEN>("Alias", true),
-    )?;
-    release::TitleAliases::try_from(aliases)
-        .map_err(|_| anyhow::anyhow!("more than {} title aliases", release::TITLE_ALIASES_MAX))
-}
-
-fn build_featuring() -> Result<Featuring> {
-    let featuring = prompts::collect_bounded("featured artist", 0, FEATURING_MAX as usize, |_| {
-        shared::party_id("Featured artist identifier")
-    })?;
-    Featuring::try_from(featuring)
-        .map_err(|_| anyhow::anyhow!("more than {FEATURING_MAX} featured artists"))
-}
-
 fn build_tracks() -> Result<Tracks> {
     ui::info(
         "a release needs at least one track; track numbers must run 1..N \
          (start at 1, no gaps) and every recording must be unique",
     );
-    let tracks =
-        prompts::collect_bounded("track", 1, TRACKS_MAX as usize, |idx| -> Result<Track> {
-            let number = prompts::int_in_range::<u16>(
-                "Track number",
-                1,
-                TRACKS_MAX as u16,
-                Some((idx + 1) as u16),
-            )?;
-            let recording = shared::recording_ref(&format!("Track #{number} recording"))?;
-            Ok(Track { number, recording })
-        })?;
-    Tracks::try_from(tracks).map_err(|_| anyhow::anyhow!("more than {TRACKS_MAX} tracks"))
+    prompts::collect_bounded_into("track", 1, TRACKS_MAX as usize, |idx| -> Result<Track> {
+        let number = prompts::int_in_range::<u16>(
+            "Track number",
+            1,
+            TRACKS_MAX as u16,
+            Some((idx + 1) as u16),
+        )?;
+        let recording = shared::recording_ref(&format!("Track #{number} recording"))?;
+        Ok(Track { number, recording })
+    })
 }
 
 fn build_producers() -> Result<release::Producers> {
-    let producers = prompts::collect_bounded(
+    prompts::collect_bounded_into(
         "producer / label",
         0,
         release::PRODUCERS_MAX as usize,
@@ -182,18 +163,14 @@ fn build_producers() -> Result<release::Producers> {
                 catalog_number,
             })
         },
-    )?;
-    release::Producers::try_from(producers)
-        .map_err(|_| anyhow::anyhow!("more than {} producers", release::PRODUCERS_MAX))
+    )
 }
 
 fn build_cover_contributors() -> Result<CoverContributors> {
-    let names = prompts::collect_bounded(
+    prompts::collect_bounded_into(
         "cover contributor",
         0,
         COVER_CONTRIBUTORS_MAX as usize,
         |_| prompts::bounded_string::<COVER_CONTRIBUTOR_NAME_MAX_LEN>("Contributor name", true),
-    )?;
-    CoverContributors::try_from(names)
-        .map_err(|_| anyhow::anyhow!("more than {COVER_CONTRIBUTORS_MAX} cover contributors"))
+    )
 }

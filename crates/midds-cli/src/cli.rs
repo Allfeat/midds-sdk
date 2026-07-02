@@ -42,6 +42,7 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
+/// Top-level `midds` subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Build a MIDDS payload interactively and emit it as validated SCALE
@@ -133,6 +134,7 @@ pub enum Command {
     },
 }
 
+/// `midds bench` measurement modes.
 #[derive(Subcommand, Debug)]
 pub enum BenchArgs {
     /// Deposit `count` records and report bond + tx fee per record.
@@ -304,6 +306,7 @@ pub enum MiddsKind {
     All,
 }
 
+/// Payload-size profile used by `bench fees` to shape its sample set.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum SizeDistribution {
     /// Realistic mix from `midds-fixtures::gen_n` (~50–250 byte payloads).

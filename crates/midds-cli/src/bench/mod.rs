@@ -4,9 +4,9 @@
 //! mass seeding for frontends/dev environments, fee measurement per deposit,
 //! and aggregate throughput benchmarks.
 
-pub mod fees;
+pub(crate) mod fees;
 pub(crate) mod progress;
-pub mod seed;
-pub mod throughput;
+pub(crate) mod seed;
+pub(crate) mod throughput;
 pub(crate) mod util;
 pub(crate) mod worker;

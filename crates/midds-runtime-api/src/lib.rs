@@ -1,9 +1,28 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
 //! Runtime APIs exposed by `pallet-midds` instances for off-chain consumers.
 //!
 //! Each MIDDS kind gets its **own** runtime-API trait — `MusicalWorkApi`,
 //! `RecordingApi`, … — stamped from a single canonical method list by the
-//! [`decl_midds_api!`] macro. They are byte-for-byte identical in shape;
-//! only the trait name differs.
+//! crate-internal `decl_midds_api!` macro. They are byte-for-byte identical
+//! in shape; only the trait name differs.
 //!
 //! Why not one generic `MiddsApi<Identifier, Item, …>` implemented per
 //! instance? Substrate keys runtime-API dispatch on the **trait name** (the
@@ -19,6 +38,8 @@
 //! the network's current load and quote a deposit before signing.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 

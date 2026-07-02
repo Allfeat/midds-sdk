@@ -32,6 +32,14 @@ static ISRC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Z]{2})-?([A-Z0-9]{3})-?(\d{2})-?(\d{5})$").unwrap());
 
 /// Parse a tolerant ISWC string into the canonical 11-byte form `T` + 10 digits.
+///
+/// ```
+/// use midds_validate::parse_iswc;
+///
+/// let iswc = parse_iswc("T-034.524.680-1").expect("tolerant shape accepted");
+/// assert_eq!(iswc.as_slice(), b"T0345246801");
+/// assert!(parse_iswc("034524680").is_err());
+/// ```
 pub fn parse_iswc(s: &str) -> Result<Iswc, ParseError> {
     let upper = s.trim().to_ascii_uppercase();
     let caps = ISWC_RE
@@ -47,6 +55,13 @@ pub fn parse_iswc(s: &str) -> Result<Iswc, ParseError> {
 
 /// Parse a tolerant ISNI string into the canonical 16-byte form
 /// (15 digits + final digit or `X`).
+///
+/// ```
+/// use midds_validate::parse_isni;
+///
+/// let isni = parse_isni("0000 0001 2103 2683").expect("space-grouped shape accepted");
+/// assert_eq!(isni.as_slice(), b"0000000121032683");
+/// ```
 pub fn parse_isni(s: &str) -> Result<Isni, ParseError> {
     let upper = s.trim().to_ascii_uppercase();
     let caps = ISNI_RE
@@ -68,6 +83,13 @@ pub fn parse_isni(s: &str) -> Result<Isni, ParseError> {
 /// well-formed `Ipi`. Inputs already 9–11 digits are returned verbatim — they
 /// are already canonical on-chain and we must not silently rewrite them, since
 /// `IdentifierIndex` keys IPIs by exact bytes.
+///
+/// ```
+/// use midds_validate::parse_ipi;
+///
+/// assert_eq!(parse_ipi("I-12345").expect("prefixed").as_slice(), b"00000012345");
+/// assert_eq!(parse_ipi("123456789").expect("canonical").as_slice(), b"123456789");
+/// ```
 pub fn parse_ipi(s: &str) -> Result<Ipi, ParseError> {
     let upper = s.trim().to_ascii_uppercase();
     let caps = IPI_RE.captures(&upper).ok_or(ParseError::PatternMismatch)?;
@@ -90,6 +112,13 @@ pub fn parse_ipi(s: &str) -> Result<Ipi, ParseError> {
 /// operator workflow (pasting a shorter raw IPN typed by a performer CMO
 /// without thinking about zero-padding). No `I-` prefix is accepted: the
 /// `I-` convention is specific to IPI Name Numbers.
+///
+/// ```
+/// use midds_validate::parse_ipn;
+///
+/// assert_eq!(parse_ipn("12345").expect("short input").as_slice(), b"00012345");
+/// assert!(parse_ipn("I-12345").is_err());
+/// ```
 pub fn parse_ipn(s: &str) -> Result<Ipn, ParseError> {
     let trimmed = s.trim();
     let caps = IPN_RE
@@ -114,6 +143,13 @@ pub fn parse_ipn(s: &str) -> Result<Ipn, ParseError> {
 /// - `US-RC1-76-07839` (separators between every segment)
 /// - `US-RC1-7607839` / `USRC1-76-07839` (partial separators)
 /// - leading / trailing whitespace
+///
+/// ```
+/// use midds_validate::parse_isrc;
+///
+/// let isrc = parse_isrc("us-rc1-76-07839").expect("dashed lowercase accepted");
+/// assert_eq!(isrc.as_slice(), b"USRC17607839");
+/// ```
 pub fn parse_isrc(s: &str) -> Result<Isrc, ParseError> {
     let upper = s.trim().to_ascii_uppercase();
     let caps = ISRC_RE
@@ -134,6 +170,13 @@ pub fn parse_isrc(s: &str) -> Result<Isrc, ParseError> {
 /// so every ASCII space and `-` is stripped before the digit/length check.
 /// The check digit is **not** verified here — that is the warning-only
 /// `verify_upc_checksum` in `crate::checksum`.
+///
+/// ```
+/// use midds_validate::parse_upc;
+///
+/// let upc = parse_upc("0-36000-29145-2").expect("hyphenated shape accepted");
+/// assert_eq!(upc.as_slice(), b"036000291452");
+/// ```
 pub fn parse_upc(s: &str) -> Result<Upc, ParseError> {
     let cleaned: Vec<u8> = s
         .bytes()
@@ -262,7 +305,11 @@ mod tests {
 
     #[test]
     fn ipn_pads_short_input_to_eight() {
-        for (input, expected) in [("1", "00000001"), ("12", "00000012"), ("1234567", "01234567")] {
+        for (input, expected) in [
+            ("1", "00000001"),
+            ("12", "00000012"),
+            ("1234567", "01234567"),
+        ] {
             assert_eq!(
                 parse_ipn(input).unwrap().as_slice(),
                 expected.as_bytes(),

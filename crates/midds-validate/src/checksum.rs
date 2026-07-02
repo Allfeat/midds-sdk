@@ -23,12 +23,19 @@ pub enum CheckResult {
 /// Verify the ISWC check digit using the CISAC weighted mod-10 algorithm:
 /// weights `1..=9` over the 9-digit work code, expected check digit is
 /// `(10 − sum mod 10) mod 10`.
+///
+/// ```
+/// use midds_validate::{CheckResult, parse_iswc, verify_iswc_checksum};
+///
+/// let iswc = parse_iswc("T0345246802").expect("well-formed");
+/// assert_eq!(verify_iswc_checksum(&iswc), CheckResult::Pass);
+/// ```
 pub fn verify_iswc_checksum(iswc: &Iswc) -> CheckResult {
     let bytes = iswc.as_slice();
     if bytes.len() != 11 || bytes[0] != b'T' || !bytes[1..].iter().all(u8::is_ascii_digit) {
         return CheckResult::NotApplicable;
     }
-    let digits: [u32; 10] = core::array::from_fn(|i| (bytes[i + 1] - b'0') as u32);
+    let digits: [u32; 10] = core::array::from_fn(|i| u32::from(bytes[i + 1] - b'0'));
     let sum: u32 = digits[..9]
         .iter()
         .enumerate()
@@ -53,14 +60,14 @@ pub fn verify_isni_checksum(isni: &Isni) -> CheckResult {
     let parsed = if last == b'X' {
         10
     } else if last.is_ascii_digit() {
-        (last - b'0') as u32
+        u32::from(last - b'0')
     } else {
         return CheckResult::NotApplicable;
     };
 
     let mut r: u32 = 0;
     for &b in &bytes[..15] {
-        let d = (b - b'0') as u32;
+        let d = u32::from(b - b'0');
         r = ((r + d) * 2) % 11;
     }
     let expected = (12 - r) % 11;
@@ -88,6 +95,7 @@ pub fn verify_isni_checksum(isni: &Isni) -> CheckResult {
 /// it is structurally well-formed.
 ///
 /// [ISO 3901]: https://www.iso.org/standard/64817.html
+#[must_use]
 pub fn verify_isrc_checksum(isrc: &Isrc) -> CheckResult {
     match validate_isrc_format(isrc.as_slice()) {
         Ok(()) => CheckResult::Pass,
@@ -110,10 +118,10 @@ pub fn verify_ipi_checksum(ipi: &Ipi) -> CheckResult {
     let sum: u32 = bytes[..len - 1]
         .iter()
         .enumerate()
-        .map(|(i, b)| ((b - b'0') as u32) * (i as u32 + 1))
+        .map(|(i, b)| u32::from(b - b'0') * (i as u32 + 1))
         .sum();
     let expected = (10 - sum % 10) % 10;
-    let actual = (bytes[len - 1] - b'0') as u32;
+    let actual = u32::from(bytes[len - 1] - b'0');
     if expected == actual {
         CheckResult::Pass
     } else {
@@ -138,10 +146,10 @@ pub fn verify_upc_checksum(upc: &Upc) -> CheckResult {
         .iter()
         .rev()
         .enumerate()
-        .map(|(i, b)| ((b - b'0') as u32) * if i % 2 == 0 { 3 } else { 1 })
+        .map(|(i, b)| u32::from(b - b'0') * if i % 2 == 0 { 3 } else { 1 })
         .sum();
     let expected = (10 - sum % 10) % 10;
-    let actual = (check[0] - b'0') as u32;
+    let actual = u32::from(check[0] - b'0');
     if expected == actual {
         CheckResult::Pass
     } else {

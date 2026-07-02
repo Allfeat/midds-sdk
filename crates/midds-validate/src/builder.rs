@@ -8,20 +8,141 @@
 //! contract for CLI / wizard-style flows where a user typed several
 //! fields and wants every problem flagged in one pass.
 //!
-//! Recording / Release will follow this template — see the body of
-//! [`MusicalWorkBuilder::build`] for the aggregation pattern.
+//! All three builders ([`MusicalWorkBuilder`], [`RecordingBuilder`],
+//! [`ReleaseBuilder`]) share the same aggregation pattern and the private
+//! text / list / identifier helpers below.
 
 use std::sync::LazyLock;
 
-use bounded_collections::BoundedVec;
-use midds_traits::{Iswc, OffchainHash};
+use bounded_collections::{BoundedVec, Get};
+use midds_traits::{Iswc, MiddsString, OffchainHash};
 use midds_types::{
     CREATORS_MAX, Creator, CreatorRole, CreatorRoles, Language, MusicalKey, MusicalWork,
-    MusicalWorkV1, PartyId, SAMPLES_MAX, TITLE_MAX_LEN, WorkRef, WorkType,
+    MusicalWorkV1, PartyId, TITLE_MAX_LEN, WorkRef, WorkType,
 };
 
-use crate::error::{BuildError, FieldError};
+use crate::error::{BuildError, FieldError, ParseError};
 use crate::parse::{parse_ipi, parse_isni, parse_iswc};
+
+/// Parse one mandatory identifier input through `parse_fn`, pushing a
+/// [`FieldError`] under `field` on failure.
+fn parse_field<T>(
+    field: &'static str,
+    raw: &str,
+    parse_fn: impl FnOnce(&str) -> Result<T, ParseError>,
+    errors: &mut Vec<FieldError>,
+) -> Option<T> {
+    match parse_fn(raw) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            errors.push(FieldError {
+                field,
+                message: format!("`{raw}`: {e}"),
+            });
+            None
+        }
+    }
+}
+
+/// Trim and bound one mandatory free-text input. `noun` names the value in
+/// diagnostics (`"title"`, `"distributor name"`, `"#0 catalog number"`).
+fn bounded_text<const N: u32>(
+    field: &'static str,
+    noun: &str,
+    raw: &str,
+    errors: &mut Vec<FieldError>,
+) -> Option<MiddsString<N>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        errors.push(FieldError {
+            field,
+            message: format!("{noun} is empty after trimming"),
+        });
+        return None;
+    }
+    if let Ok(t) = BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
+        Some(t)
+    } else {
+        errors.push(FieldError {
+            field,
+            message: format!("{noun} is {} bytes, exceeds {N}-byte bound", trimmed.len()),
+        });
+        None
+    }
+}
+
+/// Bound-check an assembled list against the target `BoundedVec`'s own
+/// `C::get()` — the guard and the container can never drift apart.
+fn finish_bounded<T, C: Get<u32>>(
+    field: &'static str,
+    noun: &str,
+    items: Vec<T>,
+    errors: &mut Vec<FieldError>,
+) -> Option<BoundedVec<T, C>> {
+    let max = C::get();
+    if items.len() > max as usize {
+        let n = items.len();
+        let message = if noun.is_empty() {
+            format!("{n} provided, exceeds {max} max")
+        } else {
+            format!("{n} {noun} provided, exceeds {max} max")
+        };
+        errors.push(FieldError { field, message });
+        return None;
+    }
+    BoundedVec::try_from(items).ok()
+}
+
+/// Trim and bound each entry of a free-text list, then bound the list
+/// itself. `entry_prefix`/`list_noun` shape the diagnostics.
+fn bounded_text_list<const N: u32, C: Get<u32>>(
+    field: &'static str,
+    entry_prefix: &str,
+    list_noun: &str,
+    raws: &[String],
+    errors: &mut Vec<FieldError>,
+) -> Option<BoundedVec<MiddsString<N>, C>> {
+    let mut items = Vec::with_capacity(raws.len());
+    for (i, raw) in raws.iter().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            errors.push(FieldError {
+                field,
+                message: format!("{entry_prefix}#{i} is empty after trimming"),
+            });
+            continue;
+        }
+        match BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
+            Ok(v) => items.push(v),
+            Err(_) => errors.push(FieldError {
+                field,
+                message: format!(
+                    "{entry_prefix}#{i} is {} bytes, exceeds {N}-byte bound",
+                    trimmed.len()
+                ),
+            }),
+        }
+    }
+    finish_bounded(field, list_noun, items, errors)
+}
+
+/// Resolve the optional off-chain-extension input: `Some(None)` when
+/// absent, `None` plus a [`FieldError`] on empty or oversized input.
+fn parse_offchain(raw: Option<&str>, errors: &mut Vec<FieldError>) -> Option<Option<OffchainHash>> {
+    match raw {
+        Some(raw) => match OffchainHash::try_from(raw.as_bytes().to_vec()) {
+            Ok(h) if !h.is_empty() => Some(Some(h)),
+            _ => {
+                errors.push(FieldError {
+                    field: "offchain_extension",
+                    message: "empty or larger than 64-byte bound".into(),
+                });
+                None
+            }
+        },
+        None => Some(None),
+    }
+}
 
 /// Pre-computed `"creators[i]"` strings for `i in 0..CREATORS_MAX`. The leak
 /// fires at most `CREATORS_MAX` times across the whole process — bounded
@@ -43,6 +164,19 @@ fn creator_field_name(index: usize) -> &'static str {
 /// where every failing field surfaces as a [`FieldError`] inside
 /// `BuildError::Fields`. A user supplying three bad inputs gets all three
 /// diagnostics, not just the first.
+///
+/// ```
+/// use midds_validate::MusicalWorkBuilder;
+///
+/// let work = MusicalWorkBuilder::new()
+///     .iswc("T-034.524.680-2")
+///     .title("  My Work  ")
+///     .add_creator("I-123456789")
+///     .build()
+///     .expect("tolerant inputs normalise to a valid payload");
+/// # let midds_types::MusicalWork::V1(v1) = work;
+/// # assert_eq!(v1.iswc.as_slice(), b"T0345246802");
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct MusicalWorkBuilder {
     iswc_raw: Option<String>,
@@ -86,44 +220,56 @@ impl MusicalWorkBuilder {
     /// Empty builder. `iswc`, `title`, and at least one creator must be set
     /// before [`build`](Self::build); `creation_year` is optional and left
     /// unset translates to `None` on the payload.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Free-form ISWC input. Anything [`parse_iswc`] accepts works:
     /// `T0345246802`, `T-034.524.680-2`, padded / lowercased / etc.
+    #[must_use]
     pub fn iswc(mut self, s: &str) -> Self {
         self.iswc_raw = Some(s.to_string());
         self
     }
 
     /// Title. Trimmed of leading/trailing whitespace at build time.
+    #[must_use]
     pub fn title(mut self, s: &str) -> Self {
         self.title_raw = Some(s.to_string());
         self
     }
 
+    /// Year the work was created (`1..=2999` on-chain).
+    #[must_use]
     pub fn creation_year(mut self, year: u16) -> Self {
         self.creation_year = Some(year);
         self
     }
 
+    /// Whether the work has no lyrics.
+    #[must_use]
     pub fn instrumental(mut self, value: bool) -> Self {
         self.instrumental = value;
         self
     }
 
+    /// Whether the lyrics are explicit.
+    #[must_use]
     pub fn explicit_lyrics(mut self, value: bool) -> Self {
         self.explicit_lyrics = value;
         self
     }
 
+    /// Language of the lyrics (typed enum — no parsing).
+    #[must_use]
     pub fn language(mut self, language: Language) -> Self {
         self.language = Some(language);
         self
     }
 
     /// Reference a work sampled by this one, by its on-chain MIDDS id.
+    #[must_use]
     pub fn add_sample_midds(mut self, id: u64) -> Self {
         self.samples_raw.push(SampleInput::Midds(id));
         self
@@ -131,21 +277,28 @@ impl MusicalWorkBuilder {
 
     /// Reference a work sampled by this one, by a free-form ISWC string
     /// (anything [`parse_iswc`] accepts).
+    #[must_use]
     pub fn add_sample_iswc(mut self, iswc: &str) -> Self {
         self.samples_raw.push(SampleInput::Iswc(iswc.to_string()));
         self
     }
 
+    /// Tempo in beats per minute (`20..=300` on-chain).
+    #[must_use]
     pub fn bpm(mut self, bpm: u16) -> Self {
         self.bpm = Some(bpm);
         self
     }
 
+    /// Diatonic key (typed enum — no parsing).
+    #[must_use]
     pub fn key(mut self, key: MusicalKey) -> Self {
         self.key = Some(key);
         self
     }
 
+    /// Original / derived classification (typed enum — no parsing).
+    #[must_use]
     pub fn work_type(mut self, work_type: WorkType) -> Self {
         self.work_type = Some(work_type);
         self
@@ -154,11 +307,13 @@ impl MusicalWorkBuilder {
     /// Append a creator with explicit IPI input (any [`parse_ipi`]-accepted
     /// format) and a single `Composer` role — convenience for the most
     /// common case.
+    #[must_use]
     pub fn add_creator(self, ipi: &str) -> Self {
         self.add_creator_with_role(CreatorRole::Composer, ipi)
     }
 
     /// Append a creator with an explicit role and IPI input.
+    #[must_use]
     pub fn add_creator_with_role(mut self, role: CreatorRole, ipi: &str) -> Self {
         self.creators_raw.push(CreatorInput {
             roles: vec![role],
@@ -169,6 +324,7 @@ impl MusicalWorkBuilder {
     }
 
     /// Append a creator identified by an ISNI with a single role.
+    #[must_use]
     pub fn add_creator_isni(mut self, role: CreatorRole, isni: &str) -> Self {
         self.creators_raw.push(CreatorInput {
             roles: vec![role],
@@ -196,8 +352,9 @@ impl MusicalWorkBuilder {
         self
     }
 
-    /// Off-chain extension hash (CIDv1 by client convention). Stored
+    /// Off-chain extension hash (`CIDv1` by client convention). Stored
     /// verbatim and bound-checked at build time.
+    #[must_use]
     pub fn offchain_extension(mut self, bytes: &str) -> Self {
         self.offchain_extension_raw = Some(bytes.to_string());
         self
@@ -222,39 +379,8 @@ impl MusicalWorkBuilder {
 
         let mut errors: Vec<FieldError> = Vec::new();
 
-        let iswc: Option<Iswc> = match parse_iswc(iswc_raw) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                errors.push(FieldError {
-                    field: "iswc",
-                    message: format!("`{iswc_raw}`: {e}"),
-                });
-                None
-            }
-        };
-
-        let title_trimmed = title_raw.trim();
-        let title = if title_trimmed.is_empty() {
-            errors.push(FieldError {
-                field: "title",
-                message: "title is empty after trimming".into(),
-            });
-            None
-        } else {
-            match BoundedVec::try_from(title_trimmed.as_bytes().to_vec()) {
-                Ok(t) => Some(t),
-                Err(_) => {
-                    errors.push(FieldError {
-                        field: "title",
-                        message: format!(
-                            "title is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
-                            title_trimmed.len()
-                        ),
-                    });
-                    None
-                }
-            }
-        };
+        let iswc: Option<Iswc> = parse_field("iswc", iswc_raw, parse_iswc, &mut errors);
+        let title = bounded_text::<TITLE_MAX_LEN>("title", "title", title_raw, &mut errors);
 
         let mut creators = Vec::with_capacity(self.creators_raw.len());
         for (i, input) in self.creators_raw.iter().enumerate() {
@@ -337,18 +463,7 @@ impl MusicalWorkBuilder {
                 });
             }
         }
-        let creators_bv = if creators.len() > CREATORS_MAX as usize {
-            errors.push(FieldError {
-                field: "creators",
-                message: format!(
-                    "{} creators provided, exceeds {CREATORS_MAX} max",
-                    creators.len()
-                ),
-            });
-            None
-        } else {
-            BoundedVec::try_from(creators).ok()
-        };
+        let creators_bv = finish_bounded("creators", "creators", creators, &mut errors);
 
         // Sampled-work references: MIDDS ids pass through, ISWC strings are
         // tolerant-parsed; each failure surfaces as a `samples` field error.
@@ -365,32 +480,8 @@ impl MusicalWorkBuilder {
                 },
             }
         }
-        let samples_bv = if samples.len() > SAMPLES_MAX as usize {
-            errors.push(FieldError {
-                field: "samples",
-                message: format!(
-                    "{} samples provided, exceeds {SAMPLES_MAX} max",
-                    samples.len()
-                ),
-            });
-            None
-        } else {
-            BoundedVec::try_from(samples).ok()
-        };
-
-        let offchain = match self.offchain_extension_raw {
-            Some(raw) => match OffchainHash::try_from(raw.into_bytes()) {
-                Ok(h) if !h.is_empty() => Some(Some(h)),
-                _ => {
-                    errors.push(FieldError {
-                        field: "offchain_extension",
-                        message: "empty or larger than 64-byte bound".into(),
-                    });
-                    None
-                }
-            },
-            None => Some(None),
-        };
+        let samples_bv = finish_bounded("samples", "samples", samples, &mut errors);
+        let offchain = parse_offchain(self.offchain_extension_raw.as_deref(), &mut errors);
 
         if !errors.is_empty() {
             return Err(BuildError::Fields(errors));
@@ -556,9 +647,8 @@ mod tests {
 
 use midds_traits::Isni;
 use midds_types::{
-    CONTRIBUTORS_MAX, FEATURING_MAX, Genre, INSTRUMENTS_PER_PERFORMER_MAX, Instrument,
-    PERFORMERS_MAX, PLACE_MAX_LEN, PRODUCERS_MAX, Performer, PerformerId, PerformerInstruments,
-    Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion, TITLE_ALIASES_MAX,
+    Genre, INSTRUMENTS_PER_PERFORMER_MAX, Instrument, PLACE_MAX_LEN, Performer, PerformerId,
+    PerformerInstruments, Place, ProductionPlaces, Recording, RecordingV1, RecordingVersion,
 };
 
 use crate::parse::{parse_ipn, parse_isrc};
@@ -634,30 +724,35 @@ pub struct RecordingBuilder {
 impl RecordingBuilder {
     /// Empty builder. `isrc`, `title`, `artist`, and `work` must be set
     /// before [`build`](Self::build).
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Free-form ISRC input. Anything [`parse_isrc`] accepts works:
     /// `USRC17607839`, `US-RC1-76-07839`, lowercased / padded / etc.
+    #[must_use]
     pub fn isrc(mut self, s: &str) -> Self {
         self.isrc_raw = Some(s.to_string());
         self
     }
 
     /// Title. Trimmed of leading/trailing whitespace at build time.
+    #[must_use]
     pub fn title(mut self, s: &str) -> Self {
         self.title_raw = Some(s.to_string());
         self
     }
 
     /// Append an alternative / localized title.
+    #[must_use]
     pub fn add_title_alias(mut self, s: &str) -> Self {
         self.title_aliases_raw.push(s.to_string());
         self
     }
 
     /// Artist identified by an IPI (any [`parse_ipi`]-accepted format).
+    #[must_use]
     pub fn artist_ipi(mut self, ipi: &str) -> Self {
         self.artist = Some(PartyInput {
             raw: ipi.to_string(),
@@ -667,6 +762,7 @@ impl RecordingBuilder {
     }
 
     /// Artist identified by an ISNI (any [`parse_isni`]-accepted format).
+    #[must_use]
     pub fn artist_isni(mut self, isni: &str) -> Self {
         self.artist = Some(PartyInput {
             raw: isni.to_string(),
@@ -676,34 +772,42 @@ impl RecordingBuilder {
     }
 
     /// Reference the recorded work by its on-chain MIDDS id.
+    #[must_use]
     pub fn work_midds(mut self, id: u64) -> Self {
         self.work = Some(WorkInput::Midds(id));
         self
     }
 
     /// Reference the recorded work by a free-form ISWC string.
+    #[must_use]
     pub fn work_iswc(mut self, iswc: &str) -> Self {
         self.work = Some(WorkInput::Iswc(iswc.to_string()));
         self
     }
 
     /// Set (or clear) the primary genre (typed enum — no parsing).
+    #[must_use]
     pub fn genre(mut self, genre: Option<Genre>) -> Self {
         self.genre = genre;
         self
     }
 
     /// Set (or clear) the optional secondary genre.
+    #[must_use]
     pub fn sub_genre(mut self, sub_genre: Option<Genre>) -> Self {
         self.sub_genre = sub_genre;
         self
     }
 
+    /// Year the performance was recorded (`1..=2999` on-chain).
+    #[must_use]
     pub fn record_year(mut self, year: u16) -> Self {
         self.record_year = Some(year);
         self
     }
 
+    /// Editorial version — radio edit, live, remix, … (typed enum).
+    #[must_use]
     pub fn version_type(mut self, version: RecordingVersion) -> Self {
         self.version_type = Some(version);
         self
@@ -713,6 +817,7 @@ impl RecordingBuilder {
     /// Number — issued by performer CMOs to declared performers). Attach the
     /// instrument(s) played afterwards with
     /// [`performer_instruments`](Self::performer_instruments).
+    #[must_use]
     pub fn add_performer_ipn(mut self, ipn: &str) -> Self {
         self.performers_raw.push(PerformerInput {
             raw: ipn.to_string(),
@@ -725,6 +830,7 @@ impl RecordingBuilder {
     /// Append a performer identified by an IPI — the fallback for a performer
     /// not declared at a performer CMO but already registered on the
     /// publishing side.
+    #[must_use]
     pub fn add_performer_ipi(mut self, ipi: &str) -> Self {
         self.performers_raw.push(PerformerInput {
             raw: ipi.to_string(),
@@ -735,6 +841,7 @@ impl RecordingBuilder {
     }
 
     /// Append a performer identified by an ISNI.
+    #[must_use]
     pub fn add_performer_isni(mut self, isni: &str) -> Self {
         self.performers_raw.push(PerformerInput {
             raw: isni.to_string(),
@@ -747,6 +854,7 @@ impl RecordingBuilder {
     /// Attach the instrument(s) played by the most recently added performer.
     /// No-op when no performer has been added yet; the list is bound-checked
     /// against `INSTRUMENTS_PER_PERFORMER_MAX` at [`build`](Self::build).
+    #[must_use]
     pub fn performer_instruments(mut self, instruments: Vec<Instrument>) -> Self {
         if let Some(last) = self.performers_raw.last_mut() {
             last.instruments = instruments;
@@ -756,21 +864,28 @@ impl RecordingBuilder {
 
     /// Append a producer (ISNI only — industry metadata identifies producers
     /// by ISNI, not IPI).
+    #[must_use]
     pub fn add_producer(mut self, isni: &str) -> Self {
         self.producers_raw.push(isni.to_string());
         self
     }
 
+    /// Recording length in whole seconds.
+    #[must_use]
     pub fn duration(mut self, seconds: u32) -> Self {
         self.duration = Some(seconds);
         self
     }
 
+    /// Tempo in beats per minute (`20..=300` on-chain).
+    #[must_use]
     pub fn bpm(mut self, bpm: u16) -> Self {
         self.bpm = Some(bpm);
         self
     }
 
+    /// Diatonic key (typed enum — no parsing).
+    #[must_use]
     pub fn key(mut self, key: MusicalKey) -> Self {
         self.key = Some(key);
         self
@@ -794,6 +909,7 @@ impl RecordingBuilder {
     }
 
     /// Append a contributor identified by an IPI.
+    #[must_use]
     pub fn add_contributor_ipi(mut self, ipi: &str) -> Self {
         self.contributors_raw.push(PartyInput {
             raw: ipi.to_string(),
@@ -803,6 +919,7 @@ impl RecordingBuilder {
     }
 
     /// Append a contributor identified by an ISNI.
+    #[must_use]
     pub fn add_contributor_isni(mut self, isni: &str) -> Self {
         self.contributors_raw.push(PartyInput {
             raw: isni.to_string(),
@@ -812,6 +929,7 @@ impl RecordingBuilder {
     }
 
     /// Append a featured artist ("feat.") identified by an IPI.
+    #[must_use]
     pub fn add_featured_artist_ipi(mut self, ipi: &str) -> Self {
         self.featuring_raw.push(PartyInput {
             raw: ipi.to_string(),
@@ -821,6 +939,7 @@ impl RecordingBuilder {
     }
 
     /// Append a featured artist ("feat.") identified by an ISNI.
+    #[must_use]
     pub fn add_featured_artist_isni(mut self, isni: &str) -> Self {
         self.featuring_raw.push(PartyInput {
             raw: isni.to_string(),
@@ -829,8 +948,9 @@ impl RecordingBuilder {
         self
     }
 
-    /// Off-chain extension hash (CIDv1 by client convention). Stored
+    /// Off-chain extension hash (`CIDv1` by client convention). Stored
     /// verbatim and bound-checked at build time.
+    #[must_use]
     pub fn offchain_extension(mut self, bytes: &str) -> Self {
         self.offchain_extension_raw = Some(bytes.to_string());
         self
@@ -854,73 +974,26 @@ impl RecordingBuilder {
 
         let mut errors: Vec<FieldError> = Vec::new();
 
-        let isrc = match parse_isrc(isrc_raw) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                errors.push(FieldError {
-                    field: "isrc",
-                    message: format!("`{isrc_raw}`: {e}"),
-                });
-                None
-            }
-        };
+        let isrc = parse_field("isrc", isrc_raw, parse_isrc, &mut errors);
+        let title = bounded_text::<TITLE_MAX_LEN>("title", "title", title_raw, &mut errors);
 
-        let title_trimmed = title_raw.trim();
-        let title = if title_trimmed.is_empty() {
-            errors.push(FieldError {
-                field: "title",
-                message: "title is empty after trimming".into(),
-            });
-            None
-        } else {
-            match BoundedVec::try_from(title_trimmed.as_bytes().to_vec()) {
-                Ok(t) => Some(t),
-                Err(_) => {
-                    errors.push(FieldError {
-                        field: "title",
-                        message: format!(
-                            "title is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
-                            title_trimmed.len()
-                        ),
-                    });
-                    None
-                }
-            }
-        };
-
-        let title_aliases = self.build_title_aliases(&mut errors);
+        let title_aliases = bounded_text_list(
+            "title_aliases",
+            "alias ",
+            "aliases",
+            &self.title_aliases_raw,
+            &mut errors,
+        );
         let artist = parse_party(artist_in, "artist", &mut errors);
-        let work = self.resolve_work(work_in, &mut errors);
-        let performers = parse_performer_list(
-            &self.performers_raw,
-            "performers",
-            PERFORMERS_MAX,
-            &mut errors,
-        );
+        let work = Self::resolve_work(work_in, &mut errors);
+        let performers = parse_performer_list(&self.performers_raw, "performers", &mut errors);
         let producers = self.build_producers(&mut errors);
-        let contributors = parse_party_list(
-            &self.contributors_raw,
-            "contributors",
-            CONTRIBUTORS_MAX,
-            &mut errors,
-        );
-        let featuring =
-            parse_party_list(&self.featuring_raw, "featuring", FEATURING_MAX, &mut errors);
+        let contributors = parse_party_list(&self.contributors_raw, "contributors", &mut errors);
+        let featuring = parse_party_list(&self.featuring_raw, "featuring", &mut errors);
         let places = self.build_places(&mut errors);
 
-        let offchain_extension = match &self.offchain_extension_raw {
-            Some(raw) => match OffchainHash::try_from(raw.clone().into_bytes()) {
-                Ok(h) if !h.is_empty() => Some(Some(h)),
-                _ => {
-                    errors.push(FieldError {
-                        field: "offchain_extension",
-                        message: "empty or larger than 64-byte bound".into(),
-                    });
-                    None
-                }
-            },
-            None => Some(None),
-        };
+        let offchain_extension =
+            parse_offchain(self.offchain_extension_raw.as_deref(), &mut errors);
 
         if !errors.is_empty() {
             return Err(BuildError::Fields(errors));
@@ -949,45 +1022,7 @@ impl RecordingBuilder {
         Ok(Recording::V1(v1))
     }
 
-    fn build_title_aliases(
-        &self,
-        errors: &mut Vec<FieldError>,
-    ) -> Option<midds_types::TitleAliases> {
-        let mut aliases = Vec::with_capacity(self.title_aliases_raw.len());
-        for (i, raw) in self.title_aliases_raw.iter().enumerate() {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                errors.push(FieldError {
-                    field: "title_aliases",
-                    message: format!("alias #{i} is empty after trimming"),
-                });
-                continue;
-            }
-            match BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
-                Ok(a) => aliases.push(a),
-                Err(_) => errors.push(FieldError {
-                    field: "title_aliases",
-                    message: format!(
-                        "alias #{i} is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
-                        trimmed.len()
-                    ),
-                }),
-            }
-        }
-        if aliases.len() > TITLE_ALIASES_MAX as usize {
-            errors.push(FieldError {
-                field: "title_aliases",
-                message: format!(
-                    "{} aliases provided, exceeds {TITLE_ALIASES_MAX} max",
-                    aliases.len()
-                ),
-            });
-            return None;
-        }
-        BoundedVec::try_from(aliases).ok()
-    }
-
-    fn resolve_work(&self, work_in: &WorkInput, errors: &mut Vec<FieldError>) -> Option<WorkRef> {
+    fn resolve_work(work_in: &WorkInput, errors: &mut Vec<FieldError>) -> Option<WorkRef> {
         match work_in {
             WorkInput::Midds(id) => Some(WorkRef::Midds(*id)),
             WorkInput::Iswc(raw) => match crate::parse::parse_iswc(raw) {
@@ -1014,17 +1049,7 @@ impl RecordingBuilder {
                 }),
             }
         }
-        if producers.len() > PRODUCERS_MAX as usize {
-            errors.push(FieldError {
-                field: "producers",
-                message: format!(
-                    "{} producers provided, exceeds {PRODUCERS_MAX} max",
-                    producers.len()
-                ),
-            });
-            return None;
-        }
-        BoundedVec::try_from(producers).ok()
+        finish_bounded("producers", "producers", producers, errors)
     }
 
     fn build_places(&self, errors: &mut Vec<FieldError>) -> Option<Option<ProductionPlaces>> {
@@ -1043,19 +1068,18 @@ impl RecordingBuilder {
                 ok = false;
                 return None;
             }
-            match Place::try_from(trimmed.as_bytes().to_vec()) {
-                Ok(p) => Some(p),
-                Err(_) => {
-                    errors.push(FieldError {
-                        field: "places",
-                        message: format!(
-                            "{slot} place is {} bytes, exceeds {PLACE_MAX_LEN}-byte bound",
-                            trimmed.len()
-                        ),
-                    });
-                    ok = false;
-                    None
-                }
+            if let Ok(p) = Place::try_from(trimmed.as_bytes().to_vec()) {
+                Some(p)
+            } else {
+                errors.push(FieldError {
+                    field: "places",
+                    message: format!(
+                        "{slot} place is {} bytes, exceeds {PLACE_MAX_LEN}-byte bound",
+                        trimmed.len()
+                    ),
+                });
+                ok = false;
+                None
             }
         };
         let recording = to_place("recording", rec);
@@ -1072,6 +1096,14 @@ impl RecordingBuilder {
     }
 }
 
+/// Parse one party identifier according to its declared kind.
+fn parse_party_id(input: &PartyInput) -> Result<PartyId, ParseError> {
+    match input.kind {
+        PartyKind::Ipi => parse_ipi(&input.raw).map(PartyId::Ipi),
+        PartyKind::Isni => parse_isni(&input.raw).map(PartyId::Isni),
+    }
+}
+
 /// Parse a single mandatory party identifier (the artist). On failure pushes
 /// a `FieldError` under `field` and returns `None`.
 fn parse_party(
@@ -1079,37 +1111,20 @@ fn parse_party(
     field: &'static str,
     errors: &mut Vec<FieldError>,
 ) -> Option<PartyId> {
-    let parsed = match input.kind {
-        PartyKind::Ipi => parse_ipi(&input.raw).map(PartyId::Ipi),
-        PartyKind::Isni => parse_isni(&input.raw).map(PartyId::Isni),
-    };
-    match parsed {
-        Ok(id) => Some(id),
-        Err(e) => {
-            errors.push(FieldError {
-                field,
-                message: format!("`{}`: {e}", input.raw),
-            });
-            None
-        }
-    }
+    parse_field(field, &input.raw, |_| parse_party_id(input), errors)
 }
 
-/// Parse a bounded list of party identifiers (contributors). Aggregates
-/// per-entry failures and the list-length overflow.
-fn parse_party_list<C: bounded_collections::Get<u32>>(
+/// Parse a bounded list of party identifiers (featuring, contributors).
+/// Aggregates per-entry failures and the list-length overflow; the length
+/// bound is the target `BoundedVec`'s own `C::get()`.
+fn parse_party_list<C: Get<u32>>(
     inputs: &[PartyInput],
     field: &'static str,
-    max: u32,
     errors: &mut Vec<FieldError>,
 ) -> Option<BoundedVec<PartyId, C>> {
     let mut parsed = Vec::with_capacity(inputs.len());
     for (i, input) in inputs.iter().enumerate() {
-        let one = match input.kind {
-            PartyKind::Ipi => parse_ipi(&input.raw).map(PartyId::Ipi),
-            PartyKind::Isni => parse_isni(&input.raw).map(PartyId::Isni),
-        };
-        match one {
+        match parse_party_id(input) {
             Ok(id) => parsed.push(id),
             Err(e) => errors.push(FieldError {
                 field,
@@ -1117,24 +1132,16 @@ fn parse_party_list<C: bounded_collections::Get<u32>>(
             }),
         }
     }
-    if parsed.len() > max as usize {
-        errors.push(FieldError {
-            field,
-            message: format!("{} provided, exceeds {max} max", parsed.len()),
-        });
-        return None;
-    }
-    BoundedVec::try_from(parsed).ok()
+    finish_bounded(field, "", parsed, errors)
 }
 
 /// Parse a bounded list of performers. The performer variant of
 /// [`parse_party_list`] — each entry pairs the wider [`PerformerId`] enum (so
 /// the IPN branch is reachable) with its already-typed instrument list, which
 /// is bound-checked against `INSTRUMENTS_PER_PERFORMER_MAX`.
-fn parse_performer_list<C: bounded_collections::Get<u32>>(
+fn parse_performer_list<C: Get<u32>>(
     inputs: &[PerformerInput],
     field: &'static str,
-    max: u32,
     errors: &mut Vec<FieldError>,
 ) -> Option<BoundedVec<Performer, C>> {
     let mut parsed = Vec::with_capacity(inputs.len());
@@ -1154,18 +1161,15 @@ fn parse_performer_list<C: bounded_collections::Get<u32>>(
                 continue;
             }
         };
-        let instruments = match PerformerInstruments::try_from(input.instruments.clone()) {
-            Ok(instruments) => instruments,
-            Err(_) => {
-                errors.push(FieldError {
-                    field,
-                    message: format!(
-                        "#{i} lists {} instruments, exceeds {INSTRUMENTS_PER_PERFORMER_MAX} max",
-                        input.instruments.len()
-                    ),
-                });
-                continue;
-            }
+        let Ok(instruments) = PerformerInstruments::try_from(input.instruments.clone()) else {
+            errors.push(FieldError {
+                field,
+                message: format!(
+                    "#{i} lists {} instruments, exceeds {INSTRUMENTS_PER_PERFORMER_MAX} max",
+                    input.instruments.len()
+                ),
+            });
+            continue;
         };
         // A performer credit requires at least one instrument (mirrors the
         // on-chain `validate_format` rule): flag it here so the builder's
@@ -1179,14 +1183,7 @@ fn parse_performer_list<C: bounded_collections::Get<u32>>(
         }
         parsed.push(Performer { id, instruments });
     }
-    if parsed.len() > max as usize {
-        errors.push(FieldError {
-            field,
-            message: format!("{} provided, exceeds {max} max", parsed.len()),
-        });
-        return None;
-    }
-    BoundedVec::try_from(parsed).ok()
+    finish_bounded(field, "", parsed, errors)
 }
 
 #[cfg(test)]
@@ -1341,11 +1338,7 @@ mod recording_tests {
     }
 }
 
-use midds_types::release::{
-    CATALOG_NUMBER_MAX_LEN, COVER_CONTRIBUTOR_NAME_MAX_LEN, COVER_CONTRIBUTORS_MAX,
-    DISTRIBUTOR_NAME_MAX_LEN, PRODUCERS_MAX as RELEASE_PRODUCERS_MAX,
-    TITLE_ALIASES_MAX as RELEASE_TITLE_ALIASES_MAX, TRACKS_MAX,
-};
+use midds_types::release::{CATALOG_NUMBER_MAX_LEN, DISTRIBUTOR_NAME_MAX_LEN};
 use midds_types::{
     Country, Producer, RecordingRef, Release, ReleaseDate, ReleaseFormat, ReleasePackaging,
     ReleaseStatus, ReleaseType, ReleaseV1, Track,
@@ -1405,30 +1398,35 @@ pub struct ReleaseBuilder {
 impl ReleaseBuilder {
     /// Empty builder. All mandatory fields must be set before
     /// [`build`](Self::build).
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Free-form UPC / EAN input. Anything [`parse_upc`] accepts works:
     /// `036000291452`, `0-36000-29145-2`, space-grouped, etc.
+    #[must_use]
     pub fn upc(mut self, s: &str) -> Self {
         self.upc_raw = Some(s.to_string());
         self
     }
 
     /// Title. Trimmed of leading/trailing whitespace at build time.
+    #[must_use]
     pub fn title(mut self, s: &str) -> Self {
         self.title_raw = Some(s.to_string());
         self
     }
 
     /// Append an alternative / localized title.
+    #[must_use]
     pub fn add_title_alias(mut self, s: &str) -> Self {
         self.title_aliases_raw.push(s.to_string());
         self
     }
 
     /// Artist identified by an IPI (any [`parse_ipi`]-accepted format).
+    #[must_use]
     pub fn artist_ipi(mut self, ipi: &str) -> Self {
         self.artist = Some(PartyInput {
             raw: ipi.to_string(),
@@ -1438,6 +1436,7 @@ impl ReleaseBuilder {
     }
 
     /// Artist identified by an ISNI (any [`parse_isni`]-accepted format).
+    #[must_use]
     pub fn artist_isni(mut self, isni: &str) -> Self {
         self.artist = Some(PartyInput {
             raw: isni.to_string(),
@@ -1447,6 +1446,7 @@ impl ReleaseBuilder {
     }
 
     /// Append a featured artist ("feat.") identified by an IPI.
+    #[must_use]
     pub fn add_featured_artist_ipi(mut self, ipi: &str) -> Self {
         self.featuring_raw.push(PartyInput {
             raw: ipi.to_string(),
@@ -1456,6 +1456,7 @@ impl ReleaseBuilder {
     }
 
     /// Append a featured artist ("feat.") identified by an ISNI.
+    #[must_use]
     pub fn add_featured_artist_isni(mut self, isni: &str) -> Self {
         self.featuring_raw.push(PartyInput {
             raw: isni.to_string(),
@@ -1468,6 +1469,7 @@ impl ReleaseBuilder {
     /// 1-based by emit order. Use
     /// [`add_numbered_track_midds`](Self::add_numbered_track_midds) to set the
     /// track number explicitly.
+    #[must_use]
     pub fn add_track_midds(mut self, id: u64) -> Self {
         self.tracks.push(TrackInput::Midds { number: None, id });
         self
@@ -1477,6 +1479,7 @@ impl ReleaseBuilder {
     /// 1-based by emit order. Use
     /// [`add_numbered_track_isrc`](Self::add_numbered_track_isrc) to set the
     /// track number explicitly.
+    #[must_use]
     pub fn add_track_isrc(mut self, isrc: &str) -> Self {
         self.tracks.push(TrackInput::Isrc {
             number: None,
@@ -1491,6 +1494,7 @@ impl ReleaseBuilder {
     /// at 1, no gaps) — enforced by `validate_format`, not at build time, so a
     /// gap (e.g. `1` then `3`) or a collision (e.g. mixing auto- and
     /// explicitly-numbered tracks) builds but is rejected there.
+    #[must_use]
     pub fn add_numbered_track_midds(mut self, number: u16, id: u64) -> Self {
         self.tracks.push(TrackInput::Midds {
             number: Some(number),
@@ -1503,6 +1507,7 @@ impl ReleaseBuilder {
     /// 1-based track number. See
     /// [`add_numbered_track_midds`](Self::add_numbered_track_midds) for the
     /// numbering rules.
+    #[must_use]
     pub fn add_numbered_track_isrc(mut self, number: u16, isrc: &str) -> Self {
         self.tracks.push(TrackInput::Isrc {
             number: Some(number),
@@ -1512,6 +1517,7 @@ impl ReleaseBuilder {
     }
 
     /// Append a producer (ISNI + its catalog number).
+    #[must_use]
     pub fn add_producer(mut self, isni: &str, catalog_number: &str) -> Self {
         self.producers_raw.push(ProducerInput {
             isni_raw: isni.to_string(),
@@ -1520,50 +1526,66 @@ impl ReleaseBuilder {
         self
     }
 
+    /// Editorial status (typed enum — no parsing).
+    #[must_use]
     pub fn status(mut self, status: ReleaseStatus) -> Self {
         self.status = Some(status);
         self
     }
 
+    /// Calendar release date. Month / day ranges are checked by the
+    /// on-chain `validate_format`, not at build time.
+    #[must_use]
     pub fn release_date(mut self, year: u16, month: u8, day: u8) -> Self {
         self.release_date = Some(ReleaseDate { year, month, day });
         self
     }
 
+    /// Country the release was issued in (typed enum — no parsing).
+    #[must_use]
     pub fn country(mut self, country: Country) -> Self {
         self.country = Some(country);
         self
     }
 
     /// Distributor name. Trimmed; must be non-empty within the bound.
+    #[must_use]
     pub fn distributor_name(mut self, s: &str) -> Self {
         self.distributor_raw = Some(s.to_string());
         self
     }
 
+    /// Primary editorial type (typed enum — no parsing).
+    #[must_use]
     pub fn release_type(mut self, release_type: ReleaseType) -> Self {
         self.release_type = Some(release_type);
         self
     }
 
+    /// Physical or digital medium (typed enum — no parsing).
+    #[must_use]
     pub fn format(mut self, format: ReleaseFormat) -> Self {
         self.format = Some(format);
         self
     }
 
+    /// Physical packaging (typed enum — no parsing).
+    #[must_use]
     pub fn packaging(mut self, packaging: ReleasePackaging) -> Self {
         self.packaging = Some(packaging);
         self
     }
 
     /// Append a cover-artwork contributor name.
+    #[must_use]
     pub fn add_cover_contributor(mut self, s: &str) -> Self {
         self.cover_contributors_raw.push(s.to_string());
         self
     }
 
-    /// Off-chain extension hash (CIDv1 by client convention). Stored
+    /// Off-chain extension hash (`CIDv1` by client convention). Stored
     /// verbatim and bound-checked at build time.
+    #[must_use]
     pub fn offchain_extension(mut self, bytes: &str) -> Self {
         self.offchain_extension_raw = Some(bytes.to_string());
         self
@@ -1600,86 +1622,38 @@ impl ReleaseBuilder {
 
         let mut errors: Vec<FieldError> = Vec::new();
 
-        let upc = match parse_upc(upc_raw) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                errors.push(FieldError {
-                    field: "upc",
-                    message: format!("`{upc_raw}`: {e}"),
-                });
-                None
-            }
-        };
+        let upc = parse_field("upc", upc_raw, parse_upc, &mut errors);
+        let title = bounded_text::<TITLE_MAX_LEN>("title", "title", title_raw, &mut errors);
 
-        let title_trimmed = title_raw.trim();
-        let title = if title_trimmed.is_empty() {
-            errors.push(FieldError {
-                field: "title",
-                message: "title is empty after trimming".into(),
-            });
-            None
-        } else {
-            match BoundedVec::try_from(title_trimmed.as_bytes().to_vec()) {
-                Ok(t) => Some(t),
-                Err(_) => {
-                    errors.push(FieldError {
-                        field: "title",
-                        message: format!(
-                            "title is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
-                            title_trimmed.len()
-                        ),
-                    });
-                    None
-                }
-            }
-        };
-
-        let title_aliases = self.build_title_aliases(&mut errors);
+        let title_aliases = bounded_text_list(
+            "title_aliases",
+            "alias ",
+            "aliases",
+            &self.title_aliases_raw,
+            &mut errors,
+        );
         let artist = parse_party(artist_in, "artist", &mut errors);
-        let featuring =
-            parse_party_list(&self.featuring_raw, "featuring", FEATURING_MAX, &mut errors);
+        let featuring = parse_party_list(&self.featuring_raw, "featuring", &mut errors);
         let tracks = self.build_tracks(&mut errors);
         let producers = self.build_producers(&mut errors);
 
-        let distributor_trimmed = distributor_raw.trim();
-        let distributor_name = if distributor_trimmed.is_empty() {
-            errors.push(FieldError {
-                field: "distributor_name",
-                message: "distributor name is empty after trimming".into(),
-            });
-            None
-        } else {
-            match BoundedVec::try_from(distributor_trimmed.as_bytes().to_vec()) {
-                Ok(d) => Some(d),
-                Err(_) => {
-                    errors.push(FieldError {
-                        field: "distributor_name",
-                        message: format!(
-                            "distributor name is {} bytes, exceeds \
-                             {DISTRIBUTOR_NAME_MAX_LEN}-byte bound",
-                            distributor_trimmed.len()
-                        ),
-                    });
-                    None
-                }
-            }
-        };
+        let distributor_name = bounded_text::<DISTRIBUTOR_NAME_MAX_LEN>(
+            "distributor_name",
+            "distributor name",
+            distributor_raw,
+            &mut errors,
+        );
 
-        let cover_contributors = self.build_cover_contributors(&mut errors);
+        let cover_contributors = bounded_text_list(
+            "cover_contributors",
+            "",
+            "cover contributors",
+            &self.cover_contributors_raw,
+            &mut errors,
+        );
 
-        let offchain_extension = match &self.offchain_extension_raw {
-            Some(raw) => match OffchainHash::try_from(raw.clone().into_bytes()) {
-                Ok(h) if !h.is_empty() => Some(Some(h)),
-                _ => {
-                    errors.push(FieldError {
-                        field: "offchain_extension",
-                        message: "empty or larger than 64-byte bound".into(),
-                    });
-                    None
-                }
-            },
-            None => Some(None),
-        };
+        let offchain_extension =
+            parse_offchain(self.offchain_extension_raw.as_deref(), &mut errors);
 
         if !errors.is_empty() {
             return Err(BuildError::Fields(errors));
@@ -1704,44 +1678,6 @@ impl ReleaseBuilder {
             offchain_extension: offchain_extension.expect("no errors → offchain resolved"),
         };
         Ok(Release::V1(v1))
-    }
-
-    fn build_title_aliases(
-        &self,
-        errors: &mut Vec<FieldError>,
-    ) -> Option<midds_types::release::TitleAliases> {
-        let mut aliases = Vec::with_capacity(self.title_aliases_raw.len());
-        for (i, raw) in self.title_aliases_raw.iter().enumerate() {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                errors.push(FieldError {
-                    field: "title_aliases",
-                    message: format!("alias #{i} is empty after trimming"),
-                });
-                continue;
-            }
-            match BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
-                Ok(a) => aliases.push(a),
-                Err(_) => errors.push(FieldError {
-                    field: "title_aliases",
-                    message: format!(
-                        "alias #{i} is {} bytes, exceeds {TITLE_MAX_LEN}-byte bound",
-                        trimmed.len()
-                    ),
-                }),
-            }
-        }
-        if aliases.len() > RELEASE_TITLE_ALIASES_MAX as usize {
-            errors.push(FieldError {
-                field: "title_aliases",
-                message: format!(
-                    "{} aliases provided, exceeds {RELEASE_TITLE_ALIASES_MAX} max",
-                    aliases.len()
-                ),
-            });
-            return None;
-        }
-        BoundedVec::try_from(aliases).ok()
     }
 
     fn build_tracks(&self, errors: &mut Vec<FieldError>) -> Option<midds_types::release::Tracks> {
@@ -1774,14 +1710,7 @@ impl ReleaseBuilder {
                 });
             }
         }
-        if tracks.len() > TRACKS_MAX as usize {
-            errors.push(FieldError {
-                field: "tracks",
-                message: format!("{} tracks provided, exceeds {TRACKS_MAX} max", tracks.len()),
-            });
-            return None;
-        }
-        BoundedVec::try_from(tracks).ok()
+        finish_bounded("tracks", "tracks", tracks, errors)
     }
 
     fn build_producers(
@@ -1800,29 +1729,12 @@ impl ReleaseBuilder {
                     None
                 }
             };
-            let catalog_trimmed = p.catalog_raw.trim();
-            let catalog_number = if catalog_trimmed.is_empty() {
-                errors.push(FieldError {
-                    field: "producers",
-                    message: format!("#{i} catalog number is empty after trimming"),
-                });
-                None
-            } else {
-                match BoundedVec::try_from(catalog_trimmed.as_bytes().to_vec()) {
-                    Ok(c) => Some(c),
-                    Err(_) => {
-                        errors.push(FieldError {
-                            field: "producers",
-                            message: format!(
-                                "#{i} catalog number is {} bytes, exceeds \
-                                 {CATALOG_NUMBER_MAX_LEN}-byte bound",
-                                catalog_trimmed.len()
-                            ),
-                        });
-                        None
-                    }
-                }
-            };
+            let catalog_number = bounded_text::<CATALOG_NUMBER_MAX_LEN>(
+                "producers",
+                &format!("#{i} catalog number"),
+                &p.catalog_raw,
+                errors,
+            );
             if let (Some(isni), Some(catalog_number)) = (isni, catalog_number) {
                 producers.push(Producer {
                     isni,
@@ -1830,60 +1742,11 @@ impl ReleaseBuilder {
                 });
             }
         }
-        if producers.len() > RELEASE_PRODUCERS_MAX as usize {
-            errors.push(FieldError {
-                field: "producers",
-                message: format!(
-                    "{} producers provided, exceeds {RELEASE_PRODUCERS_MAX} max",
-                    producers.len()
-                ),
-            });
-            return None;
-        }
-        BoundedVec::try_from(producers).ok()
-    }
-
-    fn build_cover_contributors(
-        &self,
-        errors: &mut Vec<FieldError>,
-    ) -> Option<midds_types::CoverContributors> {
-        let mut names = Vec::with_capacity(self.cover_contributors_raw.len());
-        for (i, raw) in self.cover_contributors_raw.iter().enumerate() {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                errors.push(FieldError {
-                    field: "cover_contributors",
-                    message: format!("#{i} is empty after trimming"),
-                });
-                continue;
-            }
-            match BoundedVec::try_from(trimmed.as_bytes().to_vec()) {
-                Ok(n) => names.push(n),
-                Err(_) => errors.push(FieldError {
-                    field: "cover_contributors",
-                    message: format!(
-                        "#{i} is {} bytes, exceeds {COVER_CONTRIBUTOR_NAME_MAX_LEN}-byte bound",
-                        trimmed.len()
-                    ),
-                }),
-            }
-        }
-        if names.len() > COVER_CONTRIBUTORS_MAX as usize {
-            errors.push(FieldError {
-                field: "cover_contributors",
-                message: format!(
-                    "{} cover contributors provided, exceeds {COVER_CONTRIBUTORS_MAX} max",
-                    names.len()
-                ),
-            });
-            return None;
-        }
-        BoundedVec::try_from(names).ok()
+        finish_bounded("producers", "producers", producers, errors)
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods, reason = "tests legitimately unwrap")]
 mod release_tests {
     use super::*;
     use midds_traits::Midds as _;

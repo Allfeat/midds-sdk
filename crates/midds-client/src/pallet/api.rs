@@ -22,7 +22,7 @@ use crate::{
     pallet::{
         events::collect_deposit_events,
         names::{
-            DEPOSIT_BASE_CONST, DEPOSIT_CALL, DEPOSIT_PER_BYTE_CONST, DEPOSITED_EVENT,
+            DEPOSIT_BASE_STORAGE, DEPOSIT_CALL, DEPOSIT_PER_BYTE_STORAGE, DEPOSITED_EVENT,
             NEXT_MIDDS_ID_STORAGE,
         },
         types::{DepositInfo, DepositReceipt, FixedU128Raw, PricingSnapshot},
@@ -128,7 +128,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     /// successfully when the batch is included in a best block; the caller
     /// can read [`Self::next_midds_id`] to recover the post-batch counter
     /// range. We deliberately do not wait for GRANDPA finalisation — see
-    /// the rationale in [`Self::submit`].
+    /// the rationale on the internal submit path.
     ///
     /// Empty input is a no-op. The intended use is mass-seeding (`midds
     /// seed`) where individual ids aren't needed; for single-deposit flows
@@ -169,7 +169,7 @@ impl<'a, M: Midds> PalletApi<'a, M> {
     ///
     /// Same wire shape as [`Self::deposit_batch_with_nonce`] but iterates the
     /// inclusion events to surface every inner `Deposited` (id + bond +
-    /// base_bond) plus the single outer `TransactionFeePaid`. The fee is
+    /// `base_bond`) plus the single outer `TransactionFeePaid`. The fee is
     /// amortised across records (`total_fee / batch_size`, integer
     /// division) — see [`DepositReceipt`] for the exact-vs-amortised
     /// trade-off vs [`Self::deposit_with_receipt_nonce`].
@@ -241,23 +241,26 @@ impl<'a, M: Midds> PalletApi<'a, M> {
             .collect())
     }
 
-    /// Read the pallet-config `DepositBase` and `DepositPerByte` constants
-    /// straight off the runtime metadata at the current block.
+    /// Read the pallet's `DepositBase` / `DepositPerByte` bond parameters at
+    /// the current block, as `(base, per_byte)` in planck units.
     ///
-    /// Returned as `(base, per_byte)`, both denominated in the chain's
-    /// `Balance` planck units. Useful for callers that need to mirror the
-    /// on-chain bond formula `base + per_byte * encoded_size` without
-    /// hardcoding values that vary between testnet (`melodie`) and any
-    /// future runtime variants.
+    /// Since pallet-midds 0.2.0 these are runtime-mutable `StorageValue`s
+    /// (genesis-seeded, tunable via `force_set_deposit_*`), **not** metadata
+    /// constants — hence a storage read.
     pub async fn deposit_constants(&self) -> Result<(Balance, Balance), Error> {
         let at_block = self.client.at_best_block().await?;
-        let consts = at_block.constants();
-        let base_addr = subxt::dynamic::constant::<Balance>(self.pallet_name, DEPOSIT_BASE_CONST);
-        let per_byte_addr =
-            subxt::dynamic::constant::<Balance>(self.pallet_name, DEPOSIT_PER_BYTE_CONST);
-        let base = consts.entry(base_addr)?;
-        let per_byte = consts.entry(per_byte_addr)?;
-        Ok((base, per_byte))
+        let base_addr: subxt::storage::DynamicAddress =
+            subxt::dynamic::storage(self.pallet_name, DEPOSIT_BASE_STORAGE);
+        let per_byte_addr: subxt::storage::DynamicAddress =
+            subxt::dynamic::storage(self.pallet_name, DEPOSIT_PER_BYTE_STORAGE);
+        let base = at_block.storage().fetch(base_addr, Vec::new()).await?;
+        let per_byte = at_block.storage().fetch(per_byte_addr, Vec::new()).await?;
+        let base_bytes = base.bytes();
+        let per_byte_bytes = per_byte.bytes();
+        Ok((
+            Balance::decode(&mut &base_bytes[..])?,
+            Balance::decode(&mut &per_byte_bytes[..])?,
+        ))
     }
 
     /// Read the per-instance `NextMiddsId` counter via dynamic storage.

@@ -1,11 +1,35 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
+// `Error` embeds `subxt::Error` by value (~200 bytes); boxing it would break
+// the public variant shape — deferred to a deliberate pre-1.0 break.
 #![allow(clippy::result_large_err)]
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 //! High-level Rust client for the Allfeat MIDDS pallets.
 //!
-//! Wraps `subxt` with a typed façade per pallet instance. V1 covers the
-//! `MusicalWorks` instance end-to-end (`deposit`, `update`, runtime-API
-//! queries). The same pattern extends to future `Recording` and `Release`
-//! instances by adding more sub-APIs.
+//! Wraps `subxt` with a typed façade per pallet instance
+//! ([`MusicalWorksApi`], [`RecordingsApi`], [`ReleasesApi`]), each covering
+//! `deposit` (single, with-nonce, and atomic batches), the runtime-API
+//! queries (`get`, `lookup_by_identifier`, `deposit_info`, live pricing) and
+//! the bond-parameter reads backing the operator tooling.
 //!
 //! # Quickstart
 //!
@@ -86,6 +110,7 @@ impl MiddsClient {
 
     /// Borrow the underlying subxt client for advanced operations not yet
     /// covered by the typed façade.
+    #[must_use]
     pub fn inner(&self) -> &OnlineClient<ChainConfig> {
         &self.inner
     }
@@ -128,6 +153,7 @@ impl MiddsClient {
     }
 
     /// Façade for the `MusicalWorks` pallet instance.
+    #[must_use]
     pub fn musical_works(&self) -> MusicalWorksApi<'_> {
         PalletApi::new(
             self,
@@ -141,6 +167,7 @@ impl MiddsClient {
     /// Type-checked and ready, but the `Recordings` instance is not yet wired
     /// in the `../Allfeat` runtime — calls will fail at runtime against a
     /// node that lacks it. See [`crate::recordings`] for the rationale.
+    #[must_use]
     pub fn recordings(&self) -> RecordingsApi<'_> {
         PalletApi::new(self, recordings::PALLET_NAME, recordings::RUNTIME_API_NAME)
     }
@@ -150,6 +177,7 @@ impl MiddsClient {
     /// Type-checked and ready, but the `Releases` instance is not yet wired
     /// in the `../Allfeat` runtime — calls will fail at runtime against a
     /// node that lacks it. See [`crate::releases`] for the rationale.
+    #[must_use]
     pub fn releases(&self) -> ReleasesApi<'_> {
         PalletApi::new(self, releases::PALLET_NAME, releases::RUNTIME_API_NAME)
     }

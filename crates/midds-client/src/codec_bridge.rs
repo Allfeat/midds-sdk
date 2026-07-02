@@ -13,7 +13,7 @@ use subxt::ext::scale_encode::{EncodeAsFields, Error as EncodeError, FieldIter, 
 
 /// Pre-encoded call arguments for a dispatchable.
 ///
-/// Each entry in [`EncodedCall::fields`] holds the canonical SCALE encoding
+/// Each entry of the internal field list holds the canonical SCALE encoding
 /// of one call argument, in the order expected by the pallet.
 pub struct EncodedCall {
     fields: Vec<Vec<u8>>,

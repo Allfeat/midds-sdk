@@ -20,12 +20,13 @@ pub type DepositInfo =
 /// [`fixed_u128_to_f64`] when display precision is enough.
 pub type FixedU128Raw = u128;
 
-/// FixedU128 accuracy — `10^18`. Matches `sp_runtime::FixedU128::DIV`.
+/// `FixedU128` accuracy — `10^18`. Matches `sp_runtime::FixedU128::DIV`.
 const FIXED_U128_ACCURACY: u128 = 1_000_000_000_000_000_000;
 
-/// Convert a raw FixedU128 (`value * 10^18`) into the floating-point ratio it
+/// Convert a raw `FixedU128` (`value * 10^18`) into the floating-point ratio it
 /// represents. Lossy for values needing more than ~15 decimal digits, but
 /// sufficient for displaying multiplier ratios on a CLI dashboard.
+#[must_use]
 pub fn fixed_u128_to_f64(raw: FixedU128Raw) -> f64 {
     raw as f64 / FIXED_U128_ACCURACY as f64
 }

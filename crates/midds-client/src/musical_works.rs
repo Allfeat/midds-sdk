@@ -20,7 +20,7 @@ pub const PALLET_NAME: &str = "MusicalWorks";
 /// this stays in lock-step with the runtime impl.
 pub const RUNTIME_API_NAME: &str = "MusicalWorkApi";
 
-/// High-level handle for the MusicalWorks pallet instance — alias of
+/// High-level handle for the `MusicalWorks` pallet instance — alias of
 /// [`PalletApi<'_, MusicalWork>`][PalletApi]. Kept as a distinct public
 /// type so existing call sites (`MusicalWorksApi<'_>`) and API docs
 /// continue to read naturally.

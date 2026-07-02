@@ -19,6 +19,7 @@ pub struct PreEncodedCalls(Vec<Vec<u8>>);
 
 impl PreEncodedCalls {
     /// Wrap a list of pre-encoded inner-call blobs.
+    #[must_use]
     pub fn new(inner: Vec<Vec<u8>>) -> Self {
         Self(inner)
     }

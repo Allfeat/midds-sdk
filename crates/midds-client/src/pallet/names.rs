@@ -1,6 +1,6 @@
-//! Single source of truth for the metadata keys (storage names, constant
-//! names, event names, extrinsic names) the dynamic subxt path resolves
-//! against the runtime metadata.
+//! Single source of truth for the metadata keys (storage names, event
+//! names, extrinsic names) the dynamic subxt path resolves against the
+//! runtime metadata.
 //!
 //! Centralised here so a runtime-side rename (`Items` → `Records`,
 //! `Deposited` → `Stored`) is a one-line change instead of a
@@ -15,10 +15,12 @@ pub(crate) const DEPOSIT_CALL: &str = "deposit";
 /// Per-instance monotonic id counter.
 pub(crate) const NEXT_MIDDS_ID_STORAGE: &str = "NextMiddsId";
 
-/// Flat part of the bond formula.
-pub(crate) const DEPOSIT_BASE_CONST: &str = "DepositBase";
-/// Per-byte multiplier of the bond formula.
-pub(crate) const DEPOSIT_PER_BYTE_CONST: &str = "DepositPerByte";
+/// Flat part of the bond formula — a runtime-mutable `StorageValue` since
+/// pallet-midds 0.2.0 (seeded at genesis, `force_set_deposit_base`).
+pub(crate) const DEPOSIT_BASE_STORAGE: &str = "DepositBase";
+/// Per-byte part of the bond formula — a runtime-mutable `StorageValue`
+/// since pallet-midds 0.2.0 (`force_set_deposit_per_byte`).
+pub(crate) const DEPOSIT_PER_BYTE_STORAGE: &str = "DepositPerByte";
 
 /// Successful deposit event — emitted once per inner extrinsic, including
 /// inside a `pallet_utility::batch_all` outer call.

@@ -39,7 +39,7 @@ where
             TransactionStatus::Dropped { message } => {
                 return Err(TransactionStatusError::Dropped(message).into());
             }
-            _ => continue,
+            _ => {}
         }
     }
     Err(TransactionProgressError::UnexpectedEndOfTransactionStatusStream)

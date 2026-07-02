@@ -1,3 +1,12 @@
+//! Canonical industry-identifier aliases and their on-chain format rules.
+//!
+//! Every alias is a [`MiddsString`] (a bounded ASCII byte string) so the
+//! types stay `no_std` / `MaxEncodedLen`-friendly. The paired
+//! `validate_*_format` functions enforce **structure only** (length, charset,
+//! prefix) — deliberately not check digits: real-world registries publish
+//! records with bad checksums, so checksum verification is warning-only and
+//! lives in `midds-validate`.
+
 use bounded_collections::{BoundedVec, ConstU32};
 
 use crate::error::MiddsFormatError;
@@ -21,9 +30,20 @@ pub type Isrc = MiddsString<12>;
 /// UPC / EAN barcode keying a `Release`: a GTIN-12 (UPC-A, 12 digits) or
 /// GTIN-13 (EAN-13, 13 digits). Bound is 13 — the wider of the two.
 pub type Upc = MiddsString<13>;
-/// Off-chain extension hash. Opaque on-chain; CIDv1 by client convention.
+/// Off-chain extension hash. Opaque on-chain; `CIDv1` by client convention.
 pub type OffchainHash = MiddsString<64>;
 
+/// Validates the structure of an [`Iswc`]: `T` followed by 10 decimal digits.
+/// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
+/// [`MiddsFormatError::InvalidIdentifierStructure`] on a missing `T` prefix,
+/// [`MiddsFormatError::InvalidCharset`] on a non-digit payload.
+///
+/// ```
+/// use midds_traits::validate_iswc_format;
+///
+/// assert!(validate_iswc_format(b"T0345246801").is_ok());
+/// assert!(validate_iswc_format(b"X0345246801").is_err());
+/// ```
 pub fn validate_iswc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() != 11 {
         return Err(MiddsFormatError::OutOfBounds);
@@ -37,6 +57,17 @@ pub fn validate_iswc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
+/// Validates the structure of an [`Isni`]: 15 decimal digits plus a final
+/// digit or `X`.
+/// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
+/// [`MiddsFormatError::InvalidCharset`] on any other malformed byte.
+///
+/// ```
+/// use midds_traits::validate_isni_format;
+///
+/// assert!(validate_isni_format(b"000000012103268X").is_ok());
+/// assert!(validate_isni_format(b"123").is_err());
+/// ```
 pub fn validate_isni_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() != 16 {
         return Err(MiddsFormatError::OutOfBounds);
@@ -51,6 +82,16 @@ pub fn validate_isni_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
+/// Validates the structure of an [`Ipi`]: 9 to 11 decimal digits.
+/// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
+/// [`MiddsFormatError::InvalidCharset`] on a non-digit byte.
+///
+/// ```
+/// use midds_traits::validate_ipi_format;
+///
+/// assert!(validate_ipi_format(b"123456789").is_ok());
+/// assert!(validate_ipi_format(b"12345678").is_err());
+/// ```
 pub fn validate_ipi_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() < 9 || b.len() > 11 {
         return Err(MiddsFormatError::OutOfBounds);
@@ -61,6 +102,16 @@ pub fn validate_ipi_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
+/// Validates the structure of an [`Ipn`]: exactly 8 decimal digits.
+/// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
+/// [`MiddsFormatError::InvalidCharset`] on a non-digit byte.
+///
+/// ```
+/// use midds_traits::validate_ipn_format;
+///
+/// assert!(validate_ipn_format(b"12345678").is_ok());
+/// assert!(validate_ipn_format(b"1234567A").is_err());
+/// ```
 pub fn validate_ipn_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() != 8 {
         return Err(MiddsFormatError::OutOfBounds);
@@ -71,6 +122,18 @@ pub fn validate_ipn_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
+/// Validates the structure of an [`Isrc`]: 2 uppercase country letters,
+/// 3 alphanumeric registrant characters, then 7 decimal digits (2-digit
+/// year + 5-digit designation).
+/// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
+/// [`MiddsFormatError::InvalidCharset`] on any malformed segment.
+///
+/// ```
+/// use midds_traits::validate_isrc_format;
+///
+/// assert!(validate_isrc_format(b"USRC17607839").is_ok());
+/// assert!(validate_isrc_format(b"usrc17607839").is_err());
+/// ```
 pub fn validate_isrc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() != 12 {
         return Err(MiddsFormatError::OutOfBounds);
@@ -90,10 +153,20 @@ pub fn validate_isrc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
-/// UPC-A (12 digits) or EAN-13 / GTIN-13 (13 digits), all decimal. The
-/// trailing check digit is **not** verified on-chain — like every other
-/// identifier, structure only; the warning-only GTIN mod-10 verifier lives
-/// in `midds-validate`.
+/// Validates the structure of a [`Upc`]: UPC-A (12 digits) or EAN-13 /
+/// GTIN-13 (13 digits), all decimal. The trailing check digit is **not**
+/// verified on-chain — like every other identifier, structure only; the
+/// warning-only GTIN mod-10 verifier lives in `midds-validate`.
+/// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
+/// [`MiddsFormatError::InvalidCharset`] on a non-digit byte.
+///
+/// ```
+/// use midds_traits::validate_upc_format;
+///
+/// assert!(validate_upc_format(b"036000291452").is_ok());
+/// assert!(validate_upc_format(b"4006381333931").is_ok());
+/// assert!(validate_upc_format(b"0360002914").is_err());
+/// ```
 pub fn validate_upc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.len() != 12 && b.len() != 13 {
         return Err(MiddsFormatError::OutOfBounds);
@@ -104,6 +177,16 @@ pub fn validate_upc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
+/// Validates an [`OffchainHash`]: opaque on-chain, so the only structural
+/// rule is non-emptiness (the length cap is enforced by the bounded type).
+/// Errors: [`MiddsFormatError::EmptyMandatoryField`] on an empty hash.
+///
+/// ```
+/// use midds_traits::validate_offchain_hash;
+///
+/// assert!(validate_offchain_hash(b"bafkreigh2akiscaildc").is_ok());
+/// assert!(validate_offchain_hash(b"").is_err());
+/// ```
 pub fn validate_offchain_hash(b: &[u8]) -> Result<(), MiddsFormatError> {
     if b.is_empty() {
         return Err(MiddsFormatError::EmptyMandatoryField);

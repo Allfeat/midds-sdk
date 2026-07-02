@@ -1,4 +1,33 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
+//! Core traits and identifier primitives for Allfeat MIDDS.
+//!
+//! The pivot of the SDK: every other crate is generic over the [`Midds`]
+//! trait defined here. Also hosts the industry-identifier aliases ([`Iswc`],
+//! [`Isni`], [`Ipi`], [`Ipn`], [`Isrc`], [`Upc`], [`OffchainHash`]) and their
+//! pure on-chain `validate_*_format` rules (structure only — checksums are
+//! warning-only, in `midds-validate`). `no_std` by default; the optional
+//! `serde` feature adds string-shaped JSON via [`serde_helpers`].
 #![cfg_attr(not(feature = "std"), no_std)]
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 use parity_scale_codec::{Codec, EncodeLike, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -37,7 +66,7 @@ impl<T> Parameter for T where
 /// `MusicalWork`, ISRC for `Recording`, …) backing the reverse uniqueness index.
 pub trait Midds: Parameter + MaxEncodedLen {
     /// Stable, human-readable type discriminator. Surfaced in events, RPC
-    /// namespaces, indexer schemas. Convention: PascalCase singular —
+    /// namespaces, indexer schemas. Convention: `PascalCase` singular —
     /// `"MusicalWork"`, `"Recording"`, `"Release"`. Frozen across versions
     /// of the same payload (a `V2` keeps the same `KIND` as `V1`).
     const KIND: &'static str;

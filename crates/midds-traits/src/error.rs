@@ -1,3 +1,5 @@
+//! Format-validation error type shared by every MIDDS payload.
+
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
@@ -34,3 +36,19 @@ pub enum MiddsFormatError {
     /// `MusicalWork`, `Recording`, and `Release`.
     CrossFieldInconsistency,
 }
+
+impl core::fmt::Display for MiddsFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let msg = match self {
+            Self::InvalidIdentifierStructure => "identifier structure is invalid",
+            Self::InvalidCharset => "bytes outside the allowed charset",
+            Self::OutOfBounds => "length or value out of the allowed range",
+            Self::EmptyMandatoryField => "a mandatory field is empty",
+            Self::DateInconsistency => "date fields are mutually inconsistent",
+            Self::CrossFieldInconsistency => "fields are mutually inconsistent",
+        };
+        f.write_str(msg)
+    }
+}
+
+impl core::error::Error for MiddsFormatError {}

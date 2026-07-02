@@ -6,7 +6,7 @@
 //! through this module carries an ISWC (or future ISRC/UPC) derived from a
 //! unique `(base_index + slot)` pair:
 //!
-//! - **base_index** — nanos since UNIX epoch, taken modulo `10^9` (the ISWC
+//! - **`base_index`** — nanos since UNIX epoch, taken modulo `10^9` (the ISWC
 //!   work-code field width). Read once per process via [`base_index`]. Two
 //!   `cargo test` invocations a microsecond apart get disjoint bases.
 //! - **slot** — process-local atomic counter. Each call to [`next_index`]
@@ -40,9 +40,8 @@ pub fn base_index() -> u32 {
     *BASE_INDEX.get_or_init(|| {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        (nanos % INDEX_MODULUS as u64) as u32
+            .map_or(0, |d| d.as_nanos() as u64);
+        (nanos % u64::from(INDEX_MODULUS)) as u32
     })
 }
 
@@ -60,8 +59,9 @@ pub fn next_index() -> u32 {
 /// so two consecutive calls produce visibly distinct payloads — handy when
 /// a test wants to assert "the payload was actually updated" without having
 /// to wire its own fixture state.
+#[must_use]
 pub fn fresh_musical_work() -> MusicalWork {
     let idx = next_index();
-    let mut rng = ChaCha20Rng::seed_from_u64(idx as u64);
+    let mut rng = ChaCha20Rng::seed_from_u64(u64::from(idx));
     random_with_iswc_index(&mut rng, idx)
 }

@@ -10,6 +10,7 @@ pub const WS_URL_VAR: &str = "MIDDS_E2E_WS";
 pub const DEFAULT_WS_URL: &str = "ws://127.0.0.1:9944";
 
 /// Resolved node URL — `MIDDS_E2E_WS` when set, otherwise [`DEFAULT_WS_URL`].
+#[must_use]
 pub fn ws_url() -> String {
     std::env::var(WS_URL_VAR).unwrap_or_else(|_| DEFAULT_WS_URL.into())
 }

@@ -30,7 +30,7 @@ const MAX_ATTEMPTS: u32 = 60;
 const SLEEP_BETWEEN: Duration = Duration::from_millis(500);
 
 /// Repeatedly run `f` until it yields `Some(_)`, then return it. Panics with
-/// a labelled message after [`MAX_ATTEMPTS`] tries.
+/// a labelled message after `MAX_ATTEMPTS` tries.
 ///
 /// `label` is a short description of what's being waited on — gets surfaced
 /// in the failure message so the panic identifies the failing read site.
@@ -50,7 +50,7 @@ where
     panic!(
         "[e2e] timed out waiting for `{label}` after {MAX_ATTEMPTS} attempts \
          ({:.1} s) — likely a finalisation lag or a missing state update",
-        MAX_ATTEMPTS as f64 * SLEEP_BETWEEN.as_secs_f64(),
+        f64::from(MAX_ATTEMPTS) * SLEEP_BETWEEN.as_secs_f64(),
     );
 }
 
@@ -73,6 +73,6 @@ where
     panic!(
         "[e2e] timed out waiting for `{label}` after {MAX_ATTEMPTS} attempts \
          ({:.1} s)",
-        MAX_ATTEMPTS as f64 * SLEEP_BETWEEN.as_secs_f64(),
+        f64::from(MAX_ATTEMPTS) * SLEEP_BETWEEN.as_secs_f64(),
     );
 }

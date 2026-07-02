@@ -107,7 +107,8 @@ struct AccountDataPin {
 /// Free balance of `account` at the latest block — the amount the owner can
 /// freely spend or have held against new operations.
 ///
-/// Decodes [`AccountInfoPin`] from the raw storage bytes. If the runtime ever
+/// Decodes the crate-internal `AccountInfoPin` from the raw storage bytes.
+/// If the runtime ever
 /// migrates `AccountData` to a different layout the decode fails loudly,
 /// surfacing the regression in the e2e suite rather than silently returning
 /// a wrong number.

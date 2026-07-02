@@ -31,8 +31,7 @@ pub async fn try_connect() -> Option<MiddsClient> {
         }
         Err(_) => {
             eprintln!(
-                "[e2e] skip: no node at {url} after {:?} — boot `allfeat --dev` to run e2e",
-                CONNECT_TIMEOUT,
+                "[e2e] skip: no node at {url} after {CONNECT_TIMEOUT:?} — boot `allfeat --dev` to run e2e",
             );
             None
         }
@@ -55,12 +54,16 @@ pub async fn try_connect() -> Option<MiddsClient> {
 /// covers.
 pub async fn wait_for_visible_musical_works_deposit(client: &MiddsClient, id: MiddsId) {
     poll::wait_until("deposit visible at read view", || async {
-        let next = client
-            .musical_works()
-            .next_midds_id()
-            .await
-            .expect("next_midds_id");
-        next > id
+        // A transient RPC failure is "not visible yet", not a test abort —
+        // the poll's own attempt cap turns a persistent failure into a
+        // labelled panic.
+        match client.musical_works().next_midds_id().await {
+            Ok(next) => next > id,
+            Err(e) => {
+                eprintln!("[e2e] next_midds_id read failed (retrying): {e}");
+                false
+            }
+        }
     })
     .await;
 }

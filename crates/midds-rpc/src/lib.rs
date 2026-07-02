@@ -1,3 +1,22 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
 //! JSON-RPC bridges exposing the `pallet-midds` runtime APIs to clients.
 //!
 //! # One handler per MIDDS kind, one macro body
@@ -6,7 +25,7 @@
 //! ([`midds_runtime_api::MusicalWorkApi`], [`midds_runtime_api::RecordingApi`],
 //! …) because Substrate keys runtime-API dispatch on the trait name. The
 //! JSON-RPC surface mirrors that one-trait-per-kind shape: the
-//! [`midds_rpc_instance!`] macro stamps a generic handler + a
+//! crate-internal `midds_rpc_instance!` macro stamps a generic handler + a
 //! `#[rpc(server)]` trait per kind from a single body, so there is exactly
 //! one copy of the bridging logic.
 //!
@@ -28,6 +47,8 @@
 //! Inherent `*_at` handlers are public so a node that wants a bespoke
 //! namespace can wire its own thin `#[rpc(server)]` trait without
 //! round-tripping through trait dispatch.
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 use std::{marker::PhantomData, sync::Arc};
 
@@ -171,6 +192,8 @@ macro_rules! midds_rpc_instance {
         impl<Client, Block, Identifier, Item, AccountId, Balance>
             $Handler<Client, Block, Identifier, Item, AccountId, Balance>
         {
+            /// Wrap `client` into a handler ready to be merged into the
+            /// node's RPC module.
             pub fn new(client: Arc<Client>) -> Self {
                 Self {
                     client,
@@ -197,6 +220,8 @@ macro_rules! midds_rpc_instance {
                 at.unwrap_or_else(|| self.client.info().best_hash)
             }
 
+            /// Inherent form of `lookupByIdentifier` at `at` (best block by
+            /// default).
             pub fn lookup_by_identifier_at(
                 &self,
                 identifier: Identifier,
@@ -208,6 +233,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to resolve identifier."))
             }
 
+            /// Inherent form of `lookupByIdentifierPaged` at `at` (best
+            /// block by default).
             pub fn lookup_by_identifier_paged_at(
                 &self,
                 identifier: Identifier,
@@ -221,6 +248,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to resolve identifier page."))
             }
 
+            /// Inherent form of `countByIdentifier` at `at` (best block by
+            /// default).
             pub fn count_by_identifier_at(
                 &self,
                 identifier: Identifier,
@@ -232,6 +261,7 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to count claims for identifier."))
             }
 
+            /// Inherent form of `get` at `at` (best block by default).
             pub fn get_at(
                 &self,
                 id: MiddsId,
@@ -243,6 +273,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to fetch MIDDS record."))
             }
 
+            /// Inherent form of `depositInfo` at `at` (best block by
+            /// default).
             pub fn deposit_info_at(
                 &self,
                 id: MiddsId,
@@ -254,6 +286,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to fetch deposit info."))
             }
 
+            /// Inherent form of `currentDepositPrice` at `at` (best block
+            /// by default).
             pub fn current_deposit_price_at(
                 &self,
                 size: u32,
@@ -265,6 +299,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to compute deposit price."))
             }
 
+            /// Inherent form of `currentMultipliers` at `at` (best block by
+            /// default).
             pub fn current_multipliers_at(
                 &self,
                 at: Option<<Block as BlockT>::Hash>,
@@ -275,6 +311,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to fetch current multipliers."))
             }
 
+            /// Inherent form of `weeklyTarget` at `at` (best block by
+            /// default).
             pub fn weekly_target_at(
                 &self,
                 at: Option<<Block as BlockT>::Hash>,
@@ -285,6 +323,8 @@ macro_rules! midds_rpc_instance {
                     .map_err(|e| runtime_err(e, "Unable to fetch weekly target."))
             }
 
+            /// Inherent form of `weeklyActual` at `at` (best block by
+            /// default).
             pub fn weekly_actual_at(
                 &self,
                 at: Option<<Block as BlockT>::Hash>,

@@ -18,7 +18,9 @@ sp-blockchain = { workspace = true }
 sp-runtime = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-midds-fixtures = { workspace = true, features = ["proptest", "corpus"] }
+# Default features (`proptest` + `corpus`) suffice — the RPC test only uses
+# the ungated builder / identifier helpers.
+midds-fixtures = { workspace = true }
 midds-types = { workspace = true, features = ["std", "serde"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }

@@ -1,9 +1,26 @@
-//! Subxt bindings generator for the MIDDS client.
-//!
-//! Wraps [`subxt_codegen::CodegenBuilder`] behind a small CLI: point it at a
-//! running node (`--metadata ws://…`) or a SCALE-encoded metadata file, and it
-//! emits a single Rust module ready to be `include!`d (or copied) by
-//! `midds-client`.
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
+//! Subxt bindings generator for **external** MIDDS consumers: point it at a
+//! node (`--metadata ws://…`) or a SCALE metadata file and it emits a Rust
+//! module of static bindings for downstream tooling. `midds-client` itself
+//! deliberately stays on `subxt::dynamic` and never consumes this output.
 
 use std::{path::PathBuf, str::FromStr};
 
@@ -26,13 +43,8 @@ struct Cli {
     #[arg(long, value_name = "URL_OR_PATH")]
     metadata: String,
 
-    /// Output file. Defaults to `crates/midds-client/src/generated.rs`, which
-    /// is where `midds-client` expects the generated bindings.
-    #[arg(
-        long,
-        value_name = "PATH",
-        default_value = "crates/midds-client/src/generated.rs"
-    )]
+    /// Output file for the generated bindings module.
+    #[arg(long, value_name = "PATH", default_value = "midds_generated.rs")]
     out: PathBuf,
 
     /// Metadata version to request when fetching over the network: `latest`

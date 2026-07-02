@@ -19,11 +19,28 @@ use frame::token::fungible::MutateHold;
 use frame::token::tokens::{Fortitude, Precision, Restriction};
 use frame::traits::Verify;
 use midds_traits::{Midds, MiddsId};
-use parity_scale_codec::Encode;
 
 impl<T: Config<I>, I: 'static> Pallet<T, I> {
     fn deposit_reason() -> T::RuntimeHoldReason {
         HoldReason::<I>::Deposit.into()
+    }
+
+    /// Hold `amount` of bond against `payer` under the pallet's hold reason.
+    fn hold_bond(payer: &T::AccountId, amount: BalanceOf<T, I>) -> DispatchResult {
+        <T::Currency as MutateHold<T::AccountId>>::hold(&Self::deposit_reason(), payer, amount)
+            .map_err(|_| Error::<T, I>::BondHoldFailed.into())
+    }
+
+    /// Release exactly `amount` of bond held against `payer`.
+    fn release_bond(payer: &T::AccountId, amount: BalanceOf<T, I>) -> DispatchResult {
+        <T::Currency as MutateHold<T::AccountId>>::release(
+            &Self::deposit_reason(),
+            payer,
+            amount,
+            Precision::Exact,
+        )
+        .map_err(|_| Error::<T, I>::BondReleaseFailed)?;
+        Ok(())
     }
 
     /// Format gate (charset / length / structure) shared by every extrinsic
@@ -148,16 +165,14 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     pub(crate) fn owner_amount(info: &DepositOf<T, I>) -> BalanceOf<T, I> {
         info.owner_layer
             .as_ref()
-            .map(|l| l.amount)
-            .unwrap_or_else(Zero::zero)
+            .map_or_else(Zero::zero, |l| l.amount)
     }
 
     /// `owner_layer.base` or zero if no owner layer exists.
     pub(crate) fn owner_base(info: &DepositOf<T, I>) -> BalanceOf<T, I> {
         info.owner_layer
             .as_ref()
-            .map(|l| l.base)
-            .unwrap_or_else(Zero::zero)
+            .map_or_else(Zero::zero, |l| l.base)
     }
 
     /// Total base across both layers — the canonical "current bond formula
@@ -207,12 +222,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         let base_bond = Self::compute_base_bond(size);
         let total_bond = Self::apply_multipliers(base_bond);
 
-        <T::Currency as MutateHold<T::AccountId>>::hold(
-            &Self::deposit_reason(),
-            &bond_payer,
-            total_bond,
-        )
-        .map_err(|_| Error::<T, I>::BondHoldFailed)?;
+        Self::hold_bond(&bond_payer, total_bond)?;
 
         let now = <frame_system::Pallet<T>>::block_number();
         let expiry = now.saturating_add(T::CommitmentWindow::get());
@@ -292,11 +302,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 
         let new_hash = Self::hash_payload(&item);
         if new_hash != info.payload_hash {
-            if let Some(existing) = PayloadHashes::<T, I>::get(new_hash) {
-                if existing != id {
-                    return Err(Error::<T, I>::DuplicatePayload.into());
-                }
-            }
+            Self::ensure_hash_free_or_self(new_hash, id)?;
         }
 
         Self::route_size_delta(
@@ -308,9 +314,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         )?;
 
         if new_hash != info.payload_hash {
-            PayloadHashes::<T, I>::remove(info.payload_hash);
-            PayloadHashes::<T, I>::insert(new_hash, id);
-            info.payload_hash = new_hash;
+            Self::swap_payload_hash(&mut info, new_hash, id);
         }
 
         Items::<T, I>::insert(id, item);
@@ -332,18 +336,29 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
     ) -> Result<DepositOf<T, I>, DispatchError> {
         let new_hash = Self::hash_payload(&item);
         if new_hash != info.payload_hash {
-            if let Some(existing) = PayloadHashes::<T, I>::get(new_hash) {
-                if existing != id {
-                    return Err(Error::<T, I>::DuplicatePayload.into());
-                }
-            }
-            PayloadHashes::<T, I>::remove(info.payload_hash);
-            PayloadHashes::<T, I>::insert(new_hash, id);
-            info.payload_hash = new_hash;
+            Self::ensure_hash_free_or_self(new_hash, id)?;
+            Self::swap_payload_hash(&mut info, new_hash, id);
         }
         Items::<T, I>::insert(id, item);
         DepositInfo::<T, I>::insert(id, &info);
         Ok(info)
+    }
+
+    /// Reject when `new_hash` is already claimed by a *different* record —
+    /// the exact-payload uniqueness invariant.
+    fn ensure_hash_free_or_self(new_hash: T::Hash, id: MiddsId) -> DispatchResult {
+        match PayloadHashes::<T, I>::get(new_hash) {
+            Some(existing) if existing != id => Err(Error::<T, I>::DuplicatePayload.into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Re-point the exact-payload uniqueness index from the stored hash to
+    /// `new_hash`, both in storage and in `info`.
+    fn swap_payload_hash(info: &mut DepositOf<T, I>, new_hash: T::Hash, id: MiddsId) {
+        PayloadHashes::<T, I>::remove(info.payload_hash);
+        PayloadHashes::<T, I>::insert(new_hash, id);
+        info.payload_hash = new_hash;
     }
 
     /// Apply the per-layer base + amount adjustments for an `apply_edit`
@@ -372,27 +387,21 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
                 Self::record_deposit_demand();
             }
             if caller_is_sponsor {
-                Self::extend_layer_in_place(
-                    &info.sponsor_layer.payer.clone(),
-                    &mut info.sponsor_layer,
-                    delta,
-                )?;
+                let payer = info.sponsor_layer.payer.clone();
+                let new_base = info.sponsor_layer.base.saturating_add(delta);
+                Self::reprice_layer_to_base(&payer, &mut info.sponsor_layer, new_base)?;
                 return Ok(());
             }
             match info.owner_layer.as_mut() {
                 Some(layer) => {
                     let payer = layer.payer.clone();
-                    Self::extend_layer_in_place(&payer, layer, delta)?;
+                    let new_base = layer.base.saturating_add(delta);
+                    Self::reprice_layer_to_base(&payer, layer, new_base)?;
                 }
                 None => {
                     let amount = Self::apply_multipliers(delta);
                     if !amount.is_zero() {
-                        <T::Currency as MutateHold<T::AccountId>>::hold(
-                            &Self::deposit_reason(),
-                            caller,
-                            amount,
-                        )
-                        .map_err(|_| Error::<T, I>::BondHoldFailed)?;
+                        Self::hold_bond(caller, amount)?;
                     }
                     info.owner_layer = Some(BondLayer {
                         payer: caller.clone(),
@@ -418,80 +427,35 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 
         if !sponsor_release_base.is_zero() {
             let payer = info.sponsor_layer.payer.clone();
-            Self::shrink_layer_in_place(&payer, &mut info.sponsor_layer, sponsor_release_base)?;
+            let new_base = info.sponsor_layer.base.saturating_sub(sponsor_release_base);
+            Self::reprice_layer_to_base(&payer, &mut info.sponsor_layer, new_base)?;
         }
         if !owner_release_base.is_zero() {
             if let Some(layer) = info.owner_layer.as_mut() {
                 let payer = layer.payer.clone();
-                Self::shrink_layer_in_place(&payer, layer, owner_release_base)?;
+                let new_base = layer.base.saturating_sub(owner_release_base);
+                Self::reprice_layer_to_base(&payer, layer, new_base)?;
             }
         }
         Ok(())
     }
 
-    /// Grow `layer.base` by `delta_base` and update `layer.amount` via the
-    /// per-layer premium rule, holding the resulting amount delta against
-    /// `payer`. The per-layer premium is preserved across the edit, so for
-    /// a `M ≥ 1` layer the amount delta equals `delta_base`; for a `M < 1`
-    /// underpriced layer (where `amount < base`) the formula rebases the
-    /// hold up to the new base — matching the pre-stratification semantics
-    /// (cf. the original `apply_edit`).
-    fn extend_layer_in_place(
+    /// Move `layer.base` to `new_base`, recompute `amount` under the
+    /// per-layer premium rule (`amount − base` clamped at zero, preserved
+    /// across the edit; an underpriced `M < 1` layer rebases to the new
+    /// base) and reconcile `payer`'s hold. Both directions of
+    /// `route_size_delta` go through here.
+    fn reprice_layer_to_base(
         payer: &T::AccountId,
         layer: &mut BondLayer<T::AccountId, BalanceOf<T, I>>,
-        delta_base: BalanceOf<T, I>,
+        new_base: BalanceOf<T, I>,
     ) -> DispatchResult {
-        let new_base = layer.base.saturating_add(delta_base);
-        let preserved_premium = layer.amount.saturating_sub(layer.base);
-        let new_amount = new_base.saturating_add(preserved_premium);
-        let amount_delta = new_amount.saturating_sub(layer.amount);
-        let amount_release = layer.amount.saturating_sub(new_amount);
-        if !amount_delta.is_zero() {
-            <T::Currency as MutateHold<T::AccountId>>::hold(
-                &Self::deposit_reason(),
-                payer,
-                amount_delta,
-            )
-            .map_err(|_| Error::<T, I>::BondHoldFailed)?;
-        } else if !amount_release.is_zero() {
-            <T::Currency as MutateHold<T::AccountId>>::release(
-                &Self::deposit_reason(),
-                payer,
-                amount_release,
-                Precision::Exact,
-            )
-            .map_err(|_| Error::<T, I>::BondReleaseFailed)?;
-        }
-        layer.base = new_base;
-        layer.amount = new_amount;
-        Ok(())
-    }
-
-    /// Shrink `layer.base` by `release_base` and update `layer.amount` via
-    /// the per-layer premium rule, releasing the corresponding amount
-    /// delta from `payer`'s hold (or, in the underpriced `M < 1` case,
-    /// holding the difference if the new base exceeds the current amount).
-    fn shrink_layer_in_place(
-        payer: &T::AccountId,
-        layer: &mut BondLayer<T::AccountId, BalanceOf<T, I>>,
-        release_base: BalanceOf<T, I>,
-    ) -> DispatchResult {
-        let new_base = layer.base.saturating_sub(release_base);
         let preserved_premium = layer.amount.saturating_sub(layer.base);
         let new_amount = new_base.saturating_add(preserved_premium);
         if new_amount > layer.amount {
-            let extra = new_amount.saturating_sub(layer.amount);
-            <T::Currency as MutateHold<T::AccountId>>::hold(&Self::deposit_reason(), payer, extra)
-                .map_err(|_| Error::<T, I>::BondHoldFailed)?;
+            Self::hold_bond(payer, new_amount.saturating_sub(layer.amount))?;
         } else if new_amount < layer.amount {
-            let release = layer.amount.saturating_sub(new_amount);
-            <T::Currency as MutateHold<T::AccountId>>::release(
-                &Self::deposit_reason(),
-                payer,
-                release,
-                Precision::Exact,
-            )
-            .map_err(|_| Error::<T, I>::BondReleaseFailed)?;
+            Self::release_bond(payer, layer.amount.saturating_sub(new_amount))?;
         }
         layer.base = new_base;
         layer.amount = new_amount;
@@ -577,13 +541,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         // Whatever is owed back to the payer is released from the remaining
         // hold. `release` moves hold → free and is unaffected by freezes.
         if !to_payer.is_zero() {
-            <T::Currency as MutateHold<T::AccountId>>::release(
-                &Self::deposit_reason(),
-                payer,
-                to_payer,
-                Precision::Exact,
-            )
-            .map_err(|_| Error::<T, I>::BondReleaseFailed)?;
+            Self::release_bond(payer, to_payer)?;
         }
         Ok(())
     }
@@ -672,11 +630,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         Self::settle_bond(&info, SettlementKind::Refund)?;
 
         let sponsor_refund = info.sponsor_layer.amount;
-        let owner_refund = info
-            .owner_layer
-            .as_ref()
-            .map(|l| l.amount)
-            .unwrap_or_else(Zero::zero);
+        let owner_refund = Self::owner_amount(&info);
         let depositor = info.depositor.clone();
         let sponsor = info.sponsor_layer.payer.clone();
         Self::cleanup_storage(id, &info)?;
@@ -780,7 +734,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         // pathological identifier can't OOM/stall the node.
         let mut ids: Vec<MiddsId> = IdentifierClaims::<T, I>::iter_prefix(identifier)
             .take(Self::MAX_LOOKUP_SCAN as usize)
-            .map(|(id, _)| id)
+            .map(|(id, ())| id)
             .filter(|id| match after {
                 Some(after_id) => *id > after_id,
                 None => true,

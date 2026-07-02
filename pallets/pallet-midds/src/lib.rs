@@ -1,7 +1,26 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
 //! # `pallet-midds`
 //!
 //! Generic, multi-instance FRAME pallet managing the lifecycle of a single
-//! type of MIDDS record (MusicalWork, Recording, Release, …) per instance.
+//! type of MIDDS record (`MusicalWork`, `Recording`, `Release`, …) per instance.
 //!
 //! Per `docs/economics.md`: permissionless deposit secured by a size-proportional
 //! bond multiplied by two dynamic multipliers (anti-DoS `M_fast`, anti-flood
@@ -88,7 +107,6 @@ pub mod pallet {
     use frame::token::fungible::{Mutate, MutateHold};
     use frame::traits::Verify;
     use midds_traits::{Midds, MiddsId};
-    use parity_scale_codec::Encode;
 
     #[pallet::pallet]
     pub struct Pallet<T, I = ()>(_);
@@ -269,7 +287,7 @@ pub mod pallet {
     /// This stops *accidental* exact re-submissions only — flipping a single
     /// optional byte yields a different hash and a distinct accepted record.
     /// Adversarial near-duplicate suppression is therefore **not** an on-chain
-    /// guarantee; it is a deliberate off-chain / PoM concern (cf.
+    /// guarantee; it is a deliberate off-chain / `PoM` concern (cf.
     /// `docs/economics.md` §10.1). The on-chain deterrent against near-dup
     /// flooding is the dynamic bond, not this index.
     #[pallet::storage]
@@ -512,8 +530,12 @@ pub mod pallet {
     /// obviously misconfigured rather than silently free.
     #[pallet::genesis_config]
     pub struct GenesisConfig<T: Config<I>, I: 'static = ()> {
+        /// Flat part of the bond formula (must be non-zero — asserted at
+        /// genesis build).
         pub deposit_base: BalanceOf<T, I>,
+        /// Per-encoded-byte part of the bond formula.
         pub deposit_per_byte: BalanceOf<T, I>,
+        /// Instance marker.
         #[serde(skip)]
         pub _config: core::marker::PhantomData<(T, I)>,
     }
@@ -591,7 +613,7 @@ pub mod pallet {
             while cursor <= n && remaining > 0 && probes_remaining > 0 {
                 let due: Vec<MiddsId> = PendingFinalization::<T, I>::iter_prefix(cursor)
                     .take(remaining)
-                    .map(|(id, _)| id)
+                    .map(|(id, ())| id)
                     .collect();
                 // A prefix probe costs at least one DB read even when empty —
                 // charge it so the catch-up scan is reflected in block weight.

@@ -166,7 +166,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
         SlowWindowBuckets::<T, I>::get()
             .iter()
             .copied()
-            .fold(0u32, |acc, x| acc.saturating_add(x))
+            .fold(0u32, u32::saturating_add)
     }
 
     /// Current `(M_fast, M_slow)`.

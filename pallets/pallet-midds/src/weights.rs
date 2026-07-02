@@ -13,18 +13,32 @@ use frame::weights_prelude::*;
 /// fixed base plus `n × finalize_one()` so a runtime can pick a sensible
 /// `MaxFinalizationsPerBlock` from the headroom of its target block weight.
 pub trait WeightInfo {
+    /// Weight of `deposit` for an `s`-byte payload.
     fn deposit(s: u32) -> Weight;
+    /// Weight of `deposit_on_behalf` for an `s`-byte payload.
     fn deposit_on_behalf(s: u32) -> Weight;
+    /// Weight of `update` for an `s`-byte payload.
     fn update(s: u32) -> Weight;
+    /// Weight of `update_on_behalf` for an `s`-byte payload.
     fn update_on_behalf(s: u32) -> Weight;
+    /// Weight of `remove_own`.
     fn remove_own() -> Weight;
+    /// Weight of `remove_own_on_behalf`.
     fn remove_own_on_behalf() -> Weight;
+    /// Weight of finalizing a single record — the per-record share of the
+    /// `on_initialize` sweep and the cost of a permissionless `finalize`.
     fn finalize_one() -> Weight;
+    /// Weight of `force_edit` for an `s`-byte payload.
     fn force_edit(s: u32) -> Weight;
+    /// Weight of `force_remove_refund`.
     fn force_remove_refund() -> Weight;
+    /// Weight of `force_remove_slash`.
     fn force_remove_slash() -> Weight;
+    /// Weight of `force_remove_many` over `n` removal requests.
     fn force_remove_many(n: u32) -> Weight;
+    /// Weight of `force_set_deposit_base`.
     fn force_set_deposit_base() -> Weight;
+    /// Weight of `force_set_deposit_per_byte`.
     fn force_set_deposit_per_byte() -> Weight;
 }
 

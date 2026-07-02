@@ -13,13 +13,17 @@ use midds_traits::MiddsId;
 /// extending a layer pays the raw `delta_base` (no current multiplier),
 /// shrinking releases `delta_base` (premium stays absolute). This mirrors
 /// `docs/economics.md` §5.5: the multiplier premium is non-refundable on
-/// remove_own, sticky to the layer that paid it.
+/// `remove_own`, sticky to the layer that paid it.
 #[derive(
     Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo, Clone, PartialEq, Eq, Debug,
 )]
 pub struct BondLayer<AccountId, Balance> {
+    /// Account whose balance carries this layer's hold.
     pub payer: AccountId,
+    /// Total currently held against `payer` (`base` + banked premium).
     pub amount: Balance,
+    /// Formula part of the layer (`DepositBase + DepositPerByte × size`
+    /// share), excluding the multiplier premium.
     pub base: Balance,
 }
 
@@ -63,7 +67,11 @@ pub struct Deposit<AccountId, Balance, BlockNumber, Hash> {
     /// for the entire lifetime of the record (the owner cannot transfer
     /// authority to a different account without `remove_own` + re-deposit).
     pub owner_layer: Option<BondLayer<AccountId, Balance>>,
+    /// Hash of the SCALE-encoded payload at deposit (or last edit) time —
+    /// backs the exact-duplicate uniqueness index.
     pub payload_hash: Hash,
+    /// `true` once the commitment window elapsed and the bond moved to the
+    /// Treasury; the record is then permanent.
     pub finalized: bool,
 }
 
@@ -75,8 +83,11 @@ pub struct Deposit<AccountId, Balance, BlockNumber, Hash> {
     Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo, Clone, PartialEq, Eq, Debug,
 )]
 pub enum OnBehalfAction {
+    /// Authorizes a sponsored `deposit_on_behalf`.
     Deposit,
+    /// Authorizes a sponsored `update_on_behalf`.
     Update,
+    /// Authorizes a sponsored `remove_own_on_behalf`.
     Remove,
 }
 
@@ -100,9 +111,13 @@ pub struct DepositOnBehalfPayload<AccountId, BlockNumber, Hash, M> {
     /// chains / forks have different genesis hashes, so a signature
     /// captured on testnet is not replayable on mainnet.
     pub genesis_hash: Hash,
+    /// Always [`OnBehalfAction::Deposit`] for this payload.
     pub action: OnBehalfAction,
+    /// The MIDDS payload the owner authorizes the sponsor to deposit.
     pub item: M,
+    /// The sponsor allowed to submit (and pay the bond for) this deposit.
     pub operator: AccountId,
+    /// Owner's current on-behalf nonce — the per-owner replay protection.
     pub nonce: u64,
     /// Highest block number the signature is still valid at — beyond
     /// this, the chain rejects with `SignatureExpired`. Lets owners scope
@@ -120,13 +135,22 @@ pub struct DepositOnBehalfPayload<AccountId, BlockNumber, Hash, M> {
 /// only the deposit-time sponsor may extend their own hold.
 #[derive(Encode, Decode, DecodeWithMemTracking, TypeInfo, Clone, PartialEq, Eq, Debug)]
 pub struct UpdateOnBehalfPayload<AccountId, BlockNumber, Hash, M> {
+    /// `Midds::KIND` of the target instance (type-level replay protection).
     pub kind: Vec<u8>,
+    /// Genesis hash of the chain the signature is valid against.
     pub genesis_hash: Hash,
+    /// Always [`OnBehalfAction::Update`] for this payload.
     pub action: OnBehalfAction,
+    /// The MIDDS record being updated.
     pub id: MiddsId,
+    /// The full replacement payload the owner authorizes.
     pub item: M,
+    /// The sponsor allowed to submit this update — must equal the record's
+    /// `sponsor_layer.payer` (enforced on-chain).
     pub operator: AccountId,
+    /// Owner's current on-behalf nonce — the per-owner replay protection.
     pub nonce: u64,
+    /// Highest block number the signature is still valid at.
     pub valid_until: BlockNumber,
 }
 
@@ -149,12 +173,21 @@ pub struct UpdateOnBehalfPayload<AccountId, BlockNumber, Hash, M> {
 /// at a different relayer.
 #[derive(Encode, Decode, DecodeWithMemTracking, TypeInfo, Clone, PartialEq, Eq, Debug)]
 pub struct RemoveOnBehalfPayload<AccountId, BlockNumber, Hash> {
+    /// `Midds::KIND` of the target instance (type-level replay protection —
+    /// especially load-bearing here, see the struct docs).
     pub kind: Vec<u8>,
+    /// Genesis hash of the chain the signature is valid against.
     pub genesis_hash: Hash,
+    /// Always [`OnBehalfAction::Remove`] for this payload.
     pub action: OnBehalfAction,
+    /// The MIDDS record being cancelled.
     pub id: MiddsId,
+    /// The relayer allowed to submit this removal (any `ProviderOrigin`;
+    /// see the struct docs for why it need not be the record's sponsor).
     pub operator: AccountId,
+    /// Owner's current on-behalf nonce — the per-owner replay protection.
     pub nonce: u64,
+    /// Highest block number the signature is still valid at.
     pub valid_until: BlockNumber,
 }
 
@@ -173,7 +206,7 @@ pub(crate) enum SettlementKind {
     Full,
 }
 
-/// Per-id action carried by [`Pallet::force_remove_many`].
+/// Per-id action carried by [`force_remove_many`](crate::Pallet::force_remove_many).
 ///
 /// Replaces the original `(Vec<MiddsId>, slash: bool)` shape that forced a
 /// single fate on every entry — a typo intermixed with deliberate abuse in
@@ -201,7 +234,7 @@ pub enum RemovalKind {
 }
 
 /// `(id, kind)` pair fed into the bounded list of
-/// [`Pallet::force_remove_many`].
+/// [`force_remove_many`](crate::Pallet::force_remove_many).
 #[derive(
     Encode,
     Decode,
@@ -215,6 +248,8 @@ pub enum RemovalKind {
     Debug,
 )]
 pub struct RemovalRequest {
+    /// The MIDDS record to remove.
     pub id: MiddsId,
+    /// Whether its bond is refunded or slashed.
     pub kind: RemovalKind,
 }

@@ -17,7 +17,6 @@ use crate::types::{
     DepositOnBehalfPayload, OnBehalfAction, RemovalKind, RemovalRequest, RemoveOnBehalfPayload,
     UpdateOnBehalfPayload,
 };
-use parity_scale_codec::Encode as _;
 
 use alloc::vec;
 // `frame::benchmarking::prelude` re-exports the v2 benchmarking macros, the

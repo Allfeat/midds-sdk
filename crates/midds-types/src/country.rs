@@ -26,6 +26,8 @@ macro_rules! define_countries {
         )]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         #[cfg_attr(feature = "serde", serde(rename_all = "UPPERCASE"))]
+        // Variant names are the ISO 3166-1 alpha-2 codes themselves.
+        #[allow(missing_docs)]
         pub enum Country {
             $($variant,)*
         }

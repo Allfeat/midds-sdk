@@ -20,6 +20,8 @@ macro_rules! define_languages {
         )]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
         #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+        // Variant names are the ISO 639-1 codes themselves.
+        #[allow(missing_docs)]
         pub enum Language {
             $($variant,)*
         }

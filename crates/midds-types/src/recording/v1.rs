@@ -1,3 +1,5 @@
+//! First on-chain version of the `Recording` payload and its parts.
+
 use bounded_collections::{BoundedVec, ConstU32};
 use midds_traits::{
     Isni, Isrc, MiddsFormatError, MiddsString, OffchainHash, validate_isni_format,
@@ -7,7 +9,8 @@ use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 use crate::shared::{
-    BPM_MAX, BPM_MIN, MusicalKey, PartyId, PerformerId, Title, WorkRef, YEAR_MAX, YEAR_MIN,
+    MusicalKey, PartyId, PerformerId, Title, WorkRef, require_bpm_in_bounds, require_non_empty,
+    require_non_empty_opt, require_year_in_bounds,
 };
 
 /// Maximum number of alternative titles attached to a recording.
@@ -70,6 +73,9 @@ pub type Place = MiddsString<PLACE_MAX_LEN>;
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+// Variant names are the industry genre labels themselves; per-variant docs
+// would only repeat them.
+#[allow(missing_docs)]
 pub enum Genre {
     Pop,
     Rock,
@@ -169,6 +175,9 @@ pub enum RecordingVersion {
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+// Variant names are the instrument names themselves; only the family
+// catch-alls carry a clarifying doc.
+#[allow(missing_docs)]
 pub enum Instrument {
     // --- Vocals ---
     /// Vocals, family unspecified.
@@ -279,11 +288,16 @@ pub enum Instrument {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Performer {
+    /// Performer identifier (IPN preferred, IPI / ISNI fallback).
     pub id: PerformerId,
+    /// Instrument(s) played — at least one is mandatory.
     pub instruments: PerformerInstruments,
 }
 
 impl Performer {
+    /// Validates the credit: a well-formed id and at least one instrument.
+    /// Errors: Propagates [`PerformerId::validate_format`], then
+    /// [`MiddsFormatError::EmptyMandatoryField`] on an empty instrument list.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         // The identifier is format-checked; instrument *membership* is
         // structural (closed enum). Beyond that, a performer credit must name
@@ -307,16 +321,19 @@ impl Performer {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProductionPlaces {
+    /// Where the recording was captured.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
     )]
     pub recording: Option<Place>,
+    /// Where the recording was mixed.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
     )]
     pub mixing: Option<Place>,
+    /// Where the recording was mastered.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
@@ -325,23 +342,12 @@ pub struct ProductionPlaces {
 }
 
 impl ProductionPlaces {
+    /// Validates the block: present sub-fields must be non-empty.
+    /// Errors: [`MiddsFormatError::EmptyMandatoryField`] on a present-but-empty place.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
-        if let Some(p) = &self.recording
-            && p.is_empty()
-        {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
-        if let Some(p) = &self.mixing
-            && p.is_empty()
-        {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
-        if let Some(p) = &self.mastering
-            && p.is_empty()
-        {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
-        Ok(())
+        require_non_empty_opt(self.recording.as_ref())?;
+        require_non_empty_opt(self.mixing.as_ref())?;
+        require_non_empty_opt(self.mastering.as_ref())
     }
 }
 
@@ -359,17 +365,23 @@ impl ProductionPlaces {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RecordingV1 {
+    /// Canonical ISRC of the recording — the uniqueness-index key.
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub isrc: Isrc,
+    /// Primary title (mandatory, non-empty).
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub title: Title,
+    /// Alternative / localized titles; each must be non-empty.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_vec")
     )]
     pub title_aliases: TitleAliases,
+    /// Main credited artist.
     pub artist: PartyId,
+    /// Featured artists ("feat.").
     pub featuring: Featuring,
+    /// The musical work this recording performs.
     pub work: WorkRef,
     /// Primary genre of the recording. Optional — an unknown genre is `None`
     /// (use [`Genre::Other`] for "known but outside the taxonomy").
@@ -379,9 +391,13 @@ pub struct RecordingV1 {
     /// A sub-genre may only be present alongside a primary `genre`
     /// (enforced by [`RecordingV1::validate_format`]).
     pub sub_genre: Option<Genre>,
+    /// Year the performance was recorded, in `1..=2999` when present.
     pub record_year: Option<u16>,
+    /// Editorial version (radio edit, live, remix, …), when known.
     pub version_type: Option<RecordingVersion>,
+    /// Performers credited, each with the instrument(s) played.
     pub performers: Performers,
+    /// Producers credited (ISNI each).
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_vec")
@@ -390,10 +406,16 @@ pub struct RecordingV1 {
     /// Recording length in whole seconds. `u32` covers any conceivable
     /// single recording (≈136 years) while staying 4 bytes.
     pub duration: Option<u32>,
+    /// Tempo in beats per minute, in `20..=300` when present.
     pub bpm: Option<u16>,
+    /// Diatonic key of the recorded performance, when known.
     pub key: Option<MusicalKey>,
+    /// Recording / mixing / mastering places, when known.
     pub places: Option<ProductionPlaces>,
+    /// Other contributors credited (IPI or ISNI each).
     pub contributors: Contributors,
+    /// Off-chain extension hash (opaque on-chain; `CIDv1` by client
+    /// convention). The standard MIDDS extensibility hook.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
@@ -402,26 +424,18 @@ pub struct RecordingV1 {
 }
 
 impl RecordingV1 {
+    /// Validates every structural rule of the payload (charset, length,
+    /// ranges, cardinality, cross-field consistency) per
+    /// `docs/validation.md` §5.
+    /// Errors: The [`MiddsFormatError`] variant matching the first violated rule.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         validate_isrc_format(&self.isrc)?;
-        if self.title.is_empty() {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
+        require_non_empty(&self.title)?;
         for alias in &self.title_aliases {
-            if alias.is_empty() {
-                return Err(MiddsFormatError::EmptyMandatoryField);
-            }
+            require_non_empty(alias)?;
         }
-        if let Some(year) = self.record_year
-            && !(YEAR_MIN..=YEAR_MAX).contains(&year)
-        {
-            return Err(MiddsFormatError::OutOfBounds);
-        }
-        if let Some(bpm) = self.bpm
-            && !(BPM_MIN..=BPM_MAX).contains(&bpm)
-        {
-            return Err(MiddsFormatError::OutOfBounds);
-        }
+        require_year_in_bounds(self.record_year)?;
+        require_bpm_in_bounds(self.bpm)?;
         // A sub-genre refines a primary genre; it cannot stand alone.
         if self.sub_genre.is_some() && self.genre.is_none() {
             return Err(MiddsFormatError::CrossFieldInconsistency);
@@ -578,9 +592,7 @@ mod tests {
         // membership is structural); the performer id is still format-checked.
         let mut r = base();
         r.performers = BoundedVec::try_from(vec![Performer {
-            id: PerformerId::Ipn(
-                BoundedVec::try_from(b"12345678".to_vec()).expect("8-byte IPN"),
-            ),
+            id: PerformerId::Ipn(BoundedVec::try_from(b"12345678".to_vec()).expect("8-byte IPN")),
             instruments: BoundedVec::try_from(vec![
                 Instrument::ElectricGuitar,
                 Instrument::LeadVocals,

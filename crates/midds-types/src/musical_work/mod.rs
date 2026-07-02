@@ -1,3 +1,6 @@
+//! The `MusicalWork` MIDDS payload: the underlying composition (music and
+//! lyrics) identified by its ISWC, as opposed to a specific `Recording` of it.
+
 pub mod v1;
 
 pub use v1::{
@@ -23,6 +26,7 @@ use scale_info::TypeInfo;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "version", rename_all = "lowercase"))]
 pub enum MusicalWork {
+    /// Version 1 payload.
     V1(MusicalWorkV1),
 }
 

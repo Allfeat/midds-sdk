@@ -1,4 +1,34 @@
+// Shared curated `clippy::pedantic` policy — identical in every crate root;
+// anything not listed here must stay pedantic-clean.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::option_option,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
+//! Canonical MIDDS payload definitions: [`MusicalWork`], [`Recording`] and
+//! [`Release`].
+//!
+//! Each payload is a top-level **versioned enum** (adding a `V2` is additive
+//! on the wire; migrations stay explicit `OnRuntimeUpgrade` impls), bounded
+//! and `MaxEncodedLen` throughout — the same definitions serve as storage
+//! format, JSON schema (`serde` feature, std-only) and builder target.
+//! Cross-payload pieces live in [`shared`]; [`Country`] and [`Language`] are
+//! closed ISO tag-byte enums. `no_std` by default.
 #![cfg_attr(not(feature = "std"), no_std)]
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 

@@ -56,6 +56,9 @@ pub const BPM_MAX: u16 = 300;
 /// bytes (0..=11); the five common flats are at tags 12..=16; the four
 /// cross-natural enharmonics are appended at tags 17..=20. Every earlier tag
 /// is preserved, so records encoded before each extension decode unchanged.
+// Variant names *are* the notation (C, CSharp, DFlat, …); per-variant docs
+// would only repeat them.
+#[allow(missing_docs)]
 #[derive(
     Encode,
     Decode,
@@ -95,6 +98,7 @@ pub enum PitchClass {
 
 /// Diatonic mode. Kept minimal; modal music (Dorian, Phrygian, …) can be
 /// modelled later through a fresh payload version.
+#[allow(missing_docs)]
 #[derive(
     Encode,
     Decode,
@@ -129,7 +133,9 @@ pub enum Mode {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MusicalKey {
+    /// Tonic pitch class, accidental spelling preserved.
     pub pitch: PitchClass,
+    /// Major or minor mode.
     pub mode: Mode,
 }
 
@@ -150,17 +156,25 @@ pub struct MusicalKey {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PartyId {
+    /// CISAC IPI only.
     Ipi(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipi),
+    /// ISO ISNI only.
     Isni(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Isni),
+    /// The same party under both registries at once.
     Both {
+        /// CISAC IPI of the party.
         #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
         ipi: Ipi,
+        /// ISO ISNI of the same party.
         #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
         isni: Isni,
     },
 }
 
 impl PartyId {
+    /// Validates the structure of the carried identifier(s).
+    /// Errors: Propagates the underlying [`validate_ipi_format`] /
+    /// [`validate_isni_format`] error.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         match self {
             Self::Ipi(v) => validate_ipi_format(v),
@@ -191,12 +205,18 @@ impl PartyId {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PerformerId {
+    /// SCAPR IPN — the performer-CMO registry, preferred when available.
     Ipn(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipn),
+    /// CISAC IPI fallback.
     Ipi(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Ipi),
+    /// ISO ISNI fallback.
     Isni(#[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))] Isni),
 }
 
 impl PerformerId {
+    /// Validates the structure of the carried identifier.
+    /// Errors: Propagates the underlying [`validate_ipn_format`] /
+    /// [`validate_ipi_format`] / [`validate_isni_format`] error.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         match self {
             Self::Ipn(v) => validate_ipn_format(v),
@@ -239,6 +259,9 @@ pub enum WorkRef {
 }
 
 impl WorkRef {
+    /// Validates the structure of the reference (`Midds` ids carry no
+    /// structural rule; ISWCs are format-checked).
+    /// Errors: Propagates the underlying [`validate_iswc_format`] error.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         match self {
             Self::Midds(_) => Ok(()),
@@ -280,10 +303,47 @@ pub enum RecordingRef {
 }
 
 impl RecordingRef {
+    /// Validates the structure of the reference (`Midds` ids carry no
+    /// structural rule; ISRCs are format-checked).
+    /// Errors: Propagates the underlying [`validate_isrc_format`] error.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         match self {
             Self::Midds(_) => Ok(()),
             Self::Isrc(i) => validate_isrc_format(i),
         }
+    }
+}
+
+/// A mandatory text field (or a list element) must be non-empty.
+pub(crate) fn require_non_empty(bytes: &[u8]) -> Result<(), MiddsFormatError> {
+    if bytes.is_empty() {
+        return Err(MiddsFormatError::EmptyMandatoryField);
+    }
+    Ok(())
+}
+
+/// An optional text field may be absent, but not present-and-empty.
+pub(crate) fn require_non_empty_opt<const N: u32>(
+    field: Option<&MiddsString<N>>,
+) -> Result<(), MiddsFormatError> {
+    match field {
+        Some(s) => require_non_empty(s),
+        None => Ok(()),
+    }
+}
+
+/// An optional calendar year must sit in `YEAR_MIN..=YEAR_MAX` when present.
+pub(crate) fn require_year_in_bounds(year: Option<u16>) -> Result<(), MiddsFormatError> {
+    match year {
+        Some(y) if !(YEAR_MIN..=YEAR_MAX).contains(&y) => Err(MiddsFormatError::OutOfBounds),
+        _ => Ok(()),
+    }
+}
+
+/// An optional BPM must sit in `BPM_MIN..=BPM_MAX` when present.
+pub(crate) fn require_bpm_in_bounds(bpm: Option<u16>) -> Result<(), MiddsFormatError> {
+    match bpm {
+        Some(b) if !(BPM_MIN..=BPM_MAX).contains(&b) => Err(MiddsFormatError::OutOfBounds),
+        _ => Ok(()),
     }
 }

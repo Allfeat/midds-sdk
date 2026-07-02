@@ -1,3 +1,5 @@
+//! First on-chain version of the `MusicalWork` payload and its parts.
+
 use bounded_collections::{BoundedBTreeSet, BoundedVec, ConstU32};
 use midds_traits::{
     Iswc, MiddsFormatError, MiddsString, OffchainHash, validate_iswc_format, validate_offchain_hash,
@@ -6,7 +8,10 @@ use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 use crate::language::Language;
-use crate::shared::{BPM_MAX, BPM_MIN, PartyId, WorkRef, YEAR_MAX, YEAR_MIN};
+use crate::shared::{
+    PartyId, WorkRef, require_bpm_in_bounds, require_non_empty, require_non_empty_opt,
+    require_year_in_bounds,
+};
 
 pub use crate::shared::{Mode, MusicalKey, PitchClass, TITLE_MAX_LEN, Title};
 
@@ -28,10 +33,16 @@ pub const WORK_REFERENCES_MAX: u32 = 32;
 /// off-chain extension.
 pub const SAMPLES_MAX: u32 = 64;
 
+/// Creators attached to a work (at least one is mandatory).
 pub type Creators = BoundedVec<Creator, ConstU32<CREATORS_MAX>>;
+/// Set of roles one creator holds for a work — a set, so a role cannot
+/// repeat, iterated in canonical [`CreatorRole`] order.
 pub type CreatorRoles = BoundedBTreeSet<CreatorRole, ConstU32<CREATOR_ROLES_MAX>>;
+/// Opus designation of a classical work (e.g. "Op. 27 No. 2").
 pub type Opus = MiddsString<OPUS_MAX_LEN>;
+/// Thematic catalogue number of a classical work (e.g. "BWV 565").
 pub type CatalogNumber = MiddsString<CATALOG_NUMBER_MAX_LEN>;
+/// Source-work ISWCs referenced by a Medley / Mashup.
 pub type WorkReferences = BoundedVec<Iswc, ConstU32<WORK_REFERENCES_MAX>>;
 /// List of sampled-work references. Each entry is a [`WorkRef`] — a sampled
 /// work may be cited by its on-chain MIDDS id or by an external ISWC — so a
@@ -81,7 +92,7 @@ pub enum WorkType {
 }
 
 /// Role attributed to a creator within a work. Derives `Ord` on the
-/// declaration order so [`CreatorRoles`] (the bounded BTreeSet wrapping
+/// declaration order so [`CreatorRoles`] (the bounded `BTreeSet` wrapping
 /// these) iterates and SCALE-serialises in a canonical order.
 #[derive(
     Encode,
@@ -99,10 +110,15 @@ pub enum WorkType {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CreatorRole {
+    /// Wrote the lyrics.
     Author,
+    /// Wrote the music.
     Composer,
+    /// Arranged the music.
     Arranger,
+    /// Adapted the lyrics (e.g. a translation).
     Adapter,
+    /// Publishing entity administering the work.
     Publisher,
 }
 
@@ -120,11 +136,16 @@ pub enum CreatorRole {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Creator {
+    /// Roles this party holds for the work (at least one is mandatory).
     pub roles: CreatorRoles,
+    /// The party, identified by IPI, ISNI or both.
     pub party: PartyId,
 }
 
 impl Creator {
+    /// Validates the credit: a non-empty role set and a well-formed party.
+    /// Errors: [`MiddsFormatError::EmptyMandatoryField`] on an empty role set;
+    /// otherwise propagates [`PartyId::validate_format`].
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         if self.roles.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
@@ -141,31 +162,29 @@ impl Creator {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClassicalInfo {
+    /// Opus designation (e.g. "Op. 27 No. 2").
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
     )]
     pub opus: Option<Opus>,
+    /// Thematic catalogue number (e.g. "K. 545").
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
     )]
     pub catalog_number: Option<CatalogNumber>,
+    /// Number of voices / parts; must be positive when present.
     pub number_of_voices: Option<u16>,
 }
 
 impl ClassicalInfo {
+    /// Validates the block: present sub-fields must be non-empty / positive.
+    /// Errors: [`MiddsFormatError::EmptyMandatoryField`] on a present-but-empty text
+    /// field, [`MiddsFormatError::OutOfBounds`] on a zero voice count.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
-        if let Some(o) = &self.opus
-            && o.is_empty()
-        {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
-        if let Some(c) = &self.catalog_number
-            && c.is_empty()
-        {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
+        require_non_empty_opt(self.opus.as_ref())?;
+        require_non_empty_opt(self.catalog_number.as_ref())?;
         if let Some(n) = self.number_of_voices
             && n == 0
         {
@@ -181,26 +200,38 @@ impl ClassicalInfo {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MusicalWorkV1 {
+    /// Canonical ISWC of the work — the uniqueness-index key.
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub iswc: Iswc,
+    /// Primary title (mandatory, non-empty).
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub title: Title,
+    /// Year the work was created, in `1..=2999` when present.
     pub creation_year: Option<u16>,
+    /// Whether the work has no lyrics.
     pub instrumental: bool,
+    /// Language of the lyrics, when known.
     pub language: Option<Language>,
     /// Whether the work's lyrics are explicit. Defaults to `false`; an
     /// instrumental work has no lyrics, so `explicit_lyrics` should stay
     /// `false` when `instrumental` is `true` (a builder-side convention,
     /// surfaced as a warning in `midds-validate`, not enforced on-chain).
     pub explicit_lyrics: bool,
+    /// Tempo in beats per minute, in `20..=300` when present.
     pub bpm: Option<u16>,
+    /// Diatonic key of the work, when known.
     pub key: Option<MusicalKey>,
+    /// Original / derived classification, with source references.
     pub work_type: WorkType,
     /// Works sampled *by* this work, each referenced by MIDDS id or ISWC.
     /// Empty when the work samples nothing.
     pub samples: SampleReferences,
+    /// Creators of the work (at least one is mandatory).
     pub creators: Creators,
+    /// Classical-music metadata, absent for non-classical works.
     pub classical_info: Option<ClassicalInfo>,
+    /// Off-chain extension hash (opaque on-chain; `CIDv1` by client
+    /// convention). The standard MIDDS extensibility hook.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_opt")
@@ -209,21 +240,15 @@ pub struct MusicalWorkV1 {
 }
 
 impl MusicalWorkV1 {
+    /// Validates every structural rule of the payload (charset, length,
+    /// ranges, cardinality, cross-field consistency) per
+    /// `docs/validation.md` §4.
+    /// Errors: The [`MiddsFormatError`] variant matching the first violated rule.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         validate_iswc_format(&self.iswc)?;
-        if self.title.is_empty() {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
-        if let Some(year) = self.creation_year
-            && !(YEAR_MIN..=YEAR_MAX).contains(&year)
-        {
-            return Err(MiddsFormatError::OutOfBounds);
-        }
-        if let Some(bpm) = self.bpm
-            && !(BPM_MIN..=BPM_MAX).contains(&bpm)
-        {
-            return Err(MiddsFormatError::OutOfBounds);
-        }
+        require_non_empty(&self.title)?;
+        require_year_in_bounds(self.creation_year)?;
+        require_bpm_in_bounds(self.bpm)?;
         if self.creators.is_empty() {
             return Err(MiddsFormatError::EmptyMandatoryField);
         }

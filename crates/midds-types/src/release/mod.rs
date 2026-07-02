@@ -1,3 +1,6 @@
+//! The `Release` MIDDS payload: a commercial product (album, single, EP…)
+//! bundling recordings into a tracklist, identified by its UPC / EAN barcode.
+
 pub mod v1;
 
 pub use v1::{
@@ -24,6 +27,7 @@ use scale_info::TypeInfo;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "version", rename_all = "lowercase"))]
 pub enum Release {
+    /// Version 1 payload.
     V1(ReleaseV1),
 }
 

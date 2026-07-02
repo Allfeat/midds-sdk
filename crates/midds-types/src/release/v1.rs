@@ -1,3 +1,5 @@
+//! First on-chain version of the `Release` payload and its parts.
+
 use bounded_collections::{BoundedVec, ConstU32};
 use midds_traits::{
     Isni, MiddsFormatError, MiddsString, OffchainHash, Upc, validate_isni_format,
@@ -7,7 +9,7 @@ use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 use crate::Country;
-use crate::shared::{PartyId, RecordingRef, Title};
+use crate::shared::{PartyId, RecordingRef, Title, require_non_empty};
 
 /// Maximum number of alternative / localized titles on a release.
 pub const TITLE_ALIASES_MAX: u32 = 8;
@@ -71,6 +73,10 @@ pub struct Track {
 }
 
 impl Track {
+    /// Validates the entry: a positive track number and a well-formed
+    /// recording reference.
+    /// Errors: [`MiddsFormatError::OutOfBounds`] on a zero track number; otherwise
+    /// propagates [`RecordingRef::validate_format`].
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         if self.number == 0 {
             return Err(MiddsFormatError::OutOfBounds);
@@ -88,23 +94,26 @@ impl Track {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Producer {
+    /// ISNI of the producing label / person.
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub isni: Isni,
+    /// Catalog number under which this producer issued the release.
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub catalog_number: CatalogNumber,
 }
 
 impl Producer {
+    /// Validates the credit: a well-formed ISNI and a non-empty catalog
+    /// number.
+    /// Errors: Propagates the ISNI format error, then
+    /// [`MiddsFormatError::EmptyMandatoryField`] on an empty catalog number.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         validate_isni_format(&self.isni)?;
-        if self.catalog_number.is_empty() {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
-        Ok(())
+        require_non_empty(&self.catalog_number)
     }
 }
 
-/// Editorial status of a release, aligned with the MusicBrainz / DDEX
+/// Editorial status of a release, aligned with the `MusicBrainz` / DDEX
 /// release-status conventions used across the industry.
 #[derive(
     Encode,
@@ -136,7 +145,7 @@ pub enum ReleaseStatus {
     Other,
 }
 
-/// Primary editorial type of a release. Flattened from the MusicBrainz
+/// Primary editorial type of a release. Flattened from the `MusicBrainz`
 /// release-group primary + secondary taxonomy — finer granularity is left
 /// to a future payload version rather than a type tree.
 #[derive(
@@ -152,6 +161,8 @@ pub enum ReleaseStatus {
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+// Variant names are the MusicBrainz release-group labels themselves.
+#[allow(missing_docs)]
 pub enum ReleaseType {
     Album,
     Single,
@@ -167,7 +178,7 @@ pub enum ReleaseType {
 }
 
 /// Physical or digital format the release is issued on. Aligned with the
-/// MusicBrainz medium-format list, kept to the commercially common values.
+/// `MusicBrainz` medium-format list, kept to the commercially common values.
 #[derive(
     Encode,
     Decode,
@@ -181,6 +192,8 @@ pub enum ReleaseType {
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+// Variant names are the MusicBrainz medium-format labels themselves.
+#[allow(missing_docs)]
 pub enum ReleaseFormat {
     Cd,
     Vinyl,
@@ -195,7 +208,7 @@ pub enum ReleaseFormat {
     Other,
 }
 
-/// Physical packaging of the release, aligned with the MusicBrainz
+/// Physical packaging of the release, aligned with the `MusicBrainz`
 /// packaging list.
 #[derive(
     Encode,
@@ -210,6 +223,8 @@ pub enum ReleaseFormat {
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+// Variant names are the MusicBrainz packaging labels themselves.
+#[allow(missing_docs)]
 pub enum ReleasePackaging {
     /// No packaging (typically digital releases).
     None,
@@ -242,12 +257,19 @@ pub enum ReleasePackaging {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReleaseDate {
+    /// Calendar year. Deliberately unconstrained so future-dated
+    /// (announced) releases stay representable — see `docs/validation.md` §7.
     pub year: u16,
+    /// Calendar month, `1..=12`.
     pub month: u8,
+    /// Calendar day, `1..=31`.
     pub day: u8,
 }
 
 impl ReleaseDate {
+    /// Validates the structural month / day ranges (not calendar validity).
+    /// Errors: [`MiddsFormatError::OutOfBounds`] on a month outside `1..=12` or a
+    /// day outside `1..=31`.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         if !(1..=12).contains(&self.month) || !(1..=31).contains(&self.day) {
             return Err(MiddsFormatError::OutOfBounds);
@@ -269,33 +291,48 @@ impl ReleaseDate {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReleaseV1 {
+    /// Canonical UPC / EAN barcode — the uniqueness-index key.
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub upc: Upc,
+    /// Primary title (mandatory, non-empty).
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub title: Title,
+    /// Alternative / localized titles; each must be non-empty.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_vec")
     )]
     pub title_aliases: TitleAliases,
+    /// Main credited artist.
     pub artist: PartyId,
+    /// Featured artists ("feat.").
     pub featuring: Featuring,
+    /// Ordered tracklist (non-empty; numbers must cover `1..=N`).
     pub tracks: Tracks,
+    /// Producers / labels credited, each with their own catalog number.
     pub producers: Producers,
+    /// Editorial status (official, promotional, …).
     pub status: ReleaseStatus,
+    /// Calendar release date (strict: year, month and day all mandatory).
     pub release_date: ReleaseDate,
+    /// Country the release was issued in (ISO 3166-1).
     pub country: Country,
+    /// Distributor name (mandatory, non-empty).
     #[cfg_attr(feature = "serde", serde(with = "midds_traits::serde_helpers::ascii"))]
     pub distributor_name: DistributorName,
+    /// Primary editorial type (album, single, EP, …).
     pub release_type: ReleaseType,
+    /// Physical or digital medium.
     pub format: ReleaseFormat,
+    /// Physical packaging.
     pub packaging: ReleasePackaging,
+    /// Cover-artwork contributor names; each must be non-empty.
     #[cfg_attr(
         feature = "serde",
         serde(with = "midds_traits::serde_helpers::ascii_vec")
     )]
     pub cover_contributors: CoverContributors,
-    /// Off-chain extension hash (opaque on-chain; CIDv1 by client
+    /// Off-chain extension hash (opaque on-chain; `CIDv1` by client
     /// convention). The standard MIDDS extensibility hook — present on every
     /// payload type even though it is not a domain field.
     #[cfg_attr(
@@ -306,15 +343,15 @@ pub struct ReleaseV1 {
 }
 
 impl ReleaseV1 {
+    /// Validates every structural rule of the payload (charset, length,
+    /// ranges, cardinality, tracklist invariants) per
+    /// `docs/validation.md` §6.
+    /// Errors: The [`MiddsFormatError`] variant matching the first violated rule.
     pub fn validate_format(&self) -> Result<(), MiddsFormatError> {
         validate_upc_format(&self.upc)?;
-        if self.title.is_empty() {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
+        require_non_empty(&self.title)?;
         for alias in &self.title_aliases {
-            if alias.is_empty() {
-                return Err(MiddsFormatError::EmptyMandatoryField);
-            }
+            require_non_empty(alias)?;
         }
         self.artist.validate_format()?;
         for f in &self.featuring {
@@ -334,30 +371,26 @@ impl ReleaseV1 {
                 return Err(MiddsFormatError::CrossFieldInconsistency);
             }
         }
-        // Track numbers must form a strict 1-based contiguous sequence: sorted,
-        // they are exactly `1, 2, …, N` (N = tracklist length). This single
-        // check subsumes positivity, uniqueness, the start at 1 and the step of
-        // 1. Numbering is validated as a *set* — the stored vector order is
-        // free — so an explicitly numbered tracklist supplied out of order
-        // still validates as long as its numbers cover `1..=N`.
-        let mut numbers: alloc::vec::Vec<u16> = self.tracks.iter().map(|t| t.number).collect();
-        numbers.sort_unstable();
-        for (i, &number) in numbers.iter().enumerate() {
-            if number as usize != i + 1 {
+        // Numbers are validated as a *set* covering exactly `1..=N` (order
+        // free). Pigeonhole: N numbers, each in `1..=N`, none repeated —
+        // checked on a stack bitmap, no heap alloc (this runs on-chain).
+        // Zero was already rejected by `Track::validate_format` above.
+        let track_count = self.tracks.len();
+        let mut seen_numbers = [false; TRACKS_MAX as usize];
+        for t in &self.tracks {
+            let idx = usize::from(t.number) - 1;
+            if idx >= track_count || seen_numbers[idx] {
                 return Err(MiddsFormatError::CrossFieldInconsistency);
             }
+            seen_numbers[idx] = true;
         }
         for p in &self.producers {
             p.validate_format()?;
         }
         self.release_date.validate_format()?;
-        if self.distributor_name.is_empty() {
-            return Err(MiddsFormatError::EmptyMandatoryField);
-        }
+        require_non_empty(&self.distributor_name)?;
         for c in &self.cover_contributors {
-            if c.is_empty() {
-                return Err(MiddsFormatError::EmptyMandatoryField);
-            }
+            require_non_empty(c)?;
         }
         if let Some(h) = &self.offchain_extension {
             validate_offchain_hash(h)?;
@@ -467,8 +500,7 @@ mod tests {
         // A single track numbered 2 has no gap internally but does not start at
         // 1, so the 1..=N sequence is incomplete.
         let mut r = base();
-        r.tracks =
-            BoundedVec::try_from(vec![track(2, RecordingRef::Midds(1))]).expect("1 track");
+        r.tracks = BoundedVec::try_from(vec![track(2, RecordingRef::Midds(1))]).expect("1 track");
         assert_eq!(
             r.validate_format(),
             Err(MiddsFormatError::CrossFieldInconsistency),

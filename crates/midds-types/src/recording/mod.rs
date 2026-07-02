@@ -1,3 +1,6 @@
+//! The `Recording` MIDDS payload: a specific recorded performance of a
+//! `MusicalWork`, identified by its ISRC.
+
 pub mod v1;
 
 pub use v1::{
@@ -23,6 +26,7 @@ use scale_info::TypeInfo;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "version", rename_all = "lowercase"))]
 pub enum Recording {
+    /// Version 1 payload.
     V1(RecordingV1),
 }
 

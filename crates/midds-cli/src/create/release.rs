@@ -14,7 +14,7 @@ use midds_types::{
 use crate::create::{prompts, shared};
 use crate::ui;
 
-const STEPS: usize = 9;
+const STEPS: usize = 8;
 
 /// Walk the interactive form and assemble a validated `Release::V1`.
 pub fn build() -> Result<Release> {
@@ -108,9 +108,6 @@ pub fn build() -> Result<Release> {
     ui::step(8, STEPS, "Cover contributors");
     let cover_contributors = build_cover_contributors()?;
 
-    ui::step(9, STEPS, "Off-chain extension");
-    let offchain_extension = shared::offchain_extension()?;
-
     Ok(Release::V1(ReleaseV1 {
         upc,
         title,
@@ -127,7 +124,6 @@ pub fn build() -> Result<Release> {
         format,
         packaging,
         cover_contributors,
-        offchain_extension,
     }))
 }
 

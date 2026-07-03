@@ -8,7 +8,7 @@
 //! [`crate::recording::RecordingBuilder`].
 
 use bounded_collections::BoundedVec;
-use midds_traits::{OffchainHash, Upc};
+use midds_traits::Upc;
 use midds_types::release::{Featuring, Producers, TitleAliases, Tracks};
 use midds_types::{
     Country, CoverContributorName, CoverContributors, DistributorName, PartyId, Producer,
@@ -34,7 +34,6 @@ pub struct ReleaseBuilder {
     format: ReleaseFormat,
     packaging: ReleasePackaging,
     cover_contributors: Vec<CoverContributorName>,
-    offchain_extension: Option<OffchainHash>,
 }
 
 impl ReleaseBuilder {
@@ -68,7 +67,6 @@ impl ReleaseBuilder {
             format: ReleaseFormat::Cd,
             packaging: ReleasePackaging::None,
             cover_contributors: Vec::new(),
-            offchain_extension: None,
         }
     }
 
@@ -182,13 +180,6 @@ impl ReleaseBuilder {
         self
     }
 
-    #[must_use]
-    pub fn offchain_extension(mut self, bytes: &[u8]) -> Self {
-        self.offchain_extension =
-            Some(OffchainHash::try_from(bytes.to_vec()).expect("offchain hash within bound"));
-        self
-    }
-
     /// Finalise into a versioned `Release::V1`. Does **not** call
     /// `Midds::validate_format` — callers wanting a guaranteed-valid payload
     /// should invoke it themselves on the returned value.
@@ -222,7 +213,6 @@ impl ReleaseBuilder {
             packaging: self.packaging,
             cover_contributors: CoverContributors::try_from(self.cover_contributors)
                 .expect("cover contributors within bound"),
-            offchain_extension: self.offchain_extension,
         })
     }
 }
@@ -277,7 +267,6 @@ mod tests {
             .format(ReleaseFormat::Vinyl)
             .packaging(ReleasePackaging::Gatefold)
             .add_cover_contributor(b"Mick Rock")
-            .offchain_extension(b"bafkreigh2akiscaildc")
             .build();
         release.validate_format().expect("validates");
         let Release::V1(v) = release;
@@ -286,7 +275,6 @@ mod tests {
         assert_eq!(v.tracks.len(), 2);
         assert_eq!(v.producers.len(), 1);
         assert_eq!(v.cover_contributors.len(), 1);
-        assert!(v.offchain_extension.is_some());
     }
 
     #[test]

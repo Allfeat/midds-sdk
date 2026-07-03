@@ -41,7 +41,6 @@ const FIXTURE_RELATIVE: &str = "tests/fixtures/recording_v1.scale";
 ///   is `Some` alongside a `Some` primary `genre`.
 /// - Non-empty `title_aliases`, `featuring`, `producers`.
 /// - `ProductionPlaces` with two of three places populated.
-/// - A non-empty offchain extension hash.
 fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
     BoundedVec::try_from(s.to_vec()).expect("bounded vec build")
 }
@@ -81,7 +80,6 @@ fn reference_v1() -> RecordingV1 {
         }),
         contributors: BoundedVec::try_from(vec![PartyId::Ipi(bv(b"00000000171"))])
             .expect("contributors within bound"),
-        offchain_extension: Some(bv(b"bafkreigh2akiscaildc")),
     }
 }
 

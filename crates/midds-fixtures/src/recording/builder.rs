@@ -8,7 +8,7 @@
 //! [`crate::musical_work::MusicalWorkBuilder`].
 
 use bounded_collections::BoundedVec;
-use midds_traits::{Isni, Isrc, OffchainHash};
+use midds_traits::{Isni, Isrc};
 use midds_types::{
     Genre, MusicalKey, PartyId, Performer, Place, Recording, RecordingV1, RecordingVersion, Title,
     WorkRef,
@@ -34,7 +34,6 @@ pub struct RecordingBuilder {
     key: Option<MusicalKey>,
     places: Option<(Option<Place>, Option<Place>, Option<Place>)>,
     contributors: Vec<PartyId>,
-    offchain_extension: Option<OffchainHash>,
 }
 
 impl RecordingBuilder {
@@ -67,7 +66,6 @@ impl RecordingBuilder {
             key: None,
             places: None,
             contributors: Vec::new(),
-            offchain_extension: None,
         }
     }
 
@@ -197,13 +195,6 @@ impl RecordingBuilder {
         self
     }
 
-    #[must_use]
-    pub fn offchain_extension(mut self, bytes: &[u8]) -> Self {
-        self.offchain_extension =
-            Some(OffchainHash::try_from(bytes.to_vec()).expect("offchain hash within bound"));
-        self
-    }
-
     /// Finalise into a versioned `Recording::V1`. Does **not** call
     /// `Midds::validate_format` — callers wanting a guaranteed-valid payload
     /// should invoke it themselves on the returned value.
@@ -237,7 +228,6 @@ impl RecordingBuilder {
             places,
             contributors: BoundedVec::try_from(self.contributors)
                 .expect("contributors within bound"),
-            offchain_extension: self.offchain_extension,
         })
     }
 }
@@ -294,7 +284,6 @@ mod tests {
                 mode: Mode::Minor,
             })
             .places(Some(b"Abbey Road"), None, Some(b"Sterling Sound"))
-            .offchain_extension(b"bafkreigh2akiscaildc")
             .build();
         let Recording::V1(v) = recording;
         assert_eq!(v.title.as_slice(), b"My Recording");

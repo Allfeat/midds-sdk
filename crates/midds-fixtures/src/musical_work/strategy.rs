@@ -10,7 +10,7 @@
 //! reports the same diagnostic.
 
 use bounded_collections::BoundedVec;
-use midds_traits::{Isrc, Iswc, MiddsFormatError, OffchainHash};
+use midds_traits::{Isrc, Iswc, MiddsFormatError};
 use midds_types::shared::{BPM_MAX, YEAR_MAX, YEAR_MIN};
 use midds_types::{
     CATALOG_NUMBER_MAX_LEN, CREATOR_ROLES_MAX, CREATORS_MAX, ClassicalInfo, Creator, CreatorRole,
@@ -58,12 +58,6 @@ pub fn arb_isrc_valid() -> impl Strategy<Value = Isrc> {
 pub fn arb_title() -> impl Strategy<Value = Title> {
     proptest::collection::vec(printable_ascii(), 1..=(TITLE_MAX_LEN as usize))
         .prop_map(|bytes| BoundedVec::try_from(bytes).expect("title within bound"))
-}
-
-/// Strategy producing non-empty off-chain extension hashes.
-pub fn arb_offchain_hash() -> impl Strategy<Value = OffchainHash> {
-    proptest::collection::vec(printable_ascii(), 1..=64usize)
-        .prop_map(|bytes| BoundedVec::try_from(bytes).expect("offchain hash within bound"))
 }
 
 /// Strategy over the full ISO 639-1 enum.
@@ -239,7 +233,7 @@ pub fn arb_classical_info() -> impl Strategy<Value = ClassicalInfo> {
 /// "instrumental ⇒ no language" convention only by construction; if you
 /// override `instrumental`, call `prop_filter`/`prop_map` to drop the language.
 pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
-    // The inner tuple groups the original eleven fields; `explicit_lyrics` and
+    // The inner tuple groups the original ten fields; `explicit_lyrics` and
     // `samples` ride alongside it so the whole thing stays within proptest's
     // tuple-arity limit.
     (
@@ -254,7 +248,6 @@ pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
             arb_work_type(),
             arb_creators(),
             proptest::option::of(arb_classical_info()),
-            proptest::option::of(arb_offchain_hash()),
         ),
         any::<bool>(),
         arb_samples(),
@@ -272,7 +265,6 @@ pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
                     work_type,
                     creators,
                     classical_info,
-                    offchain_extension,
                 ),
                 explicit_lyrics,
                 samples,
@@ -289,7 +281,6 @@ pub fn arb_musical_work_v1() -> impl Strategy<Value = MusicalWorkV1> {
                 samples,
                 creators,
                 classical_info,
-                offchain_extension,
             },
         )
         // A work cannot reference itself, via either its work type or its
@@ -315,7 +306,7 @@ pub fn arb_musical_work() -> impl Strategy<Value = MusicalWork> {
 /// `CREATOR_ROLES_MAX` (= 5) distinct roles and the `PartyId::Both` variant
 /// (the largest of the three — full 11-byte IPI + 16-byte ISNI ≈ 30 bytes
 /// vs ≤ 18 for the single-id variants); `classical_info` populated with
-/// max-size `opus` and `catalog_number`; off-chain hash at 64 bytes; work
+/// max-size `opus` and `catalog_number`; work
 /// type set to Medley with `WORK_REFERENCES_MAX` refs (the largest variant);
 /// `samples` filled with `SAMPLES_MAX` `WorkRef::Iswc` entries (the larger of
 /// the two `WorkRef` shapes — 13 bytes vs 9 for the MIDDS-id variant). The
@@ -328,7 +319,6 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
         proptest::collection::vec(any::<u64>(), CREATORS_MAX as usize),
         proptest::collection::vec(printable_ascii(), OPUS_MAX_LEN as usize),
         proptest::collection::vec(printable_ascii(), CATALOG_NUMBER_MAX_LEN as usize),
-        proptest::collection::vec(printable_ascii(), 64usize),
         // `BTreeSet` of exactly `WORK_REFERENCES_MAX` distinct codes: the refs
         // must be pairwise distinct, and 32 fixed-length ISWCs still saturate
         // the `MaxEncodedLen` bound regardless of their values.
@@ -346,7 +336,6 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                 ipi_stems,
                 opus,
                 catalog,
-                hash,
                 work_codes,
                 sample_codes,
             )| {
@@ -381,7 +370,6 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                     catalog_number: Some(BoundedVec::try_from(catalog).expect("catalog at bound")),
                     number_of_voices: Some(u16::MAX),
                 };
-                let offchain = BoundedVec::try_from(hash).expect("offchain at bound");
                 let refs: Vec<Iswc> = work_codes.into_iter().map(iswc_from_work_code).collect();
                 let work_type =
                     WorkType::Medley(BoundedVec::try_from(refs).expect("work refs at bound"));
@@ -409,7 +397,6 @@ pub fn arb_musical_work_max_size() -> impl Strategy<Value = MusicalWork> {
                     samples,
                     creators,
                     classical_info: Some(classical),
-                    offchain_extension: Some(offchain),
                 };
                 MusicalWork::V1(v1)
             },
@@ -455,10 +442,6 @@ pub fn arb_musical_work_invalid() -> impl Strategy<Value = (MusicalWork, MiddsFo
         arb_musical_work_v1().prop_map(|mut v1| {
             v1.work_type = WorkType::Medley(BoundedVec::default());
             (MusicalWork::V1(v1), MiddsFormatError::OutOfBounds)
-        }),
-        arb_musical_work_v1().prop_map(|mut v1| {
-            v1.offchain_extension = Some(BoundedVec::default());
-            (MusicalWork::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
     ]
 }

@@ -30,8 +30,6 @@ pub type Isrc = MiddsString<12>;
 /// UPC / EAN barcode keying a `Release`: a GTIN-12 (UPC-A, 12 digits) or
 /// GTIN-13 (EAN-13, 13 digits). Bound is 13 — the wider of the two.
 pub type Upc = MiddsString<13>;
-/// Off-chain extension hash. Opaque on-chain; `CIDv1` by client convention.
-pub type OffchainHash = MiddsString<64>;
 
 /// Validates the structure of an [`Iswc`]: `T` followed by 10 decimal digits.
 /// Errors: [`MiddsFormatError::OutOfBounds`] on a wrong length,
@@ -177,23 +175,6 @@ pub fn validate_upc_format(b: &[u8]) -> Result<(), MiddsFormatError> {
     Ok(())
 }
 
-/// Validates an [`OffchainHash`]: opaque on-chain, so the only structural
-/// rule is non-emptiness (the length cap is enforced by the bounded type).
-/// Errors: [`MiddsFormatError::EmptyMandatoryField`] on an empty hash.
-///
-/// ```
-/// use midds_traits::validate_offchain_hash;
-///
-/// assert!(validate_offchain_hash(b"bafkreigh2akiscaildc").is_ok());
-/// assert!(validate_offchain_hash(b"").is_err());
-/// ```
-pub fn validate_offchain_hash(b: &[u8]) -> Result<(), MiddsFormatError> {
-    if b.is_empty() {
-        return Err(MiddsFormatError::EmptyMandatoryField);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,7 +193,6 @@ mod tests {
         assert_eq!(<Ipn as MaxEncodedLen>::max_encoded_len(), 1 + 8);
         assert_eq!(<Isrc as MaxEncodedLen>::max_encoded_len(), 1 + 12);
         assert_eq!(<Upc as MaxEncodedLen>::max_encoded_len(), 1 + 13);
-        assert_eq!(<OffchainHash as MaxEncodedLen>::max_encoded_len(), 2 + 64);
     }
 
     #[test]
@@ -401,20 +381,6 @@ mod tests {
         assert_eq!(
             validate_upc_format(b"40063813339A"),
             Err(MiddsFormatError::InvalidCharset),
-        );
-    }
-
-    #[test]
-    fn offchain_hash_pass() {
-        assert!(validate_offchain_hash(b"bafkreigh2akiscaildc").is_ok());
-        assert!(validate_offchain_hash(&[0u8; 64]).is_ok());
-    }
-
-    #[test]
-    fn offchain_hash_empty() {
-        assert_eq!(
-            validate_offchain_hash(b""),
-            Err(MiddsFormatError::EmptyMandatoryField),
         );
     }
 }

@@ -81,7 +81,6 @@ mod tests {
             }),
             places: None,
             contributors: BoundedVec::default(),
-            offchain_extension: None,
         }
     }
 
@@ -133,7 +132,6 @@ mod tests {
             mixing: Some(bv(b"Studio B")),
             mastering: Some(bv(b"Sterling Sound")),
         });
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
         assert!(Recording::V1(v).validate_format().is_ok());
     }
 
@@ -240,16 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_fails_empty_offchain_extension() {
-        let mut v = sample_v1();
-        v.offchain_extension = Some(bv(b""));
-        assert_eq!(
-            Recording::V1(v).validate_format(),
-            Err(MiddsFormatError::EmptyMandatoryField),
-        );
-    }
-
-    #[test]
     fn max_encoded_len_is_finite() {
         let max = <Recording as MaxEncodedLen>::max_encoded_len();
         assert!(max > 0);
@@ -294,7 +282,6 @@ mod json_tests {
             }),
             places: None,
             contributors: BoundedVec::default(),
-            offchain_extension: None,
         }
     }
 
@@ -321,7 +308,6 @@ mod json_tests {
         assert_eq!(json["key"]["mode"], "Major");
         assert!(json["places"].is_null());
         assert_eq!(json["contributors"], serde_json::json!([]));
-        assert!(json["offchain_extension"].is_null());
     }
 
     #[test]
@@ -354,7 +340,6 @@ mod json_tests {
             mixing: None,
             mastering: Some(bv(b"Sterling Sound")),
         });
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
 
         let json = serde_json::to_value(Recording::V1(v)).unwrap();
         assert_eq!(json["title_aliases"], serde_json::json!(["Alt", "Titre"]));
@@ -373,7 +358,6 @@ mod json_tests {
         assert_eq!(json["places"]["recording"], "Abbey Road");
         assert!(json["places"]["mixing"].is_null());
         assert_eq!(json["places"]["mastering"], "Sterling Sound");
-        assert_eq!(json["offchain_extension"], "bafkreigh2akiscaildc");
     }
 
     #[test]
@@ -386,7 +370,6 @@ mod json_tests {
             mixing: Some(bv(b"Studio Two")),
             mastering: None,
         });
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
 
         let original = Recording::V1(v);
         let raw = serde_json::to_string(&original).unwrap();
@@ -414,8 +397,7 @@ mod json_tests {
             "bpm":null,
             "key":null,
             "places":null,
-            "contributors":[],
-            "offchain_extension":null
+            "contributors":[]
         }"#;
         let r: Result<Recording, _> = serde_json::from_str(bad);
         assert!(r.is_err(), "expected length-bound rejection");
@@ -441,8 +423,7 @@ mod json_tests {
             "bpm":null,
             "key":null,
             "places":null,
-            "contributors":[],
-            "offchain_extension":null
+            "contributors":[]
         }"#;
         let r: Result<Recording, _> = serde_json::from_str(bad);
         assert!(r.is_err(), "unknown version must be rejected");

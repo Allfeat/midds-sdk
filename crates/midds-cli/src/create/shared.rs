@@ -3,13 +3,13 @@
 //! These mirror the shapes in `midds_types::shared` (and the two ISO
 //! tag-byte enums) that more than one builder needs: party identifiers,
 //! work/recording references, a diatonic key, a country / language code, a
-//! release date, and the off-chain extension hash. Kept apart from the
+//! release date. Kept apart from the
 //! generic widgets in [`super::prompts`] — these know the MIDDS domain,
 //! those don't.
 
 use anyhow::{Context, Result};
 use dialoguer::Input;
-use midds_traits::{Ipi, Ipn, Isni, Isrc, Iswc, OffchainHash, Upc};
+use midds_traits::{Ipi, Ipn, Isni, Isrc, Iswc, Upc};
 use midds_types::{
     Country, Language, Mode, MusicalKey, PartyId, PerformerId, PitchClass, RecordingRef,
     ReleaseDate, TITLE_MAX_LEN, Title, WorkRef,
@@ -63,19 +63,6 @@ pub fn parse_isrc_msg(s: &str) -> Result<Isrc, String> {
 /// Human-readable rule shown when [`parse_upc`] rejects a typed UPC/EAN.
 pub fn parse_upc_msg(s: &str) -> Result<Upc, String> {
     parse_upc(s).map_err(|_| "UPC / EAN must be 12 or 13 digits (spaces / dashes accepted)".into())
-}
-
-/// Tiny non-empty check for the off-chain extension hash. There is no
-/// `midds-validate` parser for this field — it is opaque on-chain — so the
-/// prompt only enforces what `validate_offchain_hash` enforces (non-empty,
-/// within the 64-byte bound).
-pub fn parse_offchain_hash_msg(s: &str) -> Result<OffchainHash, String> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Err("off-chain hash must not be empty".into());
-    }
-    OffchainHash::try_from(trimmed.as_bytes().to_vec())
-        .map_err(|_| "off-chain hash exceeds its 64-byte bound".into())
 }
 
 /// A party identifier — IPI, ISNI, or both. Backs `artist`, every `creator`,
@@ -243,19 +230,6 @@ pub fn language(label: &str) -> Result<Language> {
         .context("read language")?;
     Ok(Language::from_code_ignore_ascii_case(raw.trim().as_bytes())
         .expect("validated by the prompt loop"))
-}
-
-/// The `offchain_extension: Option<OffchainHash>` field present on every V1
-/// root MIDDS type. Prompted identically across `MusicalWork` / `Recording`
-/// / `Release`, so each wizard call site stays a one-liner.
-pub fn offchain_extension() -> Result<Option<OffchainHash>> {
-    prompts::optional("an off-chain extension hash", || {
-        prompts::identifier(
-            "Off-chain hash",
-            parse_offchain_hash_msg,
-            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        )
-    })
 }
 
 /// A strict calendar date. `year` is intentionally uncapped (announced /

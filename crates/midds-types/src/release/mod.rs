@@ -86,7 +86,6 @@ mod tests {
             format: ReleaseFormat::Cd,
             packaging: ReleasePackaging::JewelCase,
             cover_contributors: BoundedVec::default(),
-            offchain_extension: None,
         }
     }
 
@@ -148,7 +147,6 @@ mod tests {
         v.packaging = ReleasePackaging::Gatefold;
         v.cover_contributors =
             BoundedVec::try_from(vec![bv(b"Jane Photographer"), bv(b"John Designer")]).unwrap();
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
         assert!(Release::V1(v).validate_format().is_ok());
     }
 
@@ -300,16 +298,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_fails_empty_offchain_extension() {
-        let mut v = sample_v1();
-        v.offchain_extension = Some(bv(b""));
-        assert_eq!(
-            Release::V1(v).validate_format(),
-            Err(MiddsFormatError::EmptyMandatoryField),
-        );
-    }
-
-    #[test]
     fn max_encoded_len_is_finite() {
         let max = <Release as MaxEncodedLen>::max_encoded_len();
         assert!(max > 0);
@@ -358,7 +346,6 @@ mod json_tests {
             format: ReleaseFormat::Cd,
             packaging: ReleasePackaging::JewelCase,
             cover_contributors: BoundedVec::default(),
-            offchain_extension: None,
         }
     }
 
@@ -385,7 +372,6 @@ mod json_tests {
         assert_eq!(json["format"], "Cd");
         assert_eq!(json["packaging"], "JewelCase");
         assert_eq!(json["cover_contributors"], serde_json::json!([]));
-        assert!(json["offchain_extension"].is_null());
     }
 
     #[test]
@@ -423,7 +409,6 @@ mod json_tests {
         v.format = ReleaseFormat::Vinyl;
         v.packaging = ReleasePackaging::Gatefold;
         v.cover_contributors = BoundedVec::try_from(vec![bv(b"Jane Photographer")]).unwrap();
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
 
         let json = serde_json::to_value(Release::V1(v)).unwrap();
         assert_eq!(json["title_aliases"], serde_json::json!(["Alt", "Titre"]));
@@ -443,7 +428,6 @@ mod json_tests {
             json["cover_contributors"],
             serde_json::json!(["Jane Photographer"])
         );
-        assert_eq!(json["offchain_extension"], "bafkreigh2akiscaildc");
     }
 
     #[test]
@@ -461,7 +445,6 @@ mod json_tests {
             catalog_number: bv(b"CAT-001"),
         }])
         .unwrap();
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
 
         let original = Release::V1(v);
         let raw = serde_json::to_string(&original).unwrap();
@@ -487,8 +470,7 @@ mod json_tests {
             "release_type":"Album",
             "format":"Cd",
             "packaging":"JewelCase",
-            "cover_contributors":[],
-            "offchain_extension":null
+            "cover_contributors":[]
         }"#;
         let r: Result<Release, _> = serde_json::from_str(bad);
         assert!(r.is_err(), "expected length-bound rejection");
@@ -512,8 +494,7 @@ mod json_tests {
             "release_type":"Album",
             "format":"Cd",
             "packaging":"JewelCase",
-            "cover_contributors":[],
-            "offchain_extension":null
+            "cover_contributors":[]
         }"#;
         let r: Result<Release, _> = serde_json::from_str(bad);
         assert!(r.is_err(), "unknown version must be rejected");

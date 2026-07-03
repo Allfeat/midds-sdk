@@ -3,7 +3,7 @@
 //! Strategies producing valid payloads do so by construction — they always
 //! emit well-formed identifiers and respect every on-chain bound, so property
 //! tests don't need `prop_assume` discards. Shared part-strategies (ISNI,
-//! title, off-chain hash, party id, ISRC) are reused from
+//! title, party id, ISRC) are reused from
 //! [`crate::musical_work::strategy`] / [`crate::recording::strategy`] so the
 //! cross-type wire shape stays identical and a fix lands once.
 //!
@@ -26,7 +26,7 @@ use proptest::prelude::*;
 
 use crate::common::printable_ascii;
 use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index};
-use crate::musical_work::strategy::{arb_isni, arb_offchain_hash, arb_title};
+use crate::musical_work::strategy::{arb_isni, arb_title};
 use crate::recording::strategy::arb_party_id;
 
 const TITLE_MAX_LEN: u32 = 256;
@@ -209,9 +209,9 @@ fn arb_cover_contributors() -> impl Strategy<Value = CoverContributors> {
 
 /// Strategy producing valid `ReleaseV1` payloads.
 ///
-/// `ReleaseV1` has 16 fields; proptest only implements `Strategy` for tuples
-/// up to arity 12, so the fields are split into two 8-tuples and flattened in
-/// the `prop_map`.
+/// `ReleaseV1` has 15 fields; proptest only implements `Strategy` for tuples
+/// up to arity 12, so the fields are split into an 8-tuple and a 7-tuple and
+/// flattened in the `prop_map`.
 pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
     let head = (
         arb_upc(),
@@ -231,7 +231,6 @@ pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
         arb_release_format(),
         arb_release_packaging(),
         arb_cover_contributors(),
-        proptest::option::of(arb_offchain_hash()),
     );
     (head, tail).prop_map(
         |(
@@ -244,7 +243,6 @@ pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
                 format,
                 packaging,
                 cover_contributors,
-                offchain_extension,
             ),
         )| ReleaseV1 {
             upc,
@@ -262,7 +260,6 @@ pub fn arb_release_v1() -> impl Strategy<Value = ReleaseV1> {
             format,
             packaging,
             cover_contributors,
-            offchain_extension,
         },
     )
 }
@@ -303,7 +300,6 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
             proptest::collection::vec(printable_ascii(), COVER_CONTRIBUTOR_NAME_MAX_LEN as usize),
             COVER_CONTRIBUTORS_MAX as usize,
         ),
-        proptest::collection::vec(printable_ascii(), 64usize),
         proptest::collection::vec((any::<u64>(), any::<[u8; 15]>()), FEATURING_MAX as usize),
     )
         .prop_map(
@@ -317,7 +313,6 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                 producer_bodies,
                 distributor,
                 cover_bodies,
-                hash,
                 feat_pairs,
             )| {
                 let title = BoundedVec::try_from(title).expect("title at bound");
@@ -376,9 +371,6 @@ pub fn arb_release_max_size() -> impl Strategy<Value = Release> {
                     packaging: ReleasePackaging::None,
                     cover_contributors: BoundedVec::try_from(cover_contributors)
                         .expect("cover contributors at bound"),
-                    offchain_extension: Some(
-                        BoundedVec::try_from(hash).expect("offchain at bound"),
-                    ),
                 };
                 Release::V1(v1)
             },

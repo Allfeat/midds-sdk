@@ -447,8 +447,7 @@ bless-fixtures:
 - `crates/midds-types/src/language.rs:42`: add
   `from_code_ignore_ascii_case`.
 - `crates/midds-traits/src/identifier.rs`: `static_assertions::const_assert_eq!`
-  on the `max_encoded_len` of each alias (`Iswc`, `Isni`, `Ipi`, `Isrc`,
-  `OffchainHash`).
+  on the `max_encoded_len` of each alias (`Iswc`, `Isni`, `Ipi`, `Isrc`).
 
 ### 6.3 Validation criteria
 

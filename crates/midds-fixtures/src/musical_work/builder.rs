@@ -7,7 +7,7 @@
 //! when they construct invalid payloads by mistake.
 
 use bounded_collections::BoundedVec;
-use midds_traits::{Iswc, OffchainHash};
+use midds_traits::Iswc;
 use midds_types::{
     CatalogNumber, ClassicalInfo, Creator, CreatorRoles, Creators, Language, MusicalKey,
     MusicalWork, MusicalWorkV1, Opus, SampleReferences, Title, WorkRef, WorkType,
@@ -28,7 +28,6 @@ pub struct MusicalWorkBuilder {
     samples: SampleReferences,
     creators: Creators,
     classical_info: Option<ClassicalInfo>,
-    offchain_extension: Option<OffchainHash>,
 }
 
 impl MusicalWorkBuilder {
@@ -62,7 +61,6 @@ impl MusicalWorkBuilder {
             samples: BoundedVec::default(),
             creators: BoundedVec::try_from(vec![default_creator]).expect("1 creator < 32"),
             classical_info: None,
-            offchain_extension: None,
         }
     }
 
@@ -175,13 +173,6 @@ impl MusicalWorkBuilder {
         self
     }
 
-    #[must_use]
-    pub fn offchain_extension(mut self, bytes: &[u8]) -> Self {
-        self.offchain_extension =
-            Some(OffchainHash::try_from(bytes.to_vec()).expect("offchain hash within bound"));
-        self
-    }
-
     /// Finalise into a versioned `MusicalWork::V1`. Does **not** call
     /// `Midds::validate_format` — callers wanting a guaranteed-valid payload
     /// should invoke it themselves on the returned value.
@@ -200,7 +191,6 @@ impl MusicalWorkBuilder {
             samples: self.samples,
             creators: self.creators,
             classical_info: self.classical_info,
-            offchain_extension: self.offchain_extension,
         })
     }
 }
@@ -243,14 +233,12 @@ mod tests {
                 pitch: midds_types::PitchClass::A,
                 mode: midds_types::Mode::Minor,
             })
-            .offchain_extension(b"bafkreigh2akiscaildc")
             .build();
         let MusicalWork::V1(v) = work;
         assert_eq!(v.title.as_slice(), b"My Work");
         assert_eq!(v.creation_year, Some(1972));
         assert!(v.instrumental);
         assert_eq!(v.bpm, Some(120));
-        assert!(v.offchain_extension.is_some());
     }
 
     #[test]

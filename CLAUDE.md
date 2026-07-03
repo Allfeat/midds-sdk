@@ -71,7 +71,7 @@ pub trait Midds: Parameter + MaxEncodedLen {
 
 | Crate | std/no_std | Role |
 |---|---|---|
-| `midds-traits` | no_std | `trait Midds`, identifier byte-string aliases (`Iswc`, `Isni`, `Ipi`, `Isrc`, `Upc`, `OffchainHash`), pure `validate_*_format` functions, `MiddsFormatError`. |
+| `midds-traits` | no_std | `trait Midds`, identifier byte-string aliases (`Iswc`, `Isni`, `Ipi`, `Isrc`, `Upc`), pure `validate_*_format` functions, `MiddsFormatError`. |
 | `midds-types` | no_std | Canonical MIDDS payloads. V1 ships all three types — `MusicalWork`, `Recording`, `Release` — each a top-level versioned `enum X { V1(XV1) }`. Cross-type pieces (`Title`, `PartyId`, `WorkRef`, `RecordingRef`, `MusicalKey`) live in `shared`; `Country` (ISO 3166-1) and `Language` (ISO 639-1) are closed tag-byte enums. |
 | `pallet-midds` | no_std | The generic multi-instance FRAME pallet implementing `docs/economics.md`. Permissionless `deposit` secured by a **stratified (sponsor/owner) bond** `(DepositBase + DepositPerByte·size)·M_fast·M_slow` held via `fungible::MutateHold`; a **7-day refundable commitment window** then finalization to the Treasury (`transfer_on_hold`); **multi-claim** identifier index + exact-payload uniqueness; `_on_behalf` meta-transactions; and `force_*` sudo (`edit` / `remove_refund` / `remove_slash` / `remove_many`). 13 call indices total. Mock runtime in `src/mock.rs`. |
 | `midds-runtime-api` | no_std | `decl_runtime_apis!` for `lookup_by_identifier` / `get` / `deposit_info`. Implemented once per instance in the runtime. |

@@ -1,9 +1,7 @@
 //! First on-chain version of the `MusicalWork` payload and its parts.
 
 use bounded_collections::{BoundedBTreeSet, BoundedVec, ConstU32};
-use midds_traits::{
-    Iswc, MiddsFormatError, MiddsString, OffchainHash, validate_iswc_format, validate_offchain_hash,
-};
+use midds_traits::{Iswc, MiddsFormatError, MiddsString, validate_iswc_format};
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
@@ -29,8 +27,7 @@ pub const CATALOG_NUMBER_MAX_LEN: u32 = 32;
 pub const WORK_REFERENCES_MAX: u32 = 32;
 /// Maximum number of sampled-work references a work may declare (the works
 /// *this* work sampled). Generous cap — heavily-sampled productions stay
-/// representable on-chain; collage works beyond it can fall back to the
-/// off-chain extension.
+/// representable on-chain.
 pub const SAMPLES_MAX: u32 = 64;
 
 /// Creators attached to a work (at least one is mandatory).
@@ -230,13 +227,6 @@ pub struct MusicalWorkV1 {
     pub creators: Creators,
     /// Classical-music metadata, absent for non-classical works.
     pub classical_info: Option<ClassicalInfo>,
-    /// Off-chain extension hash (opaque on-chain; `CIDv1` by client
-    /// convention). The standard MIDDS extensibility hook.
-    #[cfg_attr(
-        feature = "serde",
-        serde(with = "midds_traits::serde_helpers::ascii_opt")
-    )]
-    pub offchain_extension: Option<OffchainHash>,
 }
 
 impl MusicalWorkV1 {
@@ -308,9 +298,6 @@ impl MusicalWorkV1 {
         if let Some(ci) = &self.classical_info {
             ci.validate_format()?;
         }
-        if let Some(h) = &self.offchain_extension {
-            validate_offchain_hash(h)?;
-        }
         Ok(())
     }
 }
@@ -368,7 +355,6 @@ mod tests {
             }])
             .expect("1 creator"),
             classical_info: None,
-            offchain_extension: None,
         }
     }
 

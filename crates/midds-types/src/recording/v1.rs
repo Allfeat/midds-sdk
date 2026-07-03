@@ -2,8 +2,7 @@
 
 use bounded_collections::{BoundedVec, ConstU32};
 use midds_traits::{
-    Isni, Isrc, MiddsFormatError, MiddsString, OffchainHash, validate_isni_format,
-    validate_isrc_format, validate_offchain_hash,
+    Isni, Isrc, MiddsFormatError, MiddsString, validate_isni_format, validate_isrc_format,
 };
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -414,13 +413,6 @@ pub struct RecordingV1 {
     pub places: Option<ProductionPlaces>,
     /// Other contributors credited (IPI or ISNI each).
     pub contributors: Contributors,
-    /// Off-chain extension hash (opaque on-chain; `CIDv1` by client
-    /// convention). The standard MIDDS extensibility hook.
-    #[cfg_attr(
-        feature = "serde",
-        serde(with = "midds_traits::serde_helpers::ascii_opt")
-    )]
-    pub offchain_extension: Option<OffchainHash>,
 }
 
 impl RecordingV1 {
@@ -457,9 +449,6 @@ impl RecordingV1 {
         if let Some(places) = &self.places {
             places.validate_format()?;
         }
-        if let Some(h) = &self.offchain_extension {
-            validate_offchain_hash(h)?;
-        }
         Ok(())
     }
 }
@@ -492,7 +481,6 @@ mod tests {
             key: None,
             places: None,
             contributors: BoundedVec::default(),
-            offchain_extension: None,
         }
     }
 

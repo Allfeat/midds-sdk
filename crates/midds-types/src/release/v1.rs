@@ -2,8 +2,7 @@
 
 use bounded_collections::{BoundedVec, ConstU32};
 use midds_traits::{
-    Isni, MiddsFormatError, MiddsString, OffchainHash, Upc, validate_isni_format,
-    validate_offchain_hash, validate_upc_format,
+    Isni, MiddsFormatError, MiddsString, Upc, validate_isni_format, validate_upc_format,
 };
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -332,14 +331,6 @@ pub struct ReleaseV1 {
         serde(with = "midds_traits::serde_helpers::ascii_vec")
     )]
     pub cover_contributors: CoverContributors,
-    /// Off-chain extension hash (opaque on-chain; `CIDv1` by client
-    /// convention). The standard MIDDS extensibility hook — present on every
-    /// payload type even though it is not a domain field.
-    #[cfg_attr(
-        feature = "serde",
-        serde(with = "midds_traits::serde_helpers::ascii_opt")
-    )]
-    pub offchain_extension: Option<OffchainHash>,
 }
 
 impl ReleaseV1 {
@@ -392,9 +383,6 @@ impl ReleaseV1 {
         for c in &self.cover_contributors {
             require_non_empty(c)?;
         }
-        if let Some(h) = &self.offchain_extension {
-            validate_offchain_hash(h)?;
-        }
         Ok(())
     }
 }
@@ -431,7 +419,6 @@ mod tests {
             format: ReleaseFormat::Cd,
             packaging: ReleasePackaging::None,
             cover_contributors: BoundedVec::default(),
-            offchain_extension: None,
         }
     }
 

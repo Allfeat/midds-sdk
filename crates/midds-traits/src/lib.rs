@@ -21,7 +21,7 @@
 //!
 //! The pivot of the SDK: every other crate is generic over the [`Midds`]
 //! trait defined here. Also hosts the industry-identifier aliases ([`Iswc`],
-//! [`Isni`], [`Ipi`], [`Ipn`], [`Isrc`], [`Upc`], [`OffchainHash`]) and their
+//! [`Isni`], [`Ipi`], [`Ipn`], [`Isrc`], [`Upc`]) and their
 //! pure on-chain `validate_*_format` rules (structure only — checksums are
 //! warning-only, in `midds-validate`). `no_std` by default; the optional
 //! `serde` feature adds string-shaped JSON via [`serde_helpers`].

@@ -60,7 +60,6 @@ on-chain validation before); **S** = guaranteed structurally by the type
 | `Ipi` | `MiddsString<11>` | 9 to 11 ASCII digits | legacy: `1..=11` digits — the SDK enforces **min 9**; kept |
 | `Isrc` | `MiddsString<12>` | 2 upper-alpha + 3 upper-alphanum + 2 digits + 5 digits | `^[A-Z]{2}[A-Z0-9]{3}[0-9]{2}[0-9]{5}$` — identical (no dashes) |
 | `Upc` | `MiddsString<13>` | exactly 12 (UPC-A) **or** 13 (EAN-13) digits | legacy: `1..=13` digits — the SDK enforces **exactly 12 or 13**; kept |
-| `OffchainHash` | `MiddsString<64>` | non-empty (≥ 1 byte); opaque, CIDv1 by client convention | no legacy equivalent |
 
 The check digit (ISWC/IPI mod-10 CISAC, ISNI ISO 7064, GTIN mod-10) is
 **not** verified on-chain. Warning-only verifiers:
@@ -101,7 +100,6 @@ identical to the legacy frontend).
 | `samples` | `BoundedVec<WorkRef, 64>` (`SAMPLES_MAX`) | no | ≤ 64 | each ref valid (`WorkRef`); **distinct refs**; **non-self-reference** (ISWC variant ≠ the work's `iswc`) | **N** |
 | `creators` | `Creators` | yes | ≤ 32 (`CREATORS_MAX`) | **non-empty**; each entry: see `Creator` below | = |
 | `classical_info` | `Option<ClassicalInfo>` | no | — | see below | |
-| `offchain_extension` | `Option<OffchainHash>` | no | ≤ 64 | if `Some` ⇒ non-empty | = |
 
 **`WorkType`** (`Original | Medley(refs) | Mashup(refs) | Adaptation(iswc) |
 Rearrangement(iswc)`):
@@ -161,7 +159,6 @@ merging, more SCALE-economical and more faithful to the business model.
 | `key` | `Option<MusicalKey>` | no | — | membership | S |
 | `places` | `Option<ProductionPlaces>` | no | — | see below | |
 | `contributors` | `BoundedVec<PartyId, 32>` (`CONTRIBUTORS_MAX = 32`) | no | ≤ 32 | each id: structure | = |
-| `offchain_extension` | `Option<OffchainHash>` | no | ≤ 64 | if `Some` ⇒ non-empty | = |
 
 **`ProductionPlaces`** (optional block): `recording`, `mixing`, `mastering`
 each `Option<MiddsString<128>>` (`PLACE_MAX_LEN = 128`); if `Some` ⇒
@@ -209,7 +206,6 @@ Closed enums:
 | `format` | `ReleaseFormat` | yes | — | membership | S |
 | `packaging` | `ReleasePackaging` | yes | — | membership | S |
 | `cover_contributors` | `BoundedVec<MiddsString<128>, 16>` (`COVER_CONTRIBUTORS_MAX = 16`, `…_NAME_MAX_LEN = 128`) | no | ≤ 16 × 128 | each name non-empty | = |
-| `offchain_extension` | `Option<OffchainHash>` | no | ≤ 64 | if `Some` ⇒ non-empty | = |
 
 > No `manufacturer_name` field (present in the legacy frontend, **removed**
 > in V1 — decision kept).

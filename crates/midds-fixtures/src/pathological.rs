@@ -72,7 +72,6 @@ pub fn min_size_musical_work() -> MusicalWork {
         }])
         .expect("1 creator"),
         classical_info: None,
-        offchain_extension: None,
     };
     MusicalWork::V1(v1)
 }
@@ -114,7 +113,6 @@ pub fn max_size_musical_work() -> MusicalWork {
         .map(|i| WorkRef::Iswc(iswc_from_work_code(i + 1)))
         .collect();
     let samples = BoundedVec::try_from(samples).expect("samples at bound");
-    let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = MusicalWorkV1 {
         iswc: iswc_from_work_code(0),
         title,
@@ -135,7 +133,6 @@ pub fn max_size_musical_work() -> MusicalWork {
             catalog_number: Some(catalog),
             number_of_voices: Some(u16::MAX),
         }),
-        offchain_extension: Some(offchain),
     };
     MusicalWork::V1(v1)
 }
@@ -211,7 +208,6 @@ pub fn min_size_recording() -> Recording {
         key: None,
         places: None,
         contributors: BoundedVec::default(),
-        offchain_extension: None,
     };
     Recording::V1(v1)
 }
@@ -251,7 +247,6 @@ pub fn max_size_recording() -> Recording {
     let contributors: Vec<PartyId> = (0..CONTRIBUTORS_MAX).map(party_both_at).collect();
     let featuring: Vec<PartyId> = (0..FEATURING_MAX).map(party_both_at).collect();
     let place = BoundedVec::try_from(vec![b'p'; PLACE_MAX_LEN as usize]).expect("place at bound");
-    let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = RecordingV1 {
         isrc: isrc_for_index(0),
         title,
@@ -277,7 +272,6 @@ pub fn max_size_recording() -> Recording {
             mastering: Some(place),
         }),
         contributors: BoundedVec::try_from(contributors).expect("contributors at bound"),
-        offchain_extension: Some(offchain),
     };
     Recording::V1(v1)
 }
@@ -349,7 +343,6 @@ pub fn min_size_release() -> Release {
         format: ReleaseFormat::Cd,
         packaging: ReleasePackaging::None,
         cover_contributors: BoundedVec::default(),
-        offchain_extension: None,
     };
     Release::V1(v1)
 }
@@ -393,7 +386,6 @@ pub fn max_size_release() -> Release {
                 .expect("cover name at bound")
         })
         .collect();
-    let offchain = BoundedVec::try_from(vec![b'h'; 64]).expect("offchain at 64-byte bound");
     let v1 = ReleaseV1 {
         upc: upc_for_index(0),
         title,
@@ -419,7 +411,6 @@ pub fn max_size_release() -> Release {
         packaging: ReleasePackaging::None,
         cover_contributors: BoundedVec::try_from(cover_contributors)
             .expect("cover contributors at bound"),
-        offchain_extension: Some(offchain),
     };
     Release::V1(v1)
 }

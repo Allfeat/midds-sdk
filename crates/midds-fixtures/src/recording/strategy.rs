@@ -3,7 +3,7 @@
 //! Strategies producing valid payloads do so by construction — they always
 //! emit well-formed identifiers and respect every on-chain bound, so property
 //! tests don't need `prop_assume` discards. Shared part-strategies (ISRC,
-//! ISWC, ISNI, IPI, key, title, off-chain hash) are reused from
+//! ISWC, ISNI, IPI, key, title) are reused from
 //! [`crate::musical_work::strategy`] so the cross-type wire shape stays
 //! identical and a fix lands once.
 //!
@@ -25,8 +25,7 @@ use proptest::prelude::*;
 use crate::common::printable_ascii;
 use crate::identifiers::{ipi_from_stem, isni_from_body, isrc_for_index, iswc_from_work_code};
 use crate::musical_work::strategy::{
-    arb_ipi, arb_ipn, arb_isni, arb_isrc_valid, arb_iswc, arb_musical_key, arb_offchain_hash,
-    arb_title,
+    arb_ipi, arb_ipn, arb_isni, arb_isrc_valid, arb_iswc, arb_musical_key, arb_title,
 };
 
 /// Strategy over the full genre taxonomy.
@@ -239,7 +238,6 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
         proptest::option::of(arb_musical_key()),
         proptest::option::of(arb_production_places()),
         arb_contributors(),
-        proptest::option::of(arb_offchain_hash()),
     );
     (head, tail).prop_map(
         |(
@@ -253,7 +251,6 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
                 key,
                 places,
                 contributors,
-                offchain_extension,
             ),
         )| RecordingV1 {
             isrc,
@@ -273,7 +270,6 @@ pub fn arb_recording_v1() -> impl Strategy<Value = RecordingV1> {
             key,
             places,
             contributors,
-            offchain_extension,
         },
     )
 }
@@ -313,7 +309,6 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
         (any::<[u8; 15]>(), any::<u64>()),
         any::<u32>(),
         proptest::collection::vec(printable_ascii(), PLACE_MAX_LEN as usize),
-        proptest::collection::vec(printable_ascii(), 64usize),
     )
         .prop_map(
             |(
@@ -327,7 +322,6 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                 (artist_body, artist_stem),
                 work_code,
                 place,
-                hash,
             )| {
                 let title = BoundedVec::try_from(title).expect("title at bound");
                 let title_aliases: Vec<_> = aliases
@@ -359,7 +353,6 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                 let contributors: Vec<PartyId> =
                     contributor_pairs.into_iter().map(to_both).collect();
                 let place = BoundedVec::try_from(place).expect("place at bound");
-                let offchain = BoundedVec::try_from(hash).expect("offchain at bound");
                 let v1 = RecordingV1 {
                     isrc: isrc_for_index(isrc_idx),
                     title,
@@ -389,7 +382,6 @@ pub fn arb_recording_max_size() -> impl Strategy<Value = Recording> {
                     }),
                     contributors: BoundedVec::try_from(contributors)
                         .expect("contributors at bound"),
-                    offchain_extension: Some(offchain),
                 };
                 Recording::V1(v1)
             },
@@ -428,10 +420,6 @@ pub fn arb_recording_invalid() -> impl Strategy<Value = (Recording, MiddsFormatE
                 Recording::V1(v1),
                 MiddsFormatError::InvalidIdentifierStructure,
             )
-        }),
-        arb_recording_v1().prop_map(|mut v1| {
-            v1.offchain_extension = Some(BoundedVec::default());
-            (Recording::V1(v1), MiddsFormatError::EmptyMandatoryField)
         }),
     ]
 }

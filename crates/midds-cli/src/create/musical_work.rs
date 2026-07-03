@@ -17,7 +17,7 @@ use midds_types::{
 use crate::create::{prompts, shared};
 use crate::ui;
 
-const STEPS: usize = 9;
+const STEPS: usize = 8;
 
 /// Walk the interactive form and assemble a validated `MusicalWork::V1`.
 pub fn build() -> Result<MusicalWork> {
@@ -58,9 +58,6 @@ pub fn build() -> Result<MusicalWork> {
     ui::step(8, STEPS, "Classical metadata");
     let classical_info = build_classical_info()?;
 
-    ui::step(9, STEPS, "Off-chain extension");
-    let offchain_extension = shared::offchain_extension()?;
-
     Ok(MusicalWork::V1(MusicalWorkV1 {
         iswc,
         title,
@@ -74,7 +71,6 @@ pub fn build() -> Result<MusicalWork> {
         samples,
         creators,
         classical_info,
-        offchain_extension,
     }))
 }
 

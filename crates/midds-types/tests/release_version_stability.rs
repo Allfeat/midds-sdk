@@ -42,7 +42,7 @@ fn bv<const N: u32>(s: &[u8]) -> midds_traits::MiddsString<N> {
 /// - A populated `Producer` (ISNI + catalog number) pair.
 /// - Non-empty `title_aliases` and `cover_contributors`.
 /// - A non-`Album` `ReleaseType`, non-`Cd` `format`, non-`None` packaging.
-/// - A 13-digit (EAN-13) UPC and a non-empty offchain extension hash.
+/// - A 13-digit (EAN-13) UPC.
 fn reference_v1() -> ReleaseV1 {
     ReleaseV1 {
         upc: bv(b"4006381333931"),
@@ -87,7 +87,6 @@ fn reference_v1() -> ReleaseV1 {
         packaging: ReleasePackaging::Gatefold,
         cover_contributors: BoundedVec::try_from(vec![bv(b"Mick Rock")])
             .expect("cover contributors within bound"),
-        offchain_extension: Some(bv(b"bafkreigh2akiscaildc")),
     }
 }
 

@@ -62,7 +62,6 @@ Artist object in V1, GDPR compliance through minimization.
 | 12 | Tests | Standard FRAME mock runtime in `pallet-midds/src/mock.rs` (no node, no runtime-example) |
 | 13 | Rust client | subxt only |
 | 14 | Contributors | External codes only (IPI/ISNI), no reference to the Party registry |
-| 15 | `OffchainHash` | `BoundedVec<u8, ConstU32<64>>` opaque on-chain, CIDv1 IPFS interpretation by convention on the client side |
 
 ---
 
@@ -143,14 +142,12 @@ pub type Iswc = MiddsString<11>;  // T + 9 digits + 1 check char
 pub type Isni = MiddsString<16>;  // 16 digits
 pub type Ipi  = MiddsString<11>;  // up to 11 digits
 pub type Isrc = MiddsString<12>;  // CC + 3 alpha + 2 year + 5 num
-pub type OffchainHash = MiddsString<64>; // CIDv1 by convention
 
 // Pure functions (no_std-safe), shared with midds-validate:
 pub fn validate_iswc_format(b: &[u8]) -> Result<(), MiddsFormatError>;
 pub fn validate_isni_format(b: &[u8]) -> Result<(), MiddsFormatError>;
 pub fn validate_ipi_format(b: &[u8])  -> Result<(), MiddsFormatError>;
 pub fn validate_isrc_format(b: &[u8]) -> Result<(), MiddsFormatError>;
-pub fn validate_offchain_hash(b: &[u8]) -> Result<(), MiddsFormatError>;
 ```
 
 ### Errors
@@ -203,7 +200,6 @@ pub struct MusicalWorkV1 {
     pub iswc: Iswc,
     pub title: MiddsString<256>,
     pub creators: BoundedVec<Ipi, ConstU32<32>>,
-    pub offchain_extension: Option<OffchainHash>,
 }
 
 impl MusicalWorkV1 {
@@ -214,9 +210,6 @@ impl MusicalWorkV1 {
         }
         for ipi in &self.creators {
             validate_ipi_format(ipi)?;
-        }
-        if let Some(h) = &self.offchain_extension {
-            validate_offchain_hash(h)?;
         }
         Ok(())
     }
@@ -620,8 +613,6 @@ each extrinsic.
   incentives? dedicated Allfeat nodes?)
 - Complete spec of `pallet-midds-party`
 - GDPR legal framing to be validated with a lawyer before public communication
-- Precise choice of the `OffchainHash` format (fixed CIDv1 vs flexible multihash) —
-  the 64-byte bound leaves both options open without a migration
 
 ---
 

@@ -46,8 +46,8 @@ pub fn bounded_string<const N: u32>(label: &str, required: bool) -> Result<Midds
 
 /// Wrap any prompt as `Option<T>` behind a `set this?` gate.
 ///
-/// Every optional MIDDS field — language, key, classical metadata, off-chain
-/// hash, … — follows the same shape: a `Confirm`, then the inner prompt only
+/// Every optional MIDDS field — language, key, classical metadata, … —
+/// follows the same shape: a `Confirm`, then the inner prompt only
 /// if the user opted in. Centralising the pattern keeps each builder
 /// declarative (one line per field).
 pub fn optional<T>(label: &str, build: impl FnOnce() -> Result<T>) -> Result<Option<T>> {
@@ -62,7 +62,7 @@ pub fn optional_string<const N: u32>(label: &str) -> Result<Option<MiddsString<N
     optional(label, || bounded_string::<N>(label, true))
 }
 
-/// An industry identifier (ISWC / ISNI / IPI / ISRC / UPC / off-chain hash).
+/// An industry identifier (ISWC / ISNI / IPI / ISRC / UPC).
 ///
 /// `parse` is the matching tolerant parser from `midds-validate`, wrapped to
 /// emit a human-readable rule on rejection (e.g. `"ISNI must be 16 characters

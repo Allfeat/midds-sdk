@@ -13,7 +13,7 @@ use midds_types::{
 use crate::create::{prompts, shared};
 use crate::ui;
 
-const STEPS: usize = 10;
+const STEPS: usize = 9;
 
 /// Walk the interactive form and assemble a validated `Recording::V1`.
 pub fn build() -> Result<Recording> {
@@ -72,9 +72,6 @@ pub fn build() -> Result<Recording> {
             shared::party_id("contributor identifier")
         })?;
 
-    ui::step(10, STEPS, "Off-chain extension");
-    let offchain_extension = shared::offchain_extension()?;
-
     Ok(Recording::V1(RecordingV1 {
         isrc,
         title,
@@ -93,7 +90,6 @@ pub fn build() -> Result<Recording> {
         key,
         places,
         contributors,
-        offchain_extension,
     }))
 }
 

@@ -99,7 +99,6 @@ mod tests {
             samples: BoundedVec::default(),
             creators: BoundedVec::try_from(vec![ipi_creator(b"123456789")]).unwrap(),
             classical_info: None,
-            offchain_extension: None,
         }
     }
 
@@ -115,13 +114,6 @@ mod tests {
     fn identifier_returns_iswc() {
         let w = MusicalWork::V1(sample_v1());
         assert_eq!(w.identifier(), &bv::<11>(b"T1234567890"));
-    }
-
-    #[test]
-    fn validate_pass_with_offchain_extension() {
-        let mut v = sample_v1();
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
-        assert!(MusicalWork::V1(v).validate_format().is_ok());
     }
 
     #[test]
@@ -200,16 +192,6 @@ mod tests {
             catalog_number: None,
             number_of_voices: None,
         });
-        assert_eq!(
-            MusicalWork::V1(v).validate_format(),
-            Err(MiddsFormatError::EmptyMandatoryField),
-        );
-    }
-
-    #[test]
-    fn validate_fails_empty_offchain_extension() {
-        let mut v = sample_v1();
-        v.offchain_extension = Some(bv(b""));
         assert_eq!(
             MusicalWork::V1(v).validate_format(),
             Err(MiddsFormatError::EmptyMandatoryField),
@@ -355,7 +337,6 @@ mod json_tests {
             }])
             .unwrap(),
             classical_info: None,
-            offchain_extension: None,
         }
     }
 
@@ -381,7 +362,6 @@ mod json_tests {
         );
         assert_eq!(json["creators"][0]["party"]["Ipi"], "123456789");
         assert!(json["classical_info"].is_null());
-        assert!(json["offchain_extension"].is_null());
     }
 
     #[test]
@@ -411,7 +391,6 @@ mod json_tests {
             catalog_number: Some(bv(b"K. 545")),
             number_of_voices: Some(4),
         });
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
         v.creators = BoundedVec::try_from(vec![
             Creator {
                 roles: roles_set([CreatorRole::Author]),
@@ -443,7 +422,6 @@ mod json_tests {
         assert_eq!(json["classical_info"]["opus"], "Op. 27 No. 2");
         assert_eq!(json["classical_info"]["catalog_number"], "K. 545");
         assert_eq!(json["classical_info"]["number_of_voices"], 4);
-        assert_eq!(json["offchain_extension"], "bafkreigh2akiscaildc");
         assert_eq!(json["creators"][0]["party"]["Isni"], "0000000121032683");
         // BoundedBTreeSet serialises in `Ord` order — `Composer` < `Arranger`
         // by declaration index (1 < 2), so the JSON array reflects that.
@@ -467,7 +445,6 @@ mod json_tests {
             catalog_number: Some(bv(b"K. 545")),
             number_of_voices: Some(4),
         });
-        v.offchain_extension = Some(bv(b"bafkreigh2akiscaildc"));
 
         let original = MusicalWork::V1(v);
         let raw = serde_json::to_string(&original).unwrap();

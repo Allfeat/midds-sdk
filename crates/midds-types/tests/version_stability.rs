@@ -52,7 +52,6 @@ fn roles<const N: usize>(rs: [CreatorRole; N]) -> CreatorRoles {
 /// - A non-empty `samples` list exercising both `WorkRef` shapes (ISWC + MIDDS
 ///   id).
 /// - `ClassicalInfo` populated with both string fields plus `number_of_voices`.
-/// - A non-empty offchain extension hash.
 fn reference_v1() -> MusicalWorkV1 {
     let iswc = BoundedVec::try_from(b"T0345246802".to_vec()).expect("11-byte ISWC");
     let title = BoundedVec::try_from(b"Walk on the Wild Side".to_vec()).expect("title bound");
@@ -80,8 +79,6 @@ fn reference_v1() -> MusicalWorkV1 {
         catalog_number: Some(BoundedVec::try_from(b"K. 545".to_vec()).expect("catalog bound")),
         number_of_voices: Some(4),
     });
-    let offchain_extension =
-        Some(BoundedVec::try_from(b"bafkreigh2akiscaildc".to_vec()).expect("offchain hash bound"));
     let samples = BoundedVec::try_from(vec![
         WorkRef::Iswc(BoundedVec::try_from(b"T1111111111".to_vec()).expect("11-byte sample ISWC")),
         WorkRef::Midds(7),
@@ -106,7 +103,6 @@ fn reference_v1() -> MusicalWorkV1 {
         samples,
         creators,
         classical_info,
-        offchain_extension,
     }
 }
 

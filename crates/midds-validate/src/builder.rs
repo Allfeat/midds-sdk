@@ -15,7 +15,7 @@
 use std::sync::LazyLock;
 
 use bounded_collections::{BoundedVec, Get};
-use midds_traits::{Iswc, MiddsString, OffchainHash};
+use midds_traits::{Iswc, MiddsString};
 use midds_types::{
     CREATORS_MAX, Creator, CreatorRole, CreatorRoles, Language, MusicalKey, MusicalWork,
     MusicalWorkV1, PartyId, TITLE_MAX_LEN, WorkRef, WorkType,
@@ -126,24 +126,6 @@ fn bounded_text_list<const N: u32, C: Get<u32>>(
     finish_bounded(field, list_noun, items, errors)
 }
 
-/// Resolve the optional off-chain-extension input: `Some(None)` when
-/// absent, `None` plus a [`FieldError`] on empty or oversized input.
-fn parse_offchain(raw: Option<&str>, errors: &mut Vec<FieldError>) -> Option<Option<OffchainHash>> {
-    match raw {
-        Some(raw) => match OffchainHash::try_from(raw.as_bytes().to_vec()) {
-            Ok(h) if !h.is_empty() => Some(Some(h)),
-            _ => {
-                errors.push(FieldError {
-                    field: "offchain_extension",
-                    message: "empty or larger than 64-byte bound".into(),
-                });
-                None
-            }
-        },
-        None => Some(None),
-    }
-}
-
 /// Pre-computed `"creators[i]"` strings for `i in 0..CREATORS_MAX`. The leak
 /// fires at most `CREATORS_MAX` times across the whole process — bounded
 /// regardless of how many builders are run.
@@ -190,7 +172,6 @@ pub struct MusicalWorkBuilder {
     work_type: Option<WorkType>,
     samples_raw: Vec<SampleInput>,
     creators_raw: Vec<CreatorInput>,
-    offchain_extension_raw: Option<String>,
 }
 
 /// How a sampled work was referenced by the user: by on-chain MIDDS id (no
@@ -352,14 +333,6 @@ impl MusicalWorkBuilder {
         self
     }
 
-    /// Off-chain extension hash (`CIDv1` by client convention). Stored
-    /// verbatim and bound-checked at build time.
-    #[must_use]
-    pub fn offchain_extension(mut self, bytes: &str) -> Self {
-        self.offchain_extension_raw = Some(bytes.to_string());
-        self
-    }
-
     /// Validate and finalise into a `MusicalWork::V1`.
     ///
     /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
@@ -481,7 +454,6 @@ impl MusicalWorkBuilder {
             }
         }
         let samples_bv = finish_bounded("samples", "samples", samples, &mut errors);
-        let offchain = parse_offchain(self.offchain_extension_raw.as_deref(), &mut errors);
 
         if !errors.is_empty() {
             return Err(BuildError::Fields(errors));
@@ -491,7 +463,6 @@ impl MusicalWorkBuilder {
         let title = title.expect("no errors → title parsed");
         let creators = creators_bv.expect("no errors → creators bounded");
         let samples = samples_bv.expect("no errors → samples bounded");
-        let offchain_extension = offchain.expect("no errors → offchain optional resolved");
 
         let v1 = MusicalWorkV1 {
             iswc,
@@ -506,7 +477,6 @@ impl MusicalWorkBuilder {
             samples,
             creators,
             classical_info: None,
-            offchain_extension,
         };
         Ok(MusicalWork::V1(v1))
     }
@@ -586,23 +556,6 @@ mod tests {
         assert!(fields.contains(&"title"));
         assert!(fields.iter().any(|f| f.starts_with("creators")));
         assert_eq!(errors.len(), 3);
-    }
-
-    #[test]
-    fn invalid_offchain_extension_surfaces_error() {
-        let oversized: String = "h".repeat(128);
-        let res = MusicalWorkBuilder::new()
-            .iswc("T0345246802")
-            .title("X")
-            .creation_year(2024)
-            .add_creator("123456789")
-            .offchain_extension(&oversized)
-            .build();
-        let errors = match res {
-            Err(BuildError::Fields(v)) => v,
-            other => panic!("expected Fields(_), got {other:?}"),
-        };
-        assert_eq!(errors[0].field, "offchain_extension");
     }
 
     #[test]
@@ -718,7 +671,6 @@ pub struct RecordingBuilder {
     key: Option<MusicalKey>,
     places_raw: Option<(Option<String>, Option<String>, Option<String>)>,
     contributors_raw: Vec<PartyInput>,
-    offchain_extension_raw: Option<String>,
 }
 
 impl RecordingBuilder {
@@ -948,14 +900,6 @@ impl RecordingBuilder {
         self
     }
 
-    /// Off-chain extension hash (`CIDv1` by client convention). Stored
-    /// verbatim and bound-checked at build time.
-    #[must_use]
-    pub fn offchain_extension(mut self, bytes: &str) -> Self {
-        self.offchain_extension_raw = Some(bytes.to_string());
-        self
-    }
-
     /// Validate and finalise into a `Recording::V1`.
     ///
     /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
@@ -992,9 +936,6 @@ impl RecordingBuilder {
         let featuring = parse_party_list(&self.featuring_raw, "featuring", &mut errors);
         let places = self.build_places(&mut errors);
 
-        let offchain_extension =
-            parse_offchain(self.offchain_extension_raw.as_deref(), &mut errors);
-
         if !errors.is_empty() {
             return Err(BuildError::Fields(errors));
         }
@@ -1017,7 +958,6 @@ impl RecordingBuilder {
             key: self.key,
             places: places.expect("no errors → places resolved"),
             contributors: contributors.expect("no errors → contributors bounded"),
-            offchain_extension: offchain_extension.expect("no errors → offchain resolved"),
         };
         Ok(Recording::V1(v1))
     }
@@ -1392,7 +1332,6 @@ pub struct ReleaseBuilder {
     format: Option<ReleaseFormat>,
     packaging: Option<ReleasePackaging>,
     cover_contributors_raw: Vec<String>,
-    offchain_extension_raw: Option<String>,
 }
 
 impl ReleaseBuilder {
@@ -1583,14 +1522,6 @@ impl ReleaseBuilder {
         self
     }
 
-    /// Off-chain extension hash (`CIDv1` by client convention). Stored
-    /// verbatim and bound-checked at build time.
-    #[must_use]
-    pub fn offchain_extension(mut self, bytes: &str) -> Self {
-        self.offchain_extension_raw = Some(bytes.to_string());
-        self
-    }
-
     /// Validate and finalise into a `Release::V1`.
     ///
     /// Returns [`BuildError::Missing`] if a mandatory field is unset, or
@@ -1652,9 +1583,6 @@ impl ReleaseBuilder {
             &mut errors,
         );
 
-        let offchain_extension =
-            parse_offchain(self.offchain_extension_raw.as_deref(), &mut errors);
-
         if !errors.is_empty() {
             return Err(BuildError::Fields(errors));
         }
@@ -1675,7 +1603,6 @@ impl ReleaseBuilder {
             format,
             packaging,
             cover_contributors: cover_contributors.expect("no errors → cover contributors bounded"),
-            offchain_extension: offchain_extension.expect("no errors → offchain resolved"),
         };
         Ok(Release::V1(v1))
     }
@@ -1770,7 +1697,6 @@ mod release_tests {
             .format(ReleaseFormat::Vinyl)
             .packaging(ReleasePackaging::Gatefold)
             .add_cover_contributor("Mick Rock")
-            .offchain_extension("bafkreigh2akiscaildc")
             .build()
             .expect("builds");
         release
